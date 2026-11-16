@@ -856,7 +856,8 @@ class TestMenuTabs:
         """키보드 초점을 받은 탭은 글을 둘러싼 강조색 상자가 있고 상자와 밑줄 자리 사이에 바 면 줄이 있어야 한다.
 
         탭에 Tab 초점 -> 탭 세로 가운데 줄의 accent 화소 맨 왼쪽 < 글 화소 맨 왼쪽, 맨 오른쪽 > 글 화소 맨 오른쪽,
-        밑줄 바로 위 두 줄(아래끝 − 2 · − 3) 가운데 ≈ surface, 초점 전에는 세로 가운데 줄에 accent 화소가 없다
+        상자 가로 가운데 열: 세로 가운데 ~ 밑줄 위 두 줄 사이에 accent(상자 아래 변)가 있고 밑줄 바로 위 두 줄
+        (아래끝 − 2 · − 3) ≈ surface, 초점 전에는 세로 가운데 줄에 accent 화소가 없다
         """
         win = window(DownloadState.WAITING)
         selected, other = _tab_strip(win)
@@ -889,8 +890,13 @@ class TestMenuTabs:
         ]
         assert ink, "전제: 글 화소가 있다"
         assert min(box) < min(ink) and max(box) > max(ink)
-        for y in (rect.bottom() - UNDERLINE, rect.bottom() - UNDERLINE - 1):
-            assert _is(_pixel(image, rect.center().x(), y), "surface"), y
+        x = (min(box) + max(box)) // 2  # 상자 가로 가운데
+        gap = (rect.bottom() - UNDERLINE, rect.bottom() - UNDERLINE - 1)  # 밑줄 바로 위 두 줄
+        assert any(_is(_pixel(image, x, y), "accent") for y in range(middle, min(gap))), (
+            "상자 아래 변이 밑줄 자리 위에 있다"
+        )
+        for y in gap:
+            assert _is(_pixel(image, x, y), "surface"), y
 
 
 class TestFieldBorderToken:
