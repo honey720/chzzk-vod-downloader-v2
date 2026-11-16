@@ -43,7 +43,7 @@ class TestTextContract:
     def test_tooltip_always_shows_full_value(self, qapp) -> None:
         label = ElidingLabel()
         label.resize(20, 20)
-        full = "C:/Users/LeeDH/Desktop/AVeryLongPathThatWillDefinitelyBeElided/file.mp4"
+        full = "C:/Users/user/Desktop/AVeryLongPathThatWillDefinitelyBeElided/file.mp4"
         label.setText(full)
         assert label.toolTip() == full
 
