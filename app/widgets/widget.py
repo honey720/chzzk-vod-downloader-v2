@@ -383,8 +383,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _placeCardButtons(self) -> None:
         """카드 버튼 상자를 1줄 오른쪽 끝에, 덮개를 그 밑에 놓는다 (#550).
 
-        버튼 위끝은 썸네일 위끝과 같다. 덮개는 버튼 상자 왼쪽 ``SOLID + FADE``부터 1줄 오른쪽
-        끝까지 덮는다 — 버튼 밑의 채널명 · 날짜 글이 버튼과 겹쳐 보이지 않게.
+        상자 세로 가운데를 1줄 세로 가운데에 맞춘다 — 상자(24)가 1줄(16)보다 커서 위아래로 4씩 넘치고,
+        위끝을 썸네일 위끝에 두면 오버레이가 2줄 제목 글자를 가린다(176j). 오버레이는 버튼 상자 왼쪽
+        ``SOLID + FADE``부터 1줄 오른쪽 끝까지 덮는다 — 버튼 밑의 채널명 · 날짜 글이 버튼과 겹쳐 보이지 않게.
         """
         box = self.hoverBox
         # 숨은 동안 버튼 수가 바뀌었으면 레이아웃 힌트가 옛 값이다 — 먼저 다시 계산시킨다
@@ -393,7 +394,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         box.adjustSize()
         row = self.topRow.geometry()
         right = row.right() + 1
-        top = self.thumbnailLabel.geometry().top()
+        top = row.top() + (row.height() - box.height()) // 2
         box.move(right - box.width(), top)
         shade_left = max(row.left(), box.x() - HoverShade.SOLID - HoverShade.FADE)
         self.hoverShade.setGeometry(shade_left, top, right - shade_left, box.height())

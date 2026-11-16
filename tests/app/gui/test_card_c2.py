@@ -1,14 +1,16 @@
 """카드 C2 — 줄 배치 · 카드 버튼 · 호버 · 키보드 초점 · 폴더 열기 (#550)."""
 
+import math
 import os
 import time
+from collections import Counter
 from collections.abc import Iterator
 from typing import Never
 
 import pytest
 from pytestqt.qtbot import QtBot
 from PySide6.QtCore import QPoint, Qt, QTimer
-from PySide6.QtGui import QColor, QFontMetrics
+from PySide6.QtGui import QColor, QFontMetrics, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -39,6 +41,11 @@ from tests.app.gui.mouse_buttons import double_click
 DEFAULT_DIR = "C:/dl"  # 전역 저장 위치 — 카드의 저장 위치가 이것이면 3줄에 보이지 않는다
 # 대체 글꼴(빈 글꼴 폴더)에서도 3줄이 접히지 않는 카드 폭(px) — 저장 위치 이름이 보여야 하는 테스트가 쓴다(#554)
 WIDE = 2400
+# 2줄을 끝까지 채우는 제목 — 오버레이 밑까지 글자가 간다(176j)
+LONG_TITLE = (
+    "그림 방송 · 팬아트 리퀘스트 받아요 — 오늘은 구독자 캐릭터 그리기 마지막 날, 끝까지 함께해 주세요 · "
+    "다음 주에는 배경 그리기와 채색 강의를 이어서 합니다 — 신청곡도 받아요"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -173,19 +180,73 @@ class TestCardButtons:
         assert card.contentFrame.property("keyFocus") is True
 
     def test_buttons_sit_at_the_right_end_of_row_one_and_take_no_tab(self, qapp) -> None:
-        """카드 버튼이 1줄 오른쪽 끝(위끝 = 썸네일 위끝)에 놓이고 Tab 차례에 없어야 한다.
+        """카드 버튼이 1줄 오른쪽 끝 · 1줄 세로 가운데에 놓이고 Tab 차례에 없어야 한다.
 
-        상자 오른쪽 끝 = 1줄 오른쪽 끝, 상자 위끝 = 썸네일 위끝, 버튼 20×20 · NoFocus
+        상자 오른쪽 끝 = 1줄 오른쪽 끝, 상자 위끝 · 아래끝 = 1줄 위끝 − 4 · 아래끝 + 4, 버튼 24×24 · 그림 16 · NoFocus
         """
         card = _card()
         _enter(card)
         box = card.hoverBox.geometry()
-        assert box.right() == card.topRow.geometry().right()
-        assert box.top() == card.thumbnailLabel.geometry().top()
+        row = card.topRow.geometry()
+        assert box.right() == row.right()
+        assert (box.top(), box.bottom()) == (
+            row.top() - 4,
+            row.bottom() + 4,
+        )  # (24 − 16) / 2 (176j)
         for name in CARD_BUTTON_NAMES:
             button = getattr(card, name)
-            assert (button.width(), button.height()) == (20, 20)
+            assert (button.width(), button.height()) == (24, 24)
+            assert button.glyphSize() == 16
             assert button.focusPolicy() == Qt.FocusPolicy.NoFocus
+
+    def test_the_shade_ends_above_the_title_row(self, qapp) -> None:
+        """버튼 오버레이 아래끝이 2줄(제목 줄) 위끝보다 위여야 한다.
+
+        대기 카드 · 긴 제목, 호버 -> hoverShade 아래끝 < titleRow 위끝, 카드 높이 81(행 80 + 구분선 1) (176j)
+        """
+        card = _card(title=LONG_TITLE)
+        _enter(card)
+        assert card.hoverShade.isVisible()
+        assert card.hoverShade.geometry().bottom() < card.titleRow.geometry().top()
+        assert card.height() == 81  # 행 80 + 구분선 1
+
+    @pytest.mark.parametrize("scale", [1.0, 1.5])
+    def test_the_shade_covers_no_title_ink(self, qapp, scale) -> None:
+        """버튼 오버레이가 제목 글자 잉크를 한 줄도 가리지 않아야 한다.
+
+        대기 카드 · 긴 제목, 호버, 제목 라벨을 배율 scale로 그림 -> 잉크(바탕 = 가장 많은 색과 채널 합 차 > 24)
+        맨 윗줄 >= 오버레이 아래끝(화소 줄 단위, 176j)
+        """
+        card = _card(title=LONG_TITLE)
+        _enter(card)
+        label = card.titleLabel
+        assert label.isVisible()
+        pixmap = QPixmap(math.ceil(label.width() * scale), math.ceil(label.height() * scale))
+        pixmap.setDevicePixelRatio(scale)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        label.render(pixmap)
+        image = pixmap.toImage()
+        colors = [
+            image.pixelColor(x, y).getRgb()[:3]
+            for y in range(image.height())
+            for x in range(image.width())
+        ]
+        ground = Counter(colors).most_common(1)[0][0]
+        width = image.width()
+        ink_rows = sorted(
+            {
+                index // width
+                for index, rgb in enumerate(colors)
+                if sum(abs(a - b) for a, b in zip(rgb, ground, strict=True)) > 24
+            }
+        )
+        assert ink_rows, "제목 잉크가 그려져야 한다"
+        label_top = label.mapTo(card.contentFrame, QPoint(0, 0)).y()
+        shade = card.hoverShade.geometry()
+        shade_end = math.ceil(
+            (shade.y() + shade.height()) * scale
+        )  # 오버레이가 칠하는 마지막 화소 줄 + 1
+        assert math.floor(label_top * scale) + ink_rows[0] >= shade_end
 
     def test_the_shade_under_the_buttons_lets_clicks_through(self, qapp) -> None:
         """버튼 밑 오버레이는 1줄 높이로 버튼 상자를 덮고 마우스를 받지 않아야 한다.

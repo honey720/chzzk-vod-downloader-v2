@@ -138,7 +138,7 @@ class TestRowOneAtTheNarrowestCard:
         상태마다 카드를 그 카드의 최소 폭으로 줄이고 호버
         -> 보이는 버튼이 왼쪽부터 겹치지 않고, 첫 버튼 왼쪽 끝 >= 1줄 왼쪽 끝,
            마지막 버튼 오른쪽 끝 == 1줄 오른쪽 끝 == 카드 폭 − cardPadding(띠 행은 좌우 테두리 없음, #611),
-           버튼 위끝 == 썸네일 위끝, 오버레이는 1줄 안
+           버튼 세로 가운데(위끝 + 아래끝) == 1줄 세로 가운데(176j), 오버레이는 1줄 가로 안
         """
         window, widget = make_card(state)
         qtbot.addWidget(window)
@@ -160,8 +160,11 @@ class TestRowOneAtTheNarrowestCard:
         assert spans[-1][1] == row_right == widget.width() - inset, (
             f"{state.name}: 마지막 버튼 {spans[-1]}가 1줄 오른쪽 끝 {row_right}에 붙지 않았다"
         )
-        top = widget.thumbnailLabel.mapTo(widget, widget.thumbnailLabel.rect().topLeft()).y()
-        assert all(b.mapTo(widget, b.rect().topLeft()).y() == top for b in buttons)
+        row_top = widget.topRow.mapTo(widget, widget.topRow.rect().topLeft()).y()
+        row_mid2 = 2 * row_top + widget.topRow.height()  # 1줄 위끝 + 아래끝(가운데의 두 배)
+        assert all(
+            2 * b.mapTo(widget, b.rect().topLeft()).y() + b.height() == row_mid2 for b in buttons
+        )
         shade_left, shade_right = _span(widget, widget.hoverShade)
         assert row_left <= shade_left and shade_right == row_right, (
             f"{state.name}: 오버레이 {shade_left}..{shade_right}가 1줄 {row_left}..{row_right} 밖이다"

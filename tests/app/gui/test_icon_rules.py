@@ -20,7 +20,7 @@ import app.widgets.contentItemWidget as card_face
 from app.widgets import icons
 
 REPO = Path(__file__).resolve().parents[3]
-GRIDS = (12, 16)  # 동작 아이콘이 쓰이는 그림 칸 — 카드 버튼 · 바 버튼(px)
+GRIDS = (16,)  # 동작 아이콘이 쓰이는 그림 칸 — 카드 버튼 · 바 버튼 · 메뉴 줄(px)
 
 
 class _Recorder:
@@ -90,7 +90,7 @@ def test_action_icon_lines_share_one_width_round_cap_and_round_join(
 ) -> None:
     """동작 아이콘의 선은 칸 크기와 무관하게 모두 1.75px · 둥근 끝 · 둥근 이음이고 면이 없어야 한다.
 
-    아이콘마다, 칸 12 · 16 -> 선을 긋는 그리기 호출이 하나 이상, 그 펜 굵기 == 1.75 · RoundCap · RoundJoin,
+    아이콘마다, 칸 GRIDS마다 -> 선을 긋는 그리기 호출이 하나 이상, 그 펜 굵기 == 1.75 · RoundCap · RoundJoin,
     붓 없음
     """
     lines = [d for d in _action_draws(name, side) if d["stroked"]]
@@ -126,7 +126,7 @@ def test_action_icon_ink_takes_the_same_share_of_its_grid(
 ) -> None:
     """동작 아이콘 잉크의 긴 변은 칸의 0.72 ~ 0.95여야 한다 — 칸 안에서 차지하는 크기가 아이콘마다 같은 범위다.
 
-    아이콘마다, 칸 12 · 16, 배율 4 -> 불투명도 0.25 넘는 화소 상자의 긴 변 / 칸 한 변이 [0.72, 0.95]
+    아이콘마다, 칸 GRIDS마다, 배율 4 -> 불투명도 0.25 넘는 화소 상자의 긴 변 / 칸 한 변이 [0.72, 0.95]
     """
     span = _ink_span(name, side)
 
@@ -175,14 +175,14 @@ def test_open_folder_and_closed_folder_are_different_drawings(qapp: QApplication
     )
 
 
-def test_icon_grids_are_card_12_and_bar_16() -> None:
-    """아이콘 그림 칸 크기 토큰은 카드 12와 바 16 두 값이어야 한다.
+def test_icon_grids_are_card_16_and_bar_16() -> None:
+    """아이콘 그림 칸 크기 토큰은 카드 16 · 바 16이고 카드 버튼 상자는 24여야 한다.
 
-    actionGlyph -> 12, barGlyph · narrowIcon · menuIcon -> 16
+    actionGlyph -> 16, barGlyph · narrowIcon · menuIcon -> 16, cardButton -> 24
     """
     metrics = theme.METRICS
 
-    assert metrics["actionGlyph"] == 12
+    assert (metrics["actionGlyph"], metrics["cardButton"]) == (16, 24)
     assert (metrics["barGlyph"], metrics["narrowIcon"], metrics["menuIcon"]) == (16, 16, 16)
 
 
