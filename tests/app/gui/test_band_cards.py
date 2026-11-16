@@ -1500,3 +1500,41 @@ class TestBarFaces:
         if scheme == "light":
             assert not _is(face, "surfaceAlt"), face.name()
             assert not _is(face, "barBg"), face.name()
+
+    def test_chosen_chip_face_is_field_bg(self, window, scheme: str) -> None:
+        """고른 칩(「전체」)의 면은 fieldBg여야 한다 — 라이트는 흰색이라 바 면과 다르다.
+
+        창 폭 = 최소폭 + 900(칩 모양) -> 고른 칩 왼쪽 안쪽 3px · 세로 가운데 ≈ fieldBg, 라이트에서는 barBg ·
+        surfaceAlt가 아니다 (176j)
+        """
+        win = window(DownloadState.WAITING)
+        win.resize(win.minimumWidth() + 900, 600)
+        _pump()
+        chip = win.filterChips["all"]
+        assert chip.isVisible() and chip.isChecked(), "전제: 칩 모양 · 고른 칩"
+        image = win.grab().toImage()
+        rect = _rect(win, chip)
+        face = _pixel(image, rect.left() + 3, rect.center().y())
+        assert _is(face, "fieldBg"), f"{scheme}: {face.name()}"
+        if scheme == "light":
+            assert not _is(face, "barBg"), face.name()
+            assert not _is(face, "surfaceAlt"), face.name()
+
+    def test_select_button_on_face_is_field_bg(self, window, scheme: str) -> None:
+        """선택 모드에서 켠 선택 버튼의 면은 fieldBg여야 한다 — 라이트는 흰색이라 바 면과 다르다.
+
+        대기 카드 하나, 선택 버튼 누름 -> 버튼 왼쪽 안쪽 3px · 세로 가운데 ≈ fieldBg, 라이트에서는 barBg ·
+        surfaceAlt가 아니다 (176j)
+        """
+        win = window(DownloadState.WAITING)
+        win.selectButton.click()
+        _pump()
+        button = win.selectButton
+        assert button.isVisible() and button.property("on") is True, "전제: 선택 모드"
+        image = win.grab().toImage()
+        rect = _rect(win, button)
+        face = _pixel(image, rect.left() + 3, rect.center().y())
+        assert _is(face, "fieldBg"), f"{scheme}: {face.name()}"
+        if scheme == "light":
+            assert not _is(face, "barBg"), face.name()
+            assert not _is(face, "surfaceAlt"), face.name()

@@ -195,8 +195,9 @@ DARK = {
     # 메뉴바 · 헤더바 · 하단바 면 — 카드 면(cardBg)에서 카드 호버 한 단계(ΔE00 약 3.0)만큼 어둡게. 헤더가 목록 첫
     # 행처럼 읽히지 않게 바를 목록과 다른 면으로 둔다(#611 176i — 176h 바 면 (A)안)
     "barBg": "#222329",
-    "surfaceAlt": "#2f3239",  # 기본 버튼 · 고른 칩 · 켠 선택 버튼 바탕
-    "fieldBg": "#2f3239",  # 입력 칸(URL 칸 · 펼침 칸 · QComboBox) 면 — 다크는 surfaceAlt와 같다(#611 176i)
+    "surfaceAlt": "#2f3239",  # 기본 버튼 · 꺼진 ▶ · 고른 메뉴 바탕
+    # 입력 칸(URL 칸 · 펼침 칸 · QComboBox) · 고른 칩 · 켠 선택 버튼 면 — 다크는 surfaceAlt와 같다(#611 176i · 176j)
+    "fieldBg": "#2f3239",
     "surfaceHover": "#383c44",
     "surfacePressed": "#282b31",
     "menuHover": "#2c2f35",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 2.9, #536)
@@ -271,8 +272,8 @@ LIGHT = {
     "surface": "#ffffff",
     "barBg": "#f0f0f0",  # 바 면 — 흰 카드 면에서 ΔE00 약 3.0 어둡게(#611 176i)
     "surfaceAlt": "#eceef1",
-    # 입력 칸 면 — 회색 바 위 흰 칸(Fluent 2 · Windows 11). surfaceAlt로 두면 바 면과 1.02라 칸 면이 안 보인다
-    # (#611 176i)
+    # 입력 칸 · 고른 칩 · 켠 선택 버튼 면 — 회색 바 위 흰 면(Fluent 2 · Windows 11). surfaceAlt로 두면 바 면과
+    # 1.02라 면이 안 보인다(#611 176i · 176j)
     "fieldBg": "#ffffff",
     "surfaceHover": "#e1e4e9",
     "surfacePressed": "#d5d9df",
