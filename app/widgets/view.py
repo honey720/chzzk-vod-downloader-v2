@@ -220,6 +220,8 @@ class ContentListView(QScrollArea):
         # 선택 모드(#561 — 설계 §12.1 「선택 모드」). 고른 카드는 필터에 가려도 남는다(지울 때 확인 창이 알린다)
         self._selecting = False
         self._selected: dict[ContentItem, None] = {}  # 고른 카드(고른 차례)
+        self._joined = False  # 구분선 자리에서 이은 띠가 하나라도 있는지(#611)
+        self._joinsPending = False  # 띠 잇기 다시 정하기가 다음 턴에 예약됐는지
         # Shift 범위의 기준 카드 — 마지막으로 하나를 고르거나 푼 카드
         self._anchor: ContentItem | None = None
 
@@ -546,18 +548,54 @@ class ContentListView(QScrollArea):
         return 1 if picked else 0
 
     def _setSelected(self, items) -> None:
-        """고른 카드를 `items`로 바꾼다 — 고름이 바뀐 카드만 다시 그린다."""
+        """고른 카드를 `items`로 바꾼다 — 고름이 바뀐 카드만 다시 그린다.
+
+        카드 한 장만 바뀌고 그 카드가 화면에 보이면 왼쪽 띠가 자라고 줄어든다(애니메이션 설정이 켜져 있을 때).
+        여러 장이 한꺼번에 바뀌면(모두 선택 · Shift 범위 · 모두 풀기) 바로 바뀐다(오너 2026-11-15, #611).
+        """
         new = dict.fromkeys(items)
-        for item in self._selected.keys() - new.keys():
-            widget = self._widgets.get(item)
-            if widget is not None:
-                widget.setSelected(False)
-        for item in new.keys() - self._selected.keys():
-            widget = self._widgets.get(item)
-            if widget is not None:
-                widget.setSelected(True)
+        dropped = self._selected.keys() - new.keys()
+        added = new.keys() - self._selected.keys()
+        animate = len(dropped) + len(added) == 1 and card_display.current().animations
+        for picked, changed in ((False, dropped), (True, added)):
+            for item in changed:
+                widget = self._widgets.get(item)
+                if widget is not None:
+                    shown = animate and not widget.visibleRegion().isEmpty()
+                    widget.setSelected(picked, shown)
         self._selected = new
+        self._syncJoins()
         self.selectionChanged.emit()
+
+    def _scheduleJoins(self) -> None:
+        """보이는 차례가 바뀌었다 — 고른 띠 잇기를 다음 턴에 한 번 다시 정한다(고른 카드가 있을 때만).
+
+        카드 삽입마다 목록 전체를 보면 삽입이 O(n)이 된다(#226) — 고른 카드도 이은 띠도 없으면 아무것도 하지
+        않고, 있으면 한 턴의 여러 바뀜을 한 번으로 묶는다.
+        """
+        if (self._selected or self._joined) and not self._joinsPending:
+            self._joinsPending = True
+            QTimer.singleShot(0, self, self._syncJoins)
+
+    def _syncJoins(self) -> None:
+        """보이는 차례에서 고른 카드 바로 아래 카드도 골랐으면 두 띠를 구분선 자리에서 잇는다 (#611)."""
+        self._joinsPending = False
+        if not (self._selected or self._joined):
+            return
+        above: ContentItemWidget | None = None
+        joined = False
+        for index in range(self._layout.count()):
+            widget = self._layout.itemAt(index).widget()
+            if not isinstance(widget, ContentItemWidget) or widget.isHidden():
+                continue
+            if above is not None:
+                join = above.item in self._selected and widget.item in self._selected
+                above.contentFrame.setJoinBelow(join)
+                joined = joined or join
+            above = widget
+        if above is not None:
+            above.contentFrame.setJoinBelow(False)
+        self._joined = joined
 
     def cardPressed(self, widget: ContentItemWidget, modifiers: Qt.KeyboardModifier) -> bool:
         """카드를 눌렀다 — 초점을 목록으로 옮기고, 이 누름이 고르기를 시작하는지 답한다.
@@ -745,6 +783,7 @@ class ContentListView(QScrollArea):
                 self._layout.insertWidget(index, widget)
         self._overlay.update()
         self._scheduleRehover()
+        self._scheduleJoins()
 
     def _moveWidget(self, item: ContentItem) -> None:
         """카드 하나를 보이는 차례의 새 자리로 옮긴다."""
@@ -754,6 +793,7 @@ class ContentListView(QScrollArea):
         self._layout.removeWidget(widget)
         self._layout.insertWidget(self._order.indexOf(item), widget)
         self._scheduleRehover()
+        self._scheduleJoins()
 
     def _applyFilter(self) -> None:
         """고른 칩에 맞춰 모든 카드의 보임을 정한다.
@@ -768,6 +808,7 @@ class ContentListView(QScrollArea):
         self._showCards()
         self._overlay.update()
         self._scheduleRehover()
+        self._scheduleJoins()
         self._scheduleDates()  # 다시 보인 카드가 연도를 못 넣을 수 있다 — 칩 조작 한 번에 한 번
         # 고른 카드는 필터를 바꿔도 그대로다(#561). Shift 범위의 기준이 가려졌으면 기준만 놓는다
         if self._anchor is not None and not self._accepts(self._anchor):
@@ -781,6 +822,7 @@ class ContentListView(QScrollArea):
         if widget is not None:
             widget.setVisible(self._accepts(item))
             self._scheduleRehover()
+            self._scheduleJoins()
             if self._selecting:
                 self.selectionChanged.emit()
 
@@ -804,6 +846,7 @@ class ContentListView(QScrollArea):
         widget.setVisible(self._accepts(item))
         self._widgets[item] = widget
         self._overlay.update()  # 빈 리스트 안내를 즉시 감춘다
+        self._scheduleJoins()  # 고른 카드 사이에 끼면 띠가 끊긴다 — 고른 카드가 없으면 아무것도 안 한다
         # 날짜 연도 — 들어온 카드만 다음 턴에 한 번에 본다(배치 뒤라야 폭이 있다)
         if not self._newCards:
             QTimer.singleShot(0, self, self._fitNewDates)
@@ -821,6 +864,7 @@ class ContentListView(QScrollArea):
         self._overlay.update()
         self._scheduleRenumber()  # 되살린 카드 뒤의 번호가 밀린다(#235 — 한 턴에 한 번)
         self._scheduleRehover()
+        self._scheduleJoins()
         if not self._newCards:
             QTimer.singleShot(0, self, self._fitNewDates)
         self._newCards.append(widget)
@@ -864,6 +908,7 @@ class ContentListView(QScrollArea):
         if item in self._selected:
             del self._selected[item]
             self.selectionChanged.emit()
+        self._scheduleJoins()  # 지운 카드 위아래 띠를 다시 잇거나 끊는다
         if self._anchor is item:
             self._anchor = None
         self._overlay.update()  # 마지막 카드가 지워졌으면 빈 리스트 안내를 다시 띄운다

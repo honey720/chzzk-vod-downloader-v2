@@ -611,13 +611,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """고른 카드인지(강조색 테두리 · 채운 체크 원)."""
         return self.contentFrame.isSelected()
 
-    def setSelected(self, on: bool) -> None:
+    def setSelected(self, on: bool, animate: bool = False) -> None:
         """고른 카드 모양을 켜고 끈다 — 목록이 부른다.
 
-        강조색 테두리는 카드 면과 progress bar가 함께 그린다 — 면 위에 놓인 progress bar가 면의 아래 변을
-        가리므로 그 자리의 테두리는 progress bar가 덧그린다(`CardProgress`).
+        왼쪽 강조색 띠는 카드 면과 progress bar가 함께 그린다 — 면 위에 놓인 progress bar가 면의 아래끝을
+        가리므로 그 자리의 띠는 progress bar가 덧그린다(`CardProgress`). `animate`면 띠가 자라고 줄어든다
+        (`CardFace.setSelected`, #611).
         """
-        self.contentFrame.setSelected(on)
+        self.contentFrame.setSelected(on, animate)
         self.progressBar.setPicked(on)
         self._syncPickMark()
 

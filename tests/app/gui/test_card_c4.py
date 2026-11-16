@@ -1714,8 +1714,8 @@ class TestFocusRing:
     ) -> None:
         """고른 카드가 키보드 초점을 받으면 안쪽 고리가 왼쪽 띠 위에 보이고 그 안쪽은 띠 · 고른 바탕이어야 한다.
 
-        선택 모드, 카드에 키보드 초점 · Space -> 창의 행 안쪽 화소 0 · 1 ≈ focusOnAccent(고리), 2 ≈ accent(띠의
-        남은 1px), 3 ≈ cardHoverBg(고른 행 바탕)
+        선택 모드, 카드에 키보드 초점 · Space · 띠 애니메이션 끝 -> 창의 행 안쪽 화소 0 · 1 ≈ focusOnAccent(고리),
+        2 · 3 ≈ accent(띠 4px의 남은 2px), 4 ≈ cardHoverBg(고른 행 바탕)
         """
         items = _add(window, D.WAITING, D.WAITING)
         _toggle_select_mode(window, True)
@@ -1723,18 +1723,20 @@ class TestFocusRing:
         qtbot.waitUntil(lambda: _ring_wraps(window, card))
         _key(card, Qt.Key.Key_Space)
         assert card.isSelected() and card.hasKeyFocus()
+        qtbot.waitUntil(lambda: card.contentFrame.band() == 1.0)
         assert _is(_inside(window, card, 0), "focusOnAccent")
         assert _is(_inside(window, card, 1), "focusOnAccent")
         assert _is(_inside(window, card, 2), "accent")
-        assert _is(_inside(window, card, 3), "cardHoverBg")
+        assert _is(_inside(window, card, 3), "accent")
+        assert _is(_inside(window, card, 4), "cardHoverBg")
 
     def test_picked_only_is_a_left_accent_bar_on_the_picked_background(
         self, window: VodDownloader, qtbot: QtBot
     ) -> None:
-        """고르기만 한(키보드 초점 없는) 카드는 왼쪽 끝 3px 강조색 띠와 고른 행 바탕이고 고리가 없어야 한다.
+        """고르기만 한(키보드 초점 없는) 카드는 왼쪽 끝 4px 강조색 띠와 고른 행 바탕이고 고리가 없어야 한다.
 
-        선택 모드, 카드 둘, 첫째 클릭 · 둘째에 키보드 초점 -> 첫째 카드 면 화소 0 · 1 · 2 ≈ accent, 3 ≈ cardHoverBg,
-        창의 첫째 행 안쪽 화소 0 ≈ accent(고리 없음), focus ring은 둘째에 있음
+        선택 모드, 카드 둘, 첫째 클릭 · 둘째에 키보드 초점 · 띠 애니메이션 끝 -> 첫째 카드 면 화소 0 ~ 3 ≈ accent,
+        4 ≈ cardHoverBg, 창의 첫째 행 안쪽 화소 0 ≈ accent(고리 없음), focus ring은 둘째에 있음
         """
         items = _add(window, D.WAITING, D.WAITING)
         _toggle_select_mode(window, True)
@@ -1743,8 +1745,9 @@ class TestFocusRing:
         qtbot.waitUntil(lambda: _ring_wraps(window, second))
         card = _card(window, items[0])
         assert card.isSelected() and not card.hasKeyFocus()
-        assert all(_is(_edge(card, depth), "accent") for depth in (0, 1, 2))
-        assert _is(_edge(card, 3), "cardHoverBg")
+        qtbot.waitUntil(lambda: card.contentFrame.band() == 1.0)
+        assert all(_is(_edge(card, depth), "accent") for depth in (0, 1, 2, 3))
+        assert _is(_edge(card, 4), "cardHoverBg")
         assert _is(_inside(window, card, 0), "accent")
 
 
@@ -1849,27 +1852,29 @@ class TestFocusRingWidget:
 class TestPickedBorderOverProgressBar:
     @pytest.mark.parametrize("state", [D.RUNNING, D.PAUSED])
     def test_bottom_border_of_a_picked_card_is_accent_over_the_bar(
-        self, window: VodDownloader, state: DownloadState
+        self, window: VodDownloader, qtbot: QtBot, state: DownloadState
     ) -> None:
-        """progress bar가 보이는 카드를 고르면 왼쪽 강조색 띠 3px가 progress bar 위에서도 이어져야 한다(#611).
+        """progress bar가 보이는 카드를 고르면 왼쪽 강조색 띠 4px가 progress bar 위에서도 이어져야 한다(#611).
 
-        받는 중 · 일시정지 카드(progress bar 보임), 선택 모드에서 클릭 -> 행 아래끝 막대 자리(아래에서 셋째 줄)의
-        왼쪽 화소 0 · 1 · 2 ≈ accent(고르기 전 화소 1은 accent가 아님), 화소 3은 accent가 아님
+        받는 중 · 일시정지 카드(progress bar 보임), 선택 모드에서 클릭 · 띠 애니메이션 끝 -> 행 아래끝 막대
+        자리(아래에서 셋째 줄)의 왼쪽 화소 0 ~ 3 ≈ accent(고르기 전 화소 1은 accent가 아님), 화소 4는 accent가 아님
         """
-        self._check(window, state, bar_shown=True)
+        self._check(window, qtbot, state, bar_shown=True)
 
     @pytest.mark.parametrize("state", [D.FINISHED, D.FAILED])
     def test_bottom_border_of_a_picked_card_without_a_bar_is_accent(
-        self, window: VodDownloader, state: DownloadState
+        self, window: VodDownloader, qtbot: QtBot, state: DownloadState
     ) -> None:
-        """progress bar가 없는 완료 · 실패 카드를 고르면 왼쪽 강조색 띠 3px가 행 아래끝까지 이어져야 한다 (#571 · #611).
+        """progress bar가 없는 완료 · 실패 카드를 고르면 왼쪽 강조색 띠 4px가 행 아래끝까지 이어져야 한다 (#571 · #611).
 
-        완료 · 실패 카드(progress bar 숨음), 선택 모드에서 클릭 -> 행 아래끝(아래에서 셋째 줄)의 왼쪽 화소
-        0 · 1 · 2 ≈ accent(고르기 전 화소 1은 accent가 아님), 화소 3은 accent가 아님
+        완료 · 실패 카드(progress bar 숨음), 선택 모드에서 클릭 · 띠 애니메이션 끝 -> 행 아래끝(아래에서 셋째 줄)의
+        왼쪽 화소 0 ~ 3 ≈ accent(고르기 전 화소 1은 accent가 아님), 화소 4는 accent가 아님
         """
-        self._check(window, state, bar_shown=False)
+        self._check(window, qtbot, state, bar_shown=False)
 
-    def _check(self, window: VodDownloader, state: DownloadState, bar_shown: bool) -> None:
+    def _check(
+        self, window: VodDownloader, qtbot: QtBot, state: DownloadState, bar_shown: bool
+    ) -> None:
         items = _add(window, state)
         card = _card(window, items[0])
         face = card.contentFrame
@@ -1881,11 +1886,12 @@ class TestPickedBorderOverProgressBar:
         _toggle_select_mode(window, True)
         _click(window, items[0])
         assert card.isSelected(), "전제: 골랐다"
+        qtbot.waitUntil(lambda: face.band() == 1.0)
         window_image = window.grab().toImage()
-        for depth in (0, 1, 2):
+        for depth in (0, 1, 2, 3):
             spot = face.mapTo(window, QPoint(depth, low))
             assert _is(_colour_at(window_image, spot.x(), spot.y()), "accent"), depth
-        spot = face.mapTo(window, QPoint(3, low))
+        spot = face.mapTo(window, QPoint(4, low))
         assert not _is(_colour_at(window_image, spot.x(), spot.y()), "accent")
 
 
