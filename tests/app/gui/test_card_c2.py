@@ -320,14 +320,17 @@ class TestRows:
         assert info.isElided()
         assert info.toolTip() == ""
 
-    def test_status_text_gives_way_before_the_info_text(self, qapp) -> None:
-        """다 접은 줄이 정보 글과 「…」까지 준 상태 글만큼이면 상태 글이 먼저 잘리고 정보 글은 온전해야 한다.
+    def test_info_text_stays_whole_when_the_status_text_is_at_its_least(
+        self, qapp: QApplication
+    ) -> None:
+        """다 접은 줄이 정보 글과 「…」까지 준 상태 글만큼이면 정보 글은 온전하고 상태 글은 그 최소 몫을 받아야 한다.
 
         받는 중 구간 카드(구간 셋, 받을 크기 모름 — 정보 글 한 꼴) · 다른 저장 위치, 먼저 카드 폭 300으로
-        다 접음(#554 — 저장 위치 · 속도 · 남은 시간이 빠짐)
+        다 접음(#554 — 저장 위치 · 속도 · 남은 시간이 빠짐, 상태 글 「37.0%」 — 상태 단어는 아이콘, inbox 177)
         3줄 폭 = 상태 원 + 간격 + 상태 글 앞 세 글자와 「…」 + 간격 + 접힌 정보 글 + 여유 10
-        (카드 폭 = 3줄 폭 + 테두리 2 + 안쪽 여백 16 + 썸네일 110 + 간격 12)
-        -> 정보 글 안 잘림, 상태 글 잘림
+        (카드 폭 = 3줄 폭 + 행 안쪽 좌우 12 + 썸네일 110 + 간격 12)
+        -> 정보 글 안 잘림, 상태 글 폭 >= 앞 세 글자와 「…」 몫. 상태 글 「37.0%」는 그 몫과 거의 같아 잘리는지는
+        재지 않는다(옛 「37.0% · Downloading」만 잘렸다)
         """
         card = _card(DownloadState.RUNNING, path="D:/vod/lck")
         # 구간 셋 — 정보 글이 길어져 3줄 폭이 어떤 글꼴에서도 카드 최소폭 위에 온다
@@ -352,7 +355,7 @@ class TestRows:
         QApplication.processEvents()
         assert card.statusRow.width() == row, "전제: 3줄 폭이 계산한 폭이다"
         assert not info.isElided(), "정보 글이 상태 글보다 먼저 잘렸다"
-        assert status.isElided()
+        assert status.width() >= kept, "상태 글이 앞 세 글자와 「…」 몫보다 좁아졌다"
 
     def test_row_one_shows_the_upload_date_with_the_year(self, qapp) -> None:
         """1줄 날짜가 연도까지 적혀야 한다.

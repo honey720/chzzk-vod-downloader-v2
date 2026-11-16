@@ -9,6 +9,7 @@ import threading
 import time
 
 from PySide6.QtCore import (
+    QCoreApplication,
     QDir,
     QEasingCurve,
     QEvent,
@@ -149,6 +150,18 @@ def _resolution_key(resolution) -> int:
 
 # 3줄 상태 원 아이콘(card_text.SlotTexts.icon) → 메뉴 버블의 상태 그림 — 같은 그림 · 같은 상태 색(#550)
 _STATUS_BUBBLE = {"down": "running", "pause": "paused", "ok": "done", "err": "all_failed"}
+
+
+def status_icon_name(icon: str) -> str:
+    """3줄 상태 원 아이콘의 접근성 이름 — 상태 이름 그대로(화면에서는 글을 빼고 아이콘만 둔다, inbox 177)."""
+    names = {
+        "down": QCoreApplication.translate("ContentItemWidget", "Downloading"),
+        "pause": QCoreApplication.translate("ContentItemWidget", "Paused"),
+        "ok": QCoreApplication.translate("ContentItemWidget", "Completed"),
+        "err": QCoreApplication.translate("ContentItemWidget", "Failed"),
+    }
+    return names.get(icon, "")
+
 
 # 카드 버튼 전부 — 왼쪽부터의 자리 차례(contentItemWidget.py가 이 차례로 놓는다)
 CARD_BUTTON_NAMES = (
@@ -1021,6 +1034,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._needs = None
         texts = self._levelTexts[0]
         self.statusIcon.setState(_STATUS_BUBBLE.get(texts.icon, ""))
+        self.statusIcon.setAccessibleName(status_icon_name(texts.icon))
         self.statusLabel.setDetailTip(texts.status_tip or "")
         self._appliedLevel = -1
         self._fitRow3()

@@ -3,7 +3,10 @@
 실제 메인 창 · 카드 위젯으로 잰다. 엔진 자리는 하단바 테스트의 서비스 대역을 쓴다.
 """
 
+from pathlib import Path
+
 import pytest
+from pytestqt.qtbot import QtBot
 from PySide6.QtWidgets import QApplication
 
 from app.viewmodels.data import ContentItem
@@ -32,10 +35,10 @@ def test_footer_and_card_show_a_time_left_past_a_day(qtbot, tmp_path) -> None:
 
 
 @pytest.mark.usefixtures("answers")
-def test_card_shows_an_elapsed_time_past_a_day(qtbot, tmp_path) -> None:
-    """받는 데 30시간 걸린 카드의 완료 글은 "· 30:00:00"으로 끝나야 한다.
+def test_card_shows_an_elapsed_time_past_a_day(qtbot: QtBot, tmp_path: Path) -> None:
+    """받는 데 30시간 걸린 카드의 완료 글은 "30:00:00"이어야 한다.
 
-    서비스 대역의 걸린 시간 108000초 → 완료 -> 카드 상태 글 끝 "· 30:00:00"
+    서비스 대역의 걸린 시간 108000초 → 완료 -> 카드 상태 글 "30:00:00"(「Completed」는 아이콘 — inbox 177)
     """
     win, items, engine = footer._window(tmp_path)
     engine.elapsed_seconds = lambda: float(DAY_AND_A_QUARTER)
@@ -43,7 +46,7 @@ def test_card_shows_an_elapsed_time_past_a_day(qtbot, tmp_path) -> None:
     footer._pump()
     footer._finish(engine)
     assert items[0].downloadState == DownloadState.FINISHED, "전제: 완료됐다"
-    assert win.listView.widgetFor(items[0]).statusLabel.text().endswith("· 30:00:00")
+    assert win.listView.widgetFor(items[0]).statusLabel.text() == "30:00:00"
 
 
 def _waiting_segment_card(duration: int | None) -> ContentItemWidget:

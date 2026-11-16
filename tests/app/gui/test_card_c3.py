@@ -572,12 +572,18 @@ class TestProgressBar:
         assert card.progressBar.isVisible()
         assert card.progressBar.maximum() == 0
 
-    def test_paused_while_preparing_shows_the_word_without_a_percentage(self, qapp) -> None:
-        """준비 중에 일시정지한 카드면 상태 글이 「Paused」뿐이어야 한다."""
+    def test_paused_while_preparing_shows_no_percentage_and_the_pause_icon(
+        self, qapp: QApplication
+    ) -> None:
+        """준비 중에 일시정지한 카드면 상태 글이 빈 글이고 상태 아이콘이 paused여야 한다.
+
+        PAUSED · prepare_pending -> 상태 글 ""(「Paused」는 아이콘 — inbox 177), 아이콘 "paused"
+        """
         item = _item(DownloadState.PAUSED)
         item.prepare_pending = True
         card = _card(item)
-        assert card.statusLabel.text() == "Paused"
+        assert card.statusLabel.text() == ""
+        assert card.statusIcon.state() == "paused"
 
     def test_full_bar_is_clipped_to_the_card_corner(self, qapp) -> None:
         """완료 카드의 꽉 찬 막대도 카드 면의 둥근 아래 모서리 밖 화소를 칠하지 않아야 한다.

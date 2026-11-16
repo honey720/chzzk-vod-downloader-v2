@@ -363,8 +363,8 @@ def test_done_count_is_hidden_while_transferring_and_shown_from_the_cut_stage(ca
     """완료 구간 수는 전송 중에는 숨기고, 컷 단계와 완료 카드의 상태 문구에 붙어야 한다.
 
     구간 셋. 전송 40% → 그 상태에서 일시정지 → 재개 → 컷 단계에서 구간 하나 끝남 → 셋 다 끝나고 완료 통지
-    -> 전송 중 == "32.0% · Downloading · 3.1 MB/s · 0:19 left"(수 없음), 전송 중 일시정지 == "32.0% · Paused"(수 없음),
-       컷 중 == "86.7% · Cutting · 1/3", 완료 == "Completed · 3/3 · 1:12"
+    -> 전송 중 == "32.0% · 3.1 MB/s · 0:19 left"(수 없음), 전송 중 일시정지 == "32.0%"(수 없음),
+       컷 중 == "86.7% · Cutting · 1/3", 완료 == "3/3 · 1:12"(상태 단어는 아이콘 — inbox 177)
     """
     card.start()
     card.transfer(0.4)
@@ -382,11 +382,11 @@ def test_done_count_is_hidden_while_transferring_and_shown_from_the_cut_stage(ca
     card.submission["on_finished"]()
     card.qapp.processEvents()
 
-    assert transferring == "32.0% · Downloading · 3.1 MB/s · 0:19 left"
-    assert paused == "32.0% · Paused"
+    assert transferring == "32.0% · 3.1 MB/s · 0:19 left"
+    assert paused == "32.0%"
     assert cutting == "86.7% · Cutting · 1/3"
     assert card.item.downloadState is DownloadState.FINISHED
-    assert card.status == "Completed · 3/3 · 1:12"
+    assert card.status == "3/3 · 1:12"
 
 
 # ================================================================ 컷 단계
@@ -485,13 +485,13 @@ def test_waiting_card_shows_the_section_summary_in_the_info_text(card) -> None:
         (
             "hls_aes",
             "1080p · 2:00:00",
-            "40.0% · Downloading · 3.1 MB/s · 0:19 left",
+            "40.0% · 3.1 MB/s · 0:19 left",
             "50.0% · Post-processing",
         ),
         (
             "video",
             "1080p · Checking... · 2:00:00",  # 크기 조회는 막혀 있다(조회 중 글)
-            "40.0% · Downloading · 3.1 MB/s · 0:19 left",
+            "40.0% · 3.1 MB/s · 0:19 left",
             None,
         ),
     ],
@@ -502,8 +502,8 @@ def test_whole_download_card_text_is_unchanged(
     """구간이 없는 카드의 대기 · 전송 · 후처리 · 완료 문구는 구간 표시가 없던 때와 같아야 한다.
 
     구간 없는 카드(세그먼트 기반 · 파일). 전송 40% → (세그먼트 기반만) 병합 5/10 → 완료
-    -> 대기의 정보 글(해상도 · 파일은 크기 · 길이) · 전송 문구 · 후처리 문구 · 완료 문구가
-       주석의 글 그대로다
+    -> 대기의 정보 글(해상도 · 파일은 크기 · 길이) · 전송 문구 · 후처리 문구 · 완료 문구("1:12")가
+       주석의 글 그대로다(받는 중 · 완료 단어는 상태 아이콘이 말한다 — inbox 177)
     """
     card = _Card(qapp, tmp_path, content_type, selections=())
     try:
@@ -526,7 +526,7 @@ def test_whole_download_card_text_is_unchanged(
 
         assert card.submission["content"].selections == ()
         assert (waiting_text, running_text, postprocess_text) == (waiting, running, postprocess)
-        assert card.status == "Completed · 1:12"
+        assert card.status == "1:12"
     finally:
         card.close()
 
@@ -536,7 +536,7 @@ def test_single_section_card_shows_no_done_count(qapp, tmp_path) -> None:
 
     구간 하나. 전송 40% → 컷 단계에서 그 구간이 끝남 → 완료
     -> 전송 · 컷 · 완료 문구 어디에도 "수/수" 모양이 없다, 컷 문구 == "100% · Cutting",
-       완료 문구 == "Completed · 1:12"
+       완료 문구 == "1:12"(「Completed」는 상태 아이콘 — inbox 177)
     """
     card = _Card(qapp, tmp_path, "hls_aes", selections=SELECTIONS[:1])
     try:
@@ -552,7 +552,7 @@ def test_single_section_card_shows_no_done_count(qapp, tmp_path) -> None:
         texts.append(card.status)
 
         assert not any(re.search(r"\d+/\d+", text) for text in texts)
-        assert texts[1:] == ["100% · Cutting", "Completed · 1:12"]
+        assert texts[1:] == ["100% · Cutting", "1:12"]
     finally:
         card.close()
 
@@ -647,7 +647,8 @@ def test_retry_bar_starts_from_zero_and_the_count_continues_from_the_finished_se
     전송 0% · 50% → 컷 단계 → 둘째 구간 끝남 → 완료 통지. 전송에 둘째 구간(11초)의 컷 예상
     시간의 4.02배가 걸림
     -> 진행률 == [0, 40, 80, 100], 전송 중 문구에 구간 수 없음, 컷 단계 == "80.0% · Cutting · 2/3",
-       둘째가 끝난 뒤 == "100% · Cutting · 3/3", 완료 == "Completed · 3/3 · 1:12", 남긴 것이 지워진다
+       둘째가 끝난 뒤 == "100% · Cutting · 3/3", 완료 == "3/3 · 1:12"(상태 단어는 아이콘 — inbox 177),
+       남긴 것이 지워진다
     """
     _fail_second_section(card)
     card.retry()
@@ -671,8 +672,11 @@ def test_retry_bar_starts_from_zero_and_the_count_continues_from_the_finished_se
 
     assert [progress for progress, _text in seen] == [0, 40, 80, 100]
     assert not re.search(r"\d+/\d+", seen[0][1] + seen[1][1])
-    assert [text for _progress, text in seen[2:]] == ["80.0% · Cutting · 2/3", "100% · Cutting · 3/3"]
-    assert card.status == "Completed · 3/3 · 1:12"
+    assert [text for _progress, text in seen[2:]] == [
+        "80.0% · Cutting · 2/3",
+        "100% · Cutting · 3/3",
+    ]
+    assert card.status == "3/3 · 1:12"
     assert card.item.section_retry is None
 
 

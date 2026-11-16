@@ -614,9 +614,10 @@ def info_text(
 def slot_texts(item: ContentItem, level: int = 0) -> SlotTexts:
     """카드 3줄의 상태 글 · 정보 글 · 상태 툴팁 · 상태 원 아이콘 — 상태마다 다르다 (#245 · #550).
 
-    상태 글은 진행률이 앞, 상태 단어가 그 뒤다(「37% · 받는 중 · 18.4 MB/s · 6:00 남음」) — 상태가
-    바뀌어도 진행률 자리가 흔들리지 않는다(#245, 설계 §12.1 카드 글 · 초점). 완료 · 실패 표시는 글
-    머리 글자 대신 상태 원 아이콘(↓ ‖ ✓ ✕, 상태 색)이 맡는다.
+    상태 글은 진행률이 앞이다(「37% · 18.4 MB/s · 6:00 남음」) — 상태가 바뀌어도 진행률 자리가 흔들리지
+    않는다(#245, 설계 §12.1 카드 글 · 초점). 받는 중 · 일시정지 · 완료 · 실패는 상태 단어를 글에 적지 않고 상태
+    원 아이콘(↓ ‖ ✓ ✕ — 모양이 상태마다 다르고 색은 보조)이 맡는다. 상태 이름은 아이콘의 접근성 이름이다
+    (inbox 177). 아이콘이 말하지 못하는 단계(준비 중 · 자르는 중 · 후처리 중)는 글로 적는다.
 
     `level`은 3줄 접는 단계다(#554 — `LEVEL_MAX` 주석). 진행률 · 상태 단어 · 실패 사유 앞은 어느
     단계에서도 빼지 않는다.
@@ -654,8 +655,8 @@ def slot_texts(item: ContentItem, level: int = 0) -> SlotTexts:
             postprocess_text = QCoreApplication.translate("ContentItemWidget", "Post-processing")
             status = f"{progress_text(progress_value(item))} · {postprocess_text}"
         else:
-            receiving_text = QCoreApplication.translate("ContentItemWidget", "Downloading")
-            parts = [progress_text(progress_value(item)), receiving_text]
+            # 「받는 중」은 적지 않는다 — 상태 원 아이콘(↓)이 말한다(inbox 177)
+            parts = [progress_text(progress_value(item))]
             if level < LEVEL_SPEED and item.download_speed:
                 parts.append(f"{item.download_speed}")
             if level < LEVEL_REMAIN:
@@ -667,23 +668,23 @@ def slot_texts(item: ContentItem, level: int = 0) -> SlotTexts:
         return SlotTexts(status, info_text(item, level=level), icon="down")
 
     if state == DownloadState.PAUSED:
-        # 진행분이 먼저, 상태가 뒤 — "54% · 일시정지됨"
-        paused_text = QCoreApplication.translate("ContentItemWidget", "Paused")
+        # 진행분만 — 「일시정지됨」은 상태 원 아이콘(‖)이 말한다(inbox 177)
         if getattr(item, "prepare_pending", False):
             # 준비 중에 일시정지했다 (#309) — 아직 받은 것이 없어 진행률을 적지 않는다
-            status = paused_text
+            status = ""
         else:
-            status = f"{progress_text(progress_value(item))} · {paused_text}{tally}"
+            status = f"{progress_text(progress_value(item))}{tally}"
         return SlotTexts(status, info_text(item, level=level), icon="pause")
 
     if state == DownloadState.FINISHED:
         # "완료 · 2:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은 포맷(#245). 값은 엔진의
         # start_time~end_time으로 만든 "HH:MM:SS"이고, 값이 없으면(앱 재시작 복원 등) 시간 없이.
         # 소요 시간은 ⑥에서 남은 시간과 함께 뺀다(#554 — 프로토 가는 「✓ 완료」만 남긴다)
-        completed = QCoreApplication.translate("ContentItemWidget", "Completed") + tally
+        # 「완료」는 상태 원 아이콘(✓)이 말한다(inbox 177) — 글은 소요 시간 · 구간 집계만
         with_elapsed = item.download_time and level < LEVEL_REMAIN
         elapsed = short_time(item.download_time) if with_elapsed else ""
-        status = f"{completed} · {elapsed}" if elapsed else completed
+        # 집계가 앞, 소요 시간이 뒤 — 옛 「완료 · 3/3 · 1:12」에서 단어만 뺀 차례(「3/3 · 1:12」)
+        status = " · ".join(part for part in (tally.removeprefix(" · "), elapsed) if part)
         return SlotTexts(status, info_text(item, level=level), icon="ok")
 
     # 실패 — 사유(stateMessage)는 키 기반 매핑을 거친 번역 문자열만 온다. 매핑 밖 예외는

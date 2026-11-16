@@ -59,6 +59,10 @@
 <context>
     <name>ContentItemWidget</name>
     <message>
+        <source>Failed</source>
+        <translation>Failed</translation>
+    </message>
+    <message>
         <source>(source)</source>
         <translation>(source)</translation>
     </message>

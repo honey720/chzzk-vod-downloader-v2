@@ -211,38 +211,51 @@ class TestSlotColumn:
         assert widget.pauseButton.iconName() == "pause"
         assert widget.progressBar.isVisible() and widget.progressBar.value() == 1300
 
-    def test_paused_shows_percent_first_then_paused(self, qapp) -> None:
+    def test_paused_shows_only_the_percent_with_the_pause_icon(self, qapp: QApplication) -> None:
+        """일시정지 카드면 상태 글이 진행률 「54.0%」뿐이고 상태 아이콘이 paused여야 한다.
+
+        PAUSED · 54% -> 상태 글 "54.0%"(「Paused」 · 남은 시간 없음 — inbox 177), 아이콘 "paused"
+        """
         widget = _make_widget(qapp, DownloadState.PAUSED, 54)
         text = widget.statusLabel.text()
         assert widget.statusLabel.isVisible()
-        assert text.startswith("54.0%"), f"진행분이 앞에 와야 한다: {text!r}"
-        assert text.endswith("Paused"), f"뒤 문구는 '일시정지됨'(Paused)이어야 한다: {text!r}"
-        assert "Download paused" not in text, (
-            "옛 문구('다운로드 정지')가 남아 있다 — 정지는 완전 중단으로 읽힌다"
-        )
-        assert "left" not in text, "일시정지에 남은 시간이 붙어 있다 — 멈춘 상태에 남은 시간은 없다"
+        assert text == "54.0%", text
+        assert widget.statusIcon.state() == "paused"
 
-    def test_finished_shows_check_completed_and_elapsed(self, qapp) -> None:
-        """ "완료 · 5:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은 포맷.
-        전송 성능에 들인 공이 유저에게 보이는 유일한 자리다(#245). ✓는 상태 원이 맡는다(#550)."""
+    def test_finished_shows_the_elapsed_time_with_the_done_icon(self, qapp: QApplication) -> None:
+        """완료 카드면 상태 글이 소요 시간 「5:12」이고 상태 아이콘이 done이어야 한다.
+
+        FINISHED · download_time 00:05:12 -> 상태 글 "5:12"(「Completed」는 아이콘 — inbox 177), 아이콘 "done"
+        """
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
-        assert widget.statusLabel.text() == "Completed · 5:12", widget.statusLabel.text()
+        assert widget.statusLabel.text() == "5:12", widget.statusLabel.text()
+        assert widget.statusIcon.state() == "done"
 
-    def test_finished_elapsed_uses_the_same_short_format_as_remaining(self, qapp) -> None:
+    def test_finished_elapsed_uses_the_same_short_format_as_remaining(
+        self, qapp: QApplication
+    ) -> None:
+        """완료 카드의 소요 시간은 남은 시간과 같은 짧은 꼴이어야 한다.
+
+        download_time "01:02:03" -> "1:02:03", "00:00:07" -> "0:07"
+        """
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
         widget.item.download_time = "01:02:03"
         widget.setData(widget.item, 0)
-        assert widget.statusLabel.text().endswith("· 1:02:03")
+        assert widget.statusLabel.text() == "1:02:03"
         widget.item.download_time = "00:00:07"
         widget.setData(widget.item, 0)
-        assert widget.statusLabel.text().endswith("· 0:07")
+        assert widget.statusLabel.text() == "0:07"
 
-    def test_finished_without_elapsed_shows_completed_only(self, qapp) -> None:
-        """값이 없으면 억지로 채우지 않는다 — "완료"만."""
+    def test_finished_without_elapsed_shows_no_status_text(self, qapp: QApplication) -> None:
+        """완료 카드에 소요 시간이 없으면 상태 글이 빈 글이고 상태 아이콘이 done이어야 한다.
+
+        FINISHED · download_time "" -> 상태 글 "", 아이콘 "done"
+        """
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
         widget.item.download_time = ""
         widget.setData(widget.item, 0)
-        assert widget.statusLabel.text() == "Completed"
+        assert widget.statusLabel.text() == ""
+        assert widget.statusIcon.state() == "done"
 
     def test_failed_shows_reason_without_a_cross_glyph(self, qapp) -> None:
         """실패 카드의 상태 글은 「✕ 」 머리 없이 사유만이어야 한다 — ✕는 상태 원이 맡는다 (#550).
