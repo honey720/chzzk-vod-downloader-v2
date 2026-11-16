@@ -1188,3 +1188,85 @@ class TestMenuTabFocusBox:
         assert max(shown) == max(x for x, _ in dots) + FOCUS_PAD
         assert max(before) < max(shown)
         assert max(after) == max(before)
+
+
+BARS = ["appMenuBar", "headerFrame", "infoFrame"]  # 메뉴바 · 헤더바 · 하단바
+
+
+def _empty_spot(win: VodDownloader, bar: QWidget) -> QPoint:
+    """바 세로 가운데 줄에서 바 자신이 누름을 받는 자리(그 위에 자식 위젯이 없는 곳)의 창 좌표."""
+    assert bar.isVisible(), "전제: 바가 보인다"
+    y = bar.height() // 2
+    for x in range(bar.width() - 1, -1, -1):
+        if bar.childAt(QPoint(x, y)) is None:
+            return bar.mapTo(win, QPoint(x, y))
+    raise AssertionError("전제: 바에 빈 곳이 있다")
+
+
+def _press_window(win: VodDownloader, spot: QPoint) -> None:
+    """창(`QWindow`)에 왼쪽 버튼 누름 · 뗌 합성 이벤트를 보낸다 — 실제 커서는 옮기지 않는다."""
+    from PySide6.QtTest import QTest
+
+    QTest.mouseClick(win.windowHandle(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier(0), spot)
+    _pump()
+
+
+class TestBarEmptyPressFocusesList:
+    """바의 빈 곳을 누르면 입력 칸 등의 초점이 풀리고 카드 목록이 초점을 받는다(#611 176g)."""
+
+    @pytest.mark.parametrize("name", BARS)
+    def test_pressing_an_empty_spot_moves_focus_from_the_url_field_to_the_list(
+        self, window: Callable[..., VodDownloader], qtbot, name: str
+    ) -> None:
+        """URL 칸에 초점이 있을 때 바의 빈 곳을 누르면 카드 목록이 초점을 받아야 한다.
+
+        대기 카드 둘, URL 칸에 초점 -> 메뉴바 · 헤더바 · 하단바의 빈 곳(자식 위젯 없는 자리)을 누름
+        -> 초점 위젯 == 카드 목록, URL 칸 초점 없음
+        """
+        win = window(DownloadState.WAITING, DownloadState.WAITING)
+        _focus(win, win.urlInput, qtbot)
+        _press_window(win, _empty_spot(win, getattr(win, name)))
+        qtbot.waitUntil(win.listView.hasFocus, timeout=3000)
+        assert not win.urlInput.hasFocus()
+
+    def test_pressing_the_url_field_keeps_its_focus(
+        self, window: Callable[..., VodDownloader], qtbot
+    ) -> None:
+        """초점을 받는 위젯(URL 칸)을 누르면 초점이 그 위젯에 가야 한다.
+
+        대기 카드 하나, 목록에 초점 -> URL 칸 가운데를 누름 -> 초점 위젯 == URL 칸
+        """
+        win = window(DownloadState.WAITING)
+        _focus(win, win.listView, qtbot)
+        _press_window(win, _rect(win, win.urlInput).center())
+        qtbot.waitUntil(win.urlInput.hasFocus, timeout=3000)
+
+    def test_picks_and_the_focused_card_stay_after_pressing_an_empty_spot(
+        self, window: Callable[..., VodDownloader], qtbot
+    ) -> None:
+        """선택 모드에서 고른 카드 · 초점 카드가 있을 때 바의 빈 곳을 누르면 둘 다 그대로여야 한다.
+
+        대기 카드 셋, 선택 모드 · 첫째 · 셋째 고름 · 카드에 Tab 초점 -> 헤더바 빈 곳 누름
+        -> 고른 카드 = 첫째 · 셋째, 초점 위젯 == 누르기 전 초점 카드
+        """
+        win = window(DownloadState.WAITING, DownloadState.WAITING, DownloadState.WAITING)
+        view = win.listView
+        view.setSelecting(True)
+        for row in (0, 2):
+            view.cardPicked(_card(win, row), Qt.KeyboardModifier.NoModifier)
+        picked = view.selectedItems()
+        assert len(picked) == 2, "전제: 둘을 골랐다"
+        second = _card(win, 1)
+
+        def focused() -> bool:
+            if not win.isActiveWindow():
+                win.activateWindow()
+                return False
+            second.setFocus(Qt.FocusReason.TabFocusReason)
+            return isinstance(QApplication.focusWidget(), ContentItemWidget)
+
+        qtbot.waitUntil(focused, timeout=3000)
+        card = QApplication.focusWidget()
+        _press_window(win, _empty_spot(win, win.headerFrame))
+        assert view.selectedItems() == picked
+        assert QApplication.focusWidget() is card

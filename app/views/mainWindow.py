@@ -23,6 +23,7 @@ from PySide6.QtCore import (
     QEvent,
     QMargins,
     QMetaObject,
+    QObject,
     QPoint,
     QRect,
     QSize,
@@ -543,6 +544,34 @@ class VodDownloader(QMainWindow):
         self.selectBar = SelectBar(self.contentColumn)
         for bar in (self.appMenuBar, self.headerFrame, self.infoFrame, self.selectBar):
             install_tips(bar)
+        # 세 바의 빈 곳(초점을 받지 않는 자리)을 누르면 초점이 목록으로 간다(#611 176g). 누름을 받지 않는 글 ·
+        # 아이콘의 누름은 바까지 올라오고, 버튼 · 입력 칸처럼 누름을 받는 위젯의 누름은 올라오지 않는다
+        self._focusBars = (self.appMenuBar, self.headerFrame, self.infoFrame)
+        for bar in self._focusBars:
+            bar.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """바의 빈 곳을 왼쪽 버튼으로 누르면 초점을 목록으로 옮긴다 — 누름은 그대로 흘려보낸다(#611)."""
+        # 종류부터 본다 — 창이 지워지는 동안 오는 이벤트에서 바 튜플을 건드리지 않는다
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and event.button() == Qt.MouseButton.LeftButton
+            and watched in self._focusBars
+        ):
+            self._focusListFromBar()
+        return super().eventFilter(watched, event)
+
+    def _focusListFromBar(self) -> None:
+        """입력 칸 등에 있던 초점을 풀고 목록이 받게 한다 — 시작 초점과 같은 대상 · 같은 까닭(초점 테두리 없음).
+
+        초점이 이미 목록(목록 · 카드) 안이면 그대로 둔다 — 초점 카드 · 고름을 바꾸지 않는다.
+        """
+        focused = QApplication.focusWidget()
+        if focused is not None and (
+            focused is self.listView or self.listView.isAncestorOf(focused)
+        ):
+            return
+        self.listView.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _applyLayoutMetrics(self) -> None:
         """메뉴바 · 헤더바 · 목록 · 하단바의 여백을 theme.METRICS 토큰으로 건다 (#244 · #536).
