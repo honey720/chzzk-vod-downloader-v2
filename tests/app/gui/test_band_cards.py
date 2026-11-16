@@ -1062,6 +1062,42 @@ class TestDisabledFields:
         assert _is(edge, "border")
         assert not _is(edge, "fieldBorder")
 
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_combo_text_is_dimmed_only_when_disabled(
+        self, field: Callable[[str], tuple[QWidget, QWidget]], enabled: bool
+    ) -> None:
+        """콤보 글은 켜졌을 때 text, 꺼졌을 때 textDisabled 색이어야 한다(#611 176g).
+
+        콤보 글 「█」(글꼴 크기 28px — 획 가운데 화소가 바탕과 섞이지 않게), 켬 · setEnabled(False)
+        -> 칸 안쪽(테두리 · 화살표 칸 밖)에서 surfaceAlt와 가장 먼 화소 ≈ text(켬) · textDisabled(끔)
+        """
+        _, combo = field("combo")
+        font = combo.font()
+        font.setPixelSize(28)
+        combo.setFont(font)
+        combo.setItemText(0, "█")
+        combo.setFixedHeight(48)
+        combo.setEnabled(enabled)
+        _pump()
+        assert combo.isVisible() and combo.isEnabled() == enabled, "전제: 보이고 켜짐 · 꺼짐이 맞다"
+        image = combo.grab().toImage()
+        ground = QColor(theme.current_tokens()["surfaceAlt"])
+
+        def gap(colour: QColor) -> int:
+            return (
+                abs(colour.red() - ground.red())
+                + abs(colour.green() - ground.green())
+                + abs(colour.blue() - ground.blue())
+            )
+
+        inside = [
+            _pixel(image, x, y)
+            for x in range(4, combo.width() - 24)  # 왼쪽 테두리 · 오른쪽 화살표 칸(20) 밖
+            for y in range(4, combo.height() - 4)
+        ]
+        ink = max(inside, key=gap)
+        assert _is(ink, "text" if enabled else "textDisabled"), ink.name()
+
 
 FOCUS_PAD = 4  # 초점 상자 ↔ 탭 내용(글 · 버블) 좌우 간격(px) — 지시 값(#611 176f)
 BUBBLE_STATE = "done"  # 버블 색(stateFinished)이 강조색과 달라 상자 화소와 섞이지 않는 상태

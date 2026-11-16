@@ -711,8 +711,9 @@ QComboBox:hover {
     border-color: @fieldBorderStrong;
 }
 
-/* 꺼진 콤보 — 입력 칸과 같이 테두리만 옅은 border로(#611). 면 · 글은 그대로 */
+/* 꺼진 콤보 — 입력 칸과 같이 테두리 옅은 border · 글 textDisabled(#611). 면은 그대로 */
 QComboBox:disabled {
+    color: @textDisabled;
     border-color: @border;
 }
 
