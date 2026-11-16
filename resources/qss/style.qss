@@ -184,7 +184,7 @@ QLabel#thumbnailLabel {
 }
 
 /* 고른 행(선택 모드, #611 — 설계 §13): 행 바탕 한 단계(호버와 같은 색). 왼쪽 강조색 띠는 카드 면이 그린다.
- * `picked`는 app/widgets/contentItemWidget.py::CardFace.setSelected가 심는다. 눌린 바탕이 앞서도록 눌림 규칙 앞에 둔다 */
+ * `picked`는 app/widgets/contentItemWidget.py::CardFace.setSelected가 심는다. */
 #contentFrame[picked="true"] {
     background-color: @cardHoverBg;
 }
@@ -195,20 +195,6 @@ QLabel#thumbnailLabel {
 
 #contentFrame[tint="failed"][picked="true"] {
     background-color: @cardTintFailedHover;
-}
-
-/* 눌린 카드(#561) — 호버에서 한 단계 더. `pressed`는 app/widgets/widget.py::_setPressed가 심는다(고르기를
- * 시작한 누름 동안만). 호버와 함께 켜지므로 호버 규칙 뒤에 두고, 색조 카드는 속성 수가 같은 규칙으로 따로 둔다 */
-#contentFrame[pressed="true"] {
-    background-color: @cardPressedBg;
-}
-
-#contentFrame[tint="finished"][pressed="true"] {
-    background-color: @cardTintFinishedPressed;
-}
-
-#contentFrame[tint="failed"][pressed="true"] {
-    background-color: @cardTintFailedPressed;
 }
 
 /* 색조 위 상태 글 — 같은 색상의 밝기만 옮겨 4.5를 지키는 색(theme.py `…OnTint`) */

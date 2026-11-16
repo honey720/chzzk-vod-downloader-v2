@@ -327,8 +327,6 @@ TINT_DE00 = {
     "light": 10.0,
 }  # 색조 ↔ 카드 면 ΔE00 목표 — 설계 §8의 6(오너 2026-11-02)
 TINT_TEXT_CONTRAST = 4.5  # 색조 위 글의 대비 하한 — 설계 §11.5
-# 눌린 카드 바탕 ↔ 호버 바탕 ΔE00 목표 — 카드 면 → 호버와 같은 크기로 한 단계 더(#561)
-PRESS_DE00 = 3.0
 # 입력 칸 호버 테두리 ↔ 평소 테두리 ΔE00 — border → borderStrong 한 단계와 같은 크기(#611 176g · 176h)
 FIELD_HOVER_DE00 = 6.7
 
@@ -497,23 +495,6 @@ def _hover_of(tint: str, card: str, hover: str) -> str:
     return _from_oklab((big_l + _oklab(hover)[0] - _oklab(card)[0], a, b))
 
 
-def _pressed_of(card: str, hover: str) -> str:
-    """눌린 카드 바탕 — 호버 바탕에서 카드 면 → 호버와 같은 쪽으로 밝기만 더 옮겨 ΔE00 `PRESS_DE00`이 되는 색.
-
-    다크는 더 밝게, 라이트는 더 어둡게 간다(#561). 색상 · 채도는 호버 바탕 그대로다.
-    """
-    big_l, a, b = _oklab(hover)
-    direction = 1.0 if big_l >= _oklab(card)[0] else -1.0
-    low, high = 0.0, 0.2
-    for _ in range(40):
-        middle = (low + high) / 2
-        if delta_e00(hover, _from_oklab((big_l + direction * middle, a, b))) < PRESS_DE00:
-            low = middle
-        else:
-            high = middle
-    return _from_oklab((big_l + direction * low, a, b))
-
-
 def _readable_on(color: str, grounds: tuple[str, ...]) -> str:
     """`color`의 색상 · 채도는 두고 OKLab 밝기만 옮겨 모든 `grounds` 위 4.5가 되는 가장 가까운 색.
 
@@ -548,26 +529,18 @@ def _field_hover(edge: str, face: str) -> str:
 
 
 def _card_tints(table: dict, scheme: str) -> None:
-    """완료 · 실패 색조(+ 호버 · 눌림 · 그 위 상태 글 색)를 표에 더한다.
+    """완료 · 실패 색조(+ 호버 · 그 위 상태 글 색)를 표에 더한다.
 
     색조 세기는 목표(ΔE00)를 먼저 정한다(설계 §8의 6). 본문 · 보조 글은 그 세기에서 4.5를 지키는지
     본다. 상태 글(완료 초록 · 실패 빨강)은 색조 위에서 4.5가 되게 같은 색상의 밝기만 옮긴 색을 따로 둔다
     (`state…OnTint`) — 라이트의 완료 초록은 흰 카드에서 이미 4.5라 색조가 조금만 생겨도 4.5 아래로 내려간다.
-
-    눌린 바탕(`…Pressed`, #561)은 호버에서 한 단계 더 간 색이다 — 색조는 카드 면 → 눌린 바탕의 밝기 차를
-    옮긴다. 누르는 동안만
-    보이는 면이라 세기(`PRESS_DE00`)를 먼저 지킨다 — 본문 글은 4.5를 지키고 보조 글은 그 아래로 내려간다
-    (tests/app/gui/test_theme_contrast.py가 하한을 잰다).
     """
     card, hover, target = table["cardBg"], table["cardHoverBg"], TINT_DE00[scheme]
-    pressed = _pressed_of(card, hover)
-    table["cardPressedBg"] = pressed
     texts = (table["text"], table["textMuted"])
     for name, state in (("Finished", "stateFinished"), ("Failed", "stateFailed")):
         tint = _tinted(card, table[state], target, texts)
         table[f"cardTint{name}"] = tint
         table[f"cardTint{name}Hover"] = _hover_of(tint, card, hover)
-        table[f"cardTint{name}Pressed"] = _hover_of(tint, card, pressed)
         table[f"{state}OnTint"] = _readable_on(table[state], (tint, table[f"cardTint{name}Hover"]))
 
 

@@ -205,17 +205,15 @@ class CardFace(QFrame):
             self.update()
 
     def _step(self) -> str:
-        """바탕의 호버 · 눌림 단계 — "Pressed" · "Hover" · "" (QSS 바탕 규칙과 같은 차례, 고른 행은 호버 단계)."""
-        if self.property("pressed") is True:
-            return "Pressed"
+        """바탕의 호버 단계 — "Hover" · "" (QSS 바탕 규칙과 같은 차례, 고른 행은 호버 단계)."""
         return "Hover" if self.property("hover") is True or self._selected else ""
 
     def _washColor(self) -> QColor:
-        """모션 동안 칠하는 색조 — 지금 호버 · 눌림 단계의 색조(QSS 색조 규칙과 같은 토큰, #571)."""
+        """모션 동안 칠하는 색조 — 지금 호버 단계의 색조(QSS 색조 규칙과 같은 토큰, #571)."""
         return QColor(theme.current_tokens()[self._washToken + self._step()])
 
     def colorAt(self, x: int) -> QColor:
-        """면 좌표 `x`에서 보이는 바탕색 — 색조 · 호버 · 눌림을 따른다(카드 버튼 덮개가 쓴다)."""
+        """면 좌표 `x`에서 보이는 바탕색 — 색조 · 호버를 따른다(카드 버튼 덮개가 쓴다)."""
         tokens = theme.current_tokens()
         step = self._step()
         tint = self.property("tint")
@@ -223,7 +221,7 @@ class CardFace(QFrame):
             name = "cardTintFinished" if tint == "finished" else "cardTintFailed"
             ground = QColor(tokens[name + step])
         else:
-            ground = QColor(tokens["card" + step + "Bg"])  # cardBg · cardHoverBg · cardPressedBg
+            ground = QColor(tokens["card" + step + "Bg"])  # cardBg · cardHoverBg
         if self._washToken:
             ground = mix(ground, self._washColor(), self._wash / 255)
         return ground

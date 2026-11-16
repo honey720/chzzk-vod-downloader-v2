@@ -633,13 +633,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
     # ---- 고르기 — 마우스 · Space 모두 누를 때 (#561 · #611) ----
     # 마우스 왼쪽 버튼과 Space는 누르는 순간 고르거나 푼다(Windows 탐색기 등 표준 동작, 오너 실기 2026-11-16) —
-    # 눌린 바탕은 켜지 않는다. 둘 중 먼저 누른 것만 따르고, 누르고 있는 동안 다른 쪽 누름은 고르지 않는다.
+    # 눌린 바탕은 없다(#611 176i). 둘 중 먼저 누른 것만 따르고, 누르고 있는 동안 다른 쪽 누름은 고르지 않는다.
     # 드래그로 순서 바꾸기(2.13.0)가 들어오면 이미 고른 카드를 누를 때만 고르기를 뗄 때로 미룬다 — 누름이
     # 끌기의 시작일 수 있어서다. 고르지 않은 카드는 그때도 누를 때 고른다
-
-    def isPressed(self) -> bool:
-        """눌린 바탕(프레임의 `pressed` 속성)이 켜져 있는지 — 고르기가 누를 때라 켜는 곳이 없다(#611)."""
-        return self.contentFrame.property("pressed") is True
 
     def _pressPick(self, event: QMouseEvent) -> None:
         """왼쪽 버튼 누름을 목록에 알리고, 고르기를 시작하는 누름이면 바로 고른다(#611).

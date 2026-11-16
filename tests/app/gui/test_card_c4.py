@@ -1911,7 +1911,6 @@ class TestPickOnPress:
         card = _card(window, items[0])
         _press(window, items[0])
         assert _picked(window) == [items[0]]
-        assert not card.isPressed()
         assert card.contentFrame.property("pressed") is not True
         _release(window, items[0])
         assert _picked(window) == [items[0]]
@@ -1939,32 +1938,32 @@ class TestPickOnPress:
         _toggle_select_mode(window, True)
         _press(window, items[0])
         _drag_to(window, items[1])
-        assert not _card(window, items[0]).isPressed()
-        assert not _card(window, items[1]).isPressed()
+        assert _card(window, items[0]).contentFrame.property("pressed") is not True
+        assert _card(window, items[1]).contentFrame.property("pressed") is not True
         _release(window, items[1])
         assert _picked(window) == [items[0]]
 
     @pytest.mark.parametrize(
-        ("state", "pressed"),
+        ("state", "picked"),
         [
-            (D.WAITING, "cardPressedBg"),
-            (D.FINISHED, "cardTintFinishedPressed"),
-            (D.FAILED, "cardTintFailedPressed"),
+            (D.WAITING, "cardHoverBg"),
+            (D.FINISHED, "cardTintFinishedHover"),
+            (D.FAILED, "cardTintFailedHover"),
         ],
     )
-    def test_pressed_card_ground_is_not_the_pressed_token(
-        self, window: VodDownloader, state: DownloadState, pressed: str
+    def test_pressed_card_ground_is_the_picked_ground(
+        self, window: VodDownloader, state: DownloadState, picked: str
     ) -> None:
-        """누르고 있는 카드의 바탕은 그 카드 종류의 눌린 색이 아니어야 한다.
+        """누르고 있는 카드의 바탕은 고른 카드 바탕(호버 단계)과 같아야 한다 — 눌린 바탕은 없다(#611 176i).
 
-        선택 모드, 대기 · 완료 · 실패 카드를 누름 -> 카드 면 왼쪽에서 넷째 화소 ≉ 눌린 색 토큰(한도 8)
+        선택 모드, 대기 · 완료 · 실패 카드를 누름 -> 카드 면 왼쪽에서 일곱째 화소 ≈ 그 종류의 호버 토큰(한도 8)
         """
         items = _add(window, state, D.WAITING)
         _toggle_select_mode(window, True)
         card = _card(window, items[0])
         _press(window, items[0])
         assert _picked(window) == [items[0]], "전제: 눌러서 골랐다"
-        assert not _is(_edge(card, 3), pressed, 8)
+        assert _is(_edge(card, 6), picked, 8)  # 왼쪽 강조색 띠(0 ~ 3) 밖
         _release(window, items[0])
 
     def test_shift_range_is_added_on_press(self, window: VodDownloader) -> None:
@@ -2005,7 +2004,7 @@ class TestPickOnPress:
         _press(window, items[0], modifier)
         assert window.listView.isSelecting()
         assert _picked(window) == [items[0]]
-        assert not card.isPressed()
+        assert card.contentFrame.property("pressed") is not True
         _release(window, items[0], modifier)
         assert _picked(window) == [items[0]]
 
@@ -2019,7 +2018,6 @@ class TestPickOnPress:
         items = _add(window, D.WAITING, D.WAITING)
         card = _card(window, items[0])
         _press(window, items[0])
-        assert not card.isPressed()
         assert card.contentFrame.property("pressed") is not True
         _release(window, items[0])
         assert not window.listView.isSelecting()
@@ -2046,7 +2044,7 @@ class TestPickOnPress:
         _toggle_select_mode(window, True)
         card = _card(window, items[0])
         _press(window, items[0], button=Qt.MouseButton.RightButton)
-        assert not card.isPressed()
+        assert card.contentFrame.property("pressed") is not True
         _release(window, items[0], button=Qt.MouseButton.RightButton)
         assert _picked(window) == []
         assert window.listView.isSelecting(), "전제: 선택 모드는 그대로다"
@@ -2105,7 +2103,7 @@ class TestSpaceOnPress:
         card = _card(window, items[0])
         _space(card, PRESS)
         assert _picked(window) == [items[0]]
-        assert not card.isPressed()
+        assert card.contentFrame.property("pressed") is not True
 
     def test_releasing_space_changes_nothing(self, window: VodDownloader) -> None:
         """Space를 누른 뒤 떼면 고름이 그대로여야 한다 — 고르기는 누를 때 끝났다.
@@ -2229,7 +2227,7 @@ class TestSpaceOnPress:
         QTest.mouseDClick(window.windowHandle(), LEFT, NO_MODIFIER, _spot(window, items[0]))
         _settle()
         assert _picked(window) == [items[0]]
-        assert not card.isPressed()
+        assert card.contentFrame.property("pressed") is not True
         _space(card, LIFT)
         assert seen == [[items[0]]]
 
@@ -2247,7 +2245,7 @@ class TestSpaceOnPress:
         _space(focused, PRESS)
         _space(focused, LIFT)
         assert _picked(window) == [items[0]]
-        assert not card.isPressed()
+        assert card.contentFrame.property("pressed") is not True
         _release(window, items[0])
         assert seen == [[items[0]]]
 
