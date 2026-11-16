@@ -66,13 +66,14 @@ FRAME_RETRY_MS = 50  # 표시 뒤 프레임 여백을 다시 보는 간격(ms) �
 FRAME_RETRIES = 10  # 그만큼(약 0.5초) 기다려도 여백이 없으면 그만둔다 — 창 관리자가 없는 X 서버 등
 MONITOR_INTERVAL_MS = 1000  # 하단바 모니터링을 고치는 간격(ms) — 설계 §2 「1초마다」 (#504)
 # 설정 창 단축키 — Ctrl+,(macOS는 Qt가 Cmd+,로 읽고 그린다, #611). 툴팁도 이 값을 그 OS의 표기로 적는다
-SETTINGS_SHORTCUT = QKeySequence("Ctrl+,")
+SETTINGS_KEYS = "Ctrl+,"
 URL_MIN_WIDTH = (
     160  # URL 칸 최소폭(px) — 이보다 좁아지기 전에 저장 위치 버튼을 아이콘으로(프로토 11v, #529)
 )
 # 창 제목의 앱 이름 — 번역하지 않는다. 앱 데이터 폴더 이름(app/system/settings.py APP_NAME)과 따로 둔다:
 # 표시 이름을 바꿔도 데이터 폴더가 그대로라 설정을 잃지 않는다 (#492)
 APP_DISPLAY_NAME = "Chzzk VOD Downloader"
+
 # 창 최소 높이를 셀 때 쓰는 견본 카드(완료 상태 — _referenceCardHeight)의 글 — 실제 목록 카드와 무관한
 # 고정값이라 카드를 넣고 빼도 최소 높이가 바뀌지 않는다 (#492). 썸네일 · 채널 그림 주소는 비워 네트워크를 타지 않는다
 REFERENCE_CARD_METADATA = {
@@ -91,6 +92,15 @@ WORST_PROGRESS = 99.9
 WORST_RECEIVED = (
     1023 * 1024 * 1024 + 1000 * 1024
 )  # 견본 카드의 받은 바이트 — 「1023.98 MB」(MB 표기의 끝)
+
+
+def settings_shortcut() -> QKeySequence:
+    """설정 창 단축키(`SETTINGS_KEYS`)를 만든다.
+
+    모듈 수준에서 만들지 않는다 — 진입점이 `QApplication`보다 먼저 이 모듈을 import한다. 키 이름 해석은
+    앱 객체가 생긴 뒤에 한다(메인 창을 만들 때, #611).
+    """
+    return QKeySequence(SETTINGS_KEYS)
 
 
 def _worst_card_items() -> list[ContentItem]:
@@ -505,7 +515,7 @@ class VodDownloader(QMainWindow):
         window.setWindowTitle(window_title(config.get_app_version()))
         self.menuDownloadButton.setText(self.tr("VOD Download"))
         self.settingsButton.setToolTip(
-            shortcut_tip(self.tr("Settings"), SETTINGS_SHORTCUT.toString(QKeySequence.NativeText))
+            shortcut_tip(self.tr("Settings"), settings_shortcut().toString(QKeySequence.NativeText))
         )
         self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL · Enter to add"))
         # 등록은 「+」 아이콘 버튼 — 이름 · 단축키는 툴팁(#536 — 설계 §12.1, 프로토 「등록 · Enter」)
@@ -1046,7 +1056,7 @@ class VodDownloader(QMainWindow):
         self._syncFetchButton()
         self.settingsButton.clicked.connect(self.onSetting)
         # 설정 창 단축키 — Ctrl+,(macOS는 Qt가 Cmd+,로 바꾼다, #611)
-        self.settingsShortcut = QShortcut(SETTINGS_SHORTCUT, self)
+        self.settingsShortcut = QShortcut(settings_shortcut(), self)
         self.settingsShortcut.activated.connect(self.onSetting)
         # 「VOD 다운」을 눌렀다 — 결과를 봤다(#523)
         self.menuDownloadButton.clicked.connect(self.menuDownloadButton.stopBlink)

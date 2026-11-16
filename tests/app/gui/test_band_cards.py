@@ -242,6 +242,8 @@ DROP_FIELDS = ["saveLocationButton", "sortButton"]  # 넓은 폭의 값 고르�
 FIELD_PAD = (
     10  # 펼침 칸 오른쪽 안쪽 여백(px) — ⌄ 오른쪽 끝 ↔ 칸 오른쪽 안쪽 끝(테두리 안쪽 첫 화소)
 )
+URL_PAD = 10  # URL 칸 안쪽 좌우 여백(px) — 펼침 칸과 같은 값(#611 지시 값)
+URL_BORDER = 1  # 입력 칸 테두리(px)
 
 
 class TestBarButtons:
@@ -310,6 +312,179 @@ class TestBarButtons:
         rect = _rect(win, widget)
         image = win.grab().toImage()
         assert _is(_pixel(image, rect.center().x(), rect.top()), edge)
+
+    @pytest.mark.parametrize(
+        ("name", "edge"),
+        [
+            ("downloadButton", "surfaceAlt"),  # ▶ 꺼짐 — 면만(#611 오너 실기 2026-11-15)
+            ("stopButton", "surface"),  # ■ 꺼짐 — 면 · 테두리 없음
+            ("sortButton", "border"),  # 드롭다운 꺼짐 — 입력 칸이라 테두리 그대로
+        ],
+    )
+    def test_only_input_fields_have_a_border_when_disabled(
+        self, window: Callable[..., VodDownloader], name: str, edge: str
+    ) -> None:
+        """꺼진 상태에서도 테두리는 입력 칸에만 있고 꺼진 ▶은 면 surfaceAlt · ■은 바 면이어야 한다.
+
+        창 폭 900, 위젯 setEnabled(False) -> 위 가장자리 가운데 화소: downloadButton ≈ surfaceAlt,
+        stopButton ≈ surface, sortButton ≈ border
+        """
+        win = window(DownloadState.WAITING)
+        widget = getattr(win, name)
+        widget.setEnabled(False)
+        _pump()
+        assert widget.isVisible() and not widget.isEnabled(), "전제: 보이고 꺼져 있다"
+        rect = _rect(win, widget)
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.center().x(), rect.top()), edge)
+
+
+class TestPrimaryButton:
+    """주 동작(▶ · 카드 편집 창 저장 role=primary) — 켜면 강조색 채움, 꺼지면 면 surfaceAlt · 글 textDisabled ·
+    테두리 없음(#611 — 테두리는 입력 칸만)."""
+
+    def test_disabled_download_button_has_no_border(
+        self, window: Callable[..., VodDownloader]
+    ) -> None:
+        """꺼진 ▶은 왼쪽 가장자리 · 안쪽 화소가 모두 surfaceAlt이고 border 색 화소가 없어야 한다.
+
+        카드 없음(▶ 꺼짐) -> 왼쪽 가장자리 가운데 ≈ surfaceAlt, 왼쪽 안쪽 3px ≈ surfaceAlt, 위 가장자리 가운데 ≈
+        surfaceAlt
+        """
+        win = window()
+        button = win.downloadButton
+        assert button.isVisible() and not button.isEnabled(), "전제: 카드가 없어 꺼져 있다"
+        rect = _rect(win, button)
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.left(), rect.center().y()), "surfaceAlt")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "surfaceAlt")
+
+    def test_disabled_download_glyph_is_text_disabled(
+        self, window: Callable[..., VodDownloader]
+    ) -> None:
+        """꺼진 ▶의 도형은 textDisabled로 그려져야 한다.
+
+        카드 없음(▶ 꺼짐) -> 버튼 안 화소 가운데 textDisabled에 가까운 화소가 있다, onAccent에 가까운 화소는 없다
+        """
+        win = window()
+        button = win.downloadButton
+        assert not button.isEnabled(), "전제: 꺼져 있다"
+        image = button.grab().toImage()
+        ink = [_pixel(image, x, y) for x in range(button.width()) for y in range(button.height())]
+        assert any(_is(colour, "textDisabled") for colour in ink)
+        assert not any(_is(colour, "onAccent") for colour in ink)
+
+    def test_enabled_download_button_keeps_the_accent_fill(
+        self, window: Callable[..., VodDownloader]
+    ) -> None:
+        """켠 ▶은 가장자리 · 안쪽이 그대로 강조색이어야 한다.
+
+        대기 카드 하나(▶ 켬) -> 왼쪽 가장자리 가운데 ≈ accent, 왼쪽 안쪽 3px ≈ accent
+        """
+        win = window(DownloadState.WAITING)
+        button = win.downloadButton
+        assert button.isEnabled(), "전제: 켜져 있다"
+        rect = _rect(win, button)
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.left(), rect.center().y()), "accent")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "accent")
+
+    @pytest.mark.parametrize("enabled", [False, True], ids=["꺼짐", "켬"])
+    def test_primary_role_button_follows_the_same_rule(
+        self, window: Callable[..., VodDownloader], enabled: bool
+    ) -> None:
+        """role=primary 글 버튼(카드 편집 창 저장)도 꺼지면 테두리 없는 surfaceAlt 면 · textDisabled 글, 켜면
+        강조색이어야 한다.
+
+        창 안의 QPushButton("Save", role=primary): 꺼짐 -> 왼쪽 가장자리 가운데 ≈ surfaceAlt, 글 화소 가운데
+        textDisabled에 가까운 것이 있다 / 켬 -> 왼쪽 가장자리 가운데 ≈ accent
+        """
+        from PySide6.QtWidgets import QPushButton
+
+        win = window()
+        button = QPushButton("Save", win.contentColumn)
+        button.setProperty("role", "primary")
+        button.setEnabled(enabled)
+        button.setGeometry(20, 20, 120, 32)
+        button.show()
+        _pump()
+        image = button.grab().toImage()
+        edge = _pixel(image, 0, button.height() // 2)
+        if enabled:
+            assert _is(edge, "accent")
+            return
+        assert _is(edge, "surfaceAlt")
+        ink = [_pixel(image, x, y) for x in range(button.width()) for y in range(button.height())]
+        assert any(_is(colour, "textDisabled") for colour in ink)
+
+
+class TestUrlField:
+    """URL 입력창 — 호버 테두리 borderStrong(초점 accent가 앞섬), 안쪽 좌우 여백 10(드롭다운 칸과 같음, #611)."""
+
+    def test_url_field_hover_shows_the_strong_border(
+        self, window: Callable[..., VodDownloader]
+    ) -> None:
+        """포인터가 URL 칸 위에 오면 테두리가 borderStrong, 면은 surfaceAlt 그대로여야 한다.
+
+        창에 합성 포인터 이동(URL 칸 가운데) -> 위 가장자리 가운데 ≈ borderStrong, 왼쪽 안쪽 3px ≈ surfaceAlt
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(DownloadState.WAITING)
+        field = win.urlInput
+        rect = _rect(win, field)
+        QTest.mouseMove(
+            win.windowHandle(), QPoint(1, 1)
+        )  # 앞 테스트의 포인터 자리와 다르게 — 들어감이 생긴다
+        QTest.mouseMove(win.windowHandle(), rect.center())
+        _pump()
+        assert field.underMouse() and not field.hasFocus(), "전제: 포인터만 칸 위다"
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "borderStrong")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
+
+    def test_focus_beats_hover_on_the_url_field(
+        self, window: Callable[..., VodDownloader], qtbot
+    ) -> None:
+        """초점이 있는 URL 칸은 포인터가 올라 있어도 테두리가 accent여야 한다.
+
+        창 활성 · URL 칸 초점 · 합성 포인터 이동(칸 가운데) -> 위 가장자리 가운데 ≈ accent
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(DownloadState.WAITING)
+        win.activateWindow()
+        qtbot.waitUntil(win.isActiveWindow, timeout=3000)
+        field = win.urlInput
+        field.setFocus()
+        qtbot.waitUntil(field.hasFocus, timeout=3000)
+        rect = _rect(win, field)
+        QTest.mouseMove(
+            win.windowHandle(), QPoint(1, 1)
+        )  # 앞 테스트의 포인터 자리와 다르게 — 들어감이 생긴다
+        QTest.mouseMove(win.windowHandle(), rect.center())
+        _pump()
+        assert field.underMouse(), "전제: 포인터가 칸 위다"
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "accent")
+
+    def test_url_field_inner_side_padding_is_10(self, window: Callable[..., VodDownloader]) -> None:
+        """URL 칸의 글 자리는 테두리 1px + 안쪽 여백 10 = 칸 왼쪽 · 오른쪽 끝에서 11 안이어야 한다.
+
+        창 폭 900 -> SE_LineEditContents 사각형 왼쪽 == 11, 칸 폭 − 오른쪽 끝(끝 포함 안 함) == 11
+        """
+        from PySide6.QtWidgets import QStyle, QStyleOptionFrame
+
+        win = window(DownloadState.WAITING)
+        field = win.urlInput
+        option = QStyleOptionFrame()
+        field.initStyleOption(option)
+        contents = field.style().subElementRect(
+            QStyle.SubElement.SE_LineEditContents, option, field
+        )
+        assert contents.left() == URL_BORDER + URL_PAD
+        assert field.width() - (contents.right() + 1) == URL_BORDER + URL_PAD
 
 
 def _corner(image: QImage, rect: QRect) -> list[QColor]:
@@ -511,6 +686,23 @@ class TestSettingsGear:
         _pump()
         assert len(opened) == 1
         assert win.menuDownloadButton.isChecked()
+
+    def test_main_window_module_holds_no_key_sequence_object(self) -> None:
+        """메인 창 모듈의 모듈 수준 이름 가운데 QKeySequence 객체가 없어야 한다(앱 객체 전에 import된다, #611).
+
+        app.views.mainWindow의 모듈 전역 값 -> QKeySequence 인스턴스 0개, 단축키 글 SETTINGS_KEYS == "Ctrl+,"
+        """
+        from PySide6.QtGui import QKeySequence
+
+        import app.views.mainWindow as main_window_module
+
+        made = [
+            name
+            for name, value in vars(main_window_module).items()
+            if isinstance(value, QKeySequence)
+        ]
+        assert made == []
+        assert main_window_module.SETTINGS_KEYS == "Ctrl+,"
 
     def test_ctrl_comma_opens_the_settings_dialog(self, window, opened: list, qtbot) -> None:
         """Ctrl+,(macOS는 Cmd+,)를 누르면 설정 창이 한 번 열려야 한다.
