@@ -1037,8 +1037,10 @@ class VodDownloader(QMainWindow):
     def _showRegisterError(self, text: str) -> None:
         """등록 오류를 URL 칸 아래 오류 말풍선으로 띄우고 URL 칸 테두리를 빨강으로 한다 (#495 · #536 — 설계 §12.1).
 
-        말풍선은 떠 있어 목록이 움직이지 않는다. 입력을 고치면 사라진다(`_clearRegisterError`) — Esc · 다른 곳
-        누름은 말풍선이 스스로 닫는다(`ErrorTip`). 테두리는 전역 QSS의 `QLineEdit[invalid="true"]`가 칠한다.
+        말풍선은 떠 있어 목록이 움직이지 않는다. 입력을 고치면 말풍선 · 빨간 테두리가 함께 사라진다
+        (`_clearRegisterError`). Esc · 다른 곳 누름 · 초점이 URL 칸을 떠나면 말풍선만 닫히고 빨간 테두리는 남으며,
+        URL 칸에 초점이 돌아오면 말풍선이 다시 뜬다(`ErrorTip`, #611). 테두리는 전역 QSS의
+        `QLineEdit[invalid="true"]`가 칠한다.
         """
         self.registerError.show(text)
         if self.urlInput.property("invalid") is not True:

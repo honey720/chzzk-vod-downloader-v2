@@ -614,7 +614,9 @@ class ErrorTip(QObject):
     """입력칸 아래에 붙는 오류 말풍선 — 헤더바 등록 오류(#536 — 설계 §2 알림 자리 · §12.1 등록 오류).
 
     툴팁과 같은 말풍선 부품(`TipBubble`)에 실패 색 계열(`tone="error"`)이고, 늘 대상 아래로(꼬리 위) 뜬다. 포인터가
-    나가도 닫히지 않는다 — 입력을 고치면(부르는 쪽이 `hide`) · Esc · 대상 밖을 누르면 닫힌다.
+    나가도 닫히지 않는다. 말풍선은 초점을 따른다 — 대상 밖을 누름 · 초점이 대상을 떠남 · Esc면 말풍선만 닫히고
+    오류는 남아, 초점이 대상에 돌아오면 다시 뜬다. 입력을 고치면(부르는 쪽이 `hide`) 오류가 지워진다(#611 오너
+    재실기 — 설계 §10.1 「입력을 고치면 사라진다」를 넓힘).
 
     말풍선은 대상 창의 자식 위젯이다(`embedded`) — 따로 뜬 창이면 본 창을 Alt+Tab으로 뒤로 보내도 화면 맨 위에
     남는다(#536 오너 실기). 자식이라 본 창과 함께 뒤로 가고 · 최소화되고 · 움직인다. 레이아웃에 들지 않고 형제
@@ -648,24 +650,54 @@ class ErrorTip(QObject):
         """지금 보이는 오류 글(닫혀 있으면 빈 글)."""
         return self._text if self.isShowing() else ""
 
+    def hasError(self) -> bool:
+        """오류가 남아 있는지 — 말풍선이 초점을 따라 숨었어도 입력을 고치기 전이면 참이다."""
+        return bool(self._text)
+
     def show(self, text: str) -> None:
-        """대상 아래에 오류 글을 띄운다 — 떠 있으면 글만 바꿔 다시 놓는다."""
+        """대상 아래에 오류 글을 띄운다 — 떠 있으면 글만 바꿔 다시 놓는다.
+
+        오류가 난 때에는 초점이 어디 있든 띄운다(오류를 알리는 때다). 그 뒤로는 초점을 따른다(`_onFocus`).
+        """
+        self._text = text
+        self._target.installEventFilter(self)  # 초점 들어옴 · 나감 — 여러 번 걸어도 한 번만 걸린다
+        self._reveal()
+
+    def hide(self) -> None:
+        """오류를 지운다 — 말풍선을 닫고 초점을 따라 다시 띄우지 않는다. 오류가 없으면 아무 일도 없다."""
+        self._text = ""
+        self._target.removeEventFilter(self)
+        self._dismiss()
+
+    def _reveal(self) -> None:
+        """남아 있는 오류 글을 말풍선으로 띄우고 누름 · Esc · 창 크기를 지켜본다."""
         bubble = self.bubble()
         if bubble is None:
             # 창의 자식으로 그린다 — 창이 지워지면 함께 지워진다
             bubble = self._bubble = TipBubble("error", self._target.window(), embedded=True)
             bubble.setObjectName("errorTip")
-        self._text = text
-        bubble.showFor(self._target, text, side="below")
+        bubble.showFor(self._target, self._text, side="below")
         self._watch()
 
-    def hide(self) -> None:
-        """닫는다 — 이미 닫혀 있으면 아무 일도 없다."""
+    def _dismiss(self) -> None:
+        """말풍선만 닫는다 — 오류 글은 남아 초점이 대상에 돌아오면 다시 뜬다(#611 오너 재실기)."""
         self._unwatch()
-        self._text = ""
         bubble = self.bubble()
         if bubble is not None and bubble.isVisible():
             bubble.fadeOut()
+
+    def _onFocus(self, event: QEvent) -> None:
+        """대상의 초점 변화를 따른다 — 들어오면 남은 오류를 다시 띄우고, 나가면 말풍선만 닫는다.
+
+        창 활성 변화(`ActiveWindowFocusReason` — Alt+Tab · 최소화)는 대상 안 초점이 그대로라 따르지 않는다.
+        말풍선은 창의 자식이라 창과 함께 뒤로 가고, 돌아오면 닫히기 전 상태 그대로다.
+        """
+        if event.reason() == Qt.FocusReason.ActiveWindowFocusReason:
+            return
+        if event.type() == QEvent.Type.FocusOut:
+            self._dismiss()
+        elif self._text and not self.isShowing():
+            self._reveal()
 
     def _watch(self) -> None:
         if self._watched:
@@ -684,14 +716,17 @@ class ErrorTip(QObject):
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         kind = event.type()
-        if kind == QEvent.Type.MouseButtonPress and not obj.isWidgetType():
+        if kind in (QEvent.Type.FocusIn, QEvent.Type.FocusOut) and obj is self._target:
+            self._onFocus(event)
+        elif kind == QEvent.Type.MouseButtonPress and not obj.isWidgetType():
             point = event.globalPosition().toPoint()
             inside = QRect(self._target.mapToGlobal(QPoint(0, 0)), self._target.size())
             if not inside.contains(point):
-                self.hide()  # 대상 밖을 눌렀다 — 누름은 그대로 흘려 보낸다
+                self._dismiss()  # 대상 밖을 눌렀다 — 누름은 그대로 흘려 보낸다
         elif kind == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
-            self.hide()
-        elif kind == QEvent.Type.Resize and obj.isWidgetType():
+            if self.isShowing():
+                self._dismiss()
+        elif kind == QEvent.Type.Resize and obj.isWidgetType() and obj is not self._target:
             if self.isShowing():
                 self.bubble().showFor(self._target, self._text, side="below", fade=False)
         return False

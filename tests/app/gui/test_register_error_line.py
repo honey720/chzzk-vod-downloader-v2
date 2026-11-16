@@ -1,7 +1,8 @@
 """헤더바 등록 오류 말풍선 · 등록 버튼 도는 표시 · 완료 지우기 자리 게이트 (#495 — 셸 S1 · #536 — 설계 알림 자리).
 
 - 잘못된 URL · 조회 실패는 대화상자가 아니라 URL 칸 아래 오류 말풍선이다(#536 — 그 전에는 빨간 글 한 줄).
-  포인터가 나가도 남고, 입력을 고치거나 Esc · 다른 곳을 누르면 닫힌다
+  포인터가 나가도 남고, Esc · 다른 곳 누름 · 초점이 떠나면 말풍선만 닫히며(빨간 테두리는 남음) 초점이
+  돌아오면 다시 뜬다. 입력을 고치면 둘 다 사라진다(#611)
 - 헤더바에 오류 줄 자리가 없다 — 말풍선이 떠 있어 오류가 뜨고 사라져도 목록이 움직이지 않는다
 - 불러오는 동안 등록 버튼 안에 도는 표시가 있고, 버튼 폭은 그대로다
 - 완료 지우기는 헤더바 2줄 오른쪽 끝이다
@@ -13,7 +14,9 @@
 from collections.abc import Iterator
 
 import pytest
+from pytestqt.qtbot import QtBot
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, Signal
+from PySide6.QtGui import QFocusEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -204,6 +207,115 @@ class TestErrorLine:
         limit = theme.METRICS["tipMaxWidth"] + 2 * theme.METRICS["tipPadX"] + 2
         assert bubble.bodyRect().width() <= limit
         assert bubble.shownText() == f"Video not found · {long_url}"
+
+
+def _focus_url(qtbot: QtBot, win: VodDownloader) -> None:
+    """창을 활성으로 하고 URL 칸에 Tab 초점을 준다."""
+    win.activateWindow()
+    qtbot.waitUntil(win.isActiveWindow, timeout=3000)
+    win.urlInput.setFocus(Qt.FocusReason.TabFocusReason)
+    qtbot.waitUntil(win.urlInput.hasFocus, timeout=3000)
+
+
+def _error_shown_with_focus(qtbot: QtBot, win: VodDownloader) -> None:
+    """URL 칸에 초점을 둔 채 빈 칸 Enter로 오류를 띄운다."""
+    _focus_url(qtbot, win)
+    _press_enter(win, "")
+    assert win.registerError.isShowing(), "전제: 오류 말풍선이 떴다"
+    assert win.urlInput.hasFocus(), "전제: 초점이 URL 칸에 있다"
+
+
+class TestErrorFollowsFocus:
+    """오류 말풍선은 초점을 따르고 빨간 테두리는 입력을 고칠 때까지 남는다(#611)."""
+
+    def test_focus_leaving_the_input_hides_only_the_bubble(
+        self, qtbot: QtBot, window: VodDownloader
+    ) -> None:
+        """오류가 뜬 뒤 초점이 목록으로 가면 말풍선은 닫히고 빨간 테두리 · 오류는 남아야 한다.
+
+        URL 칸 초점 · 빈 칸 Enter → 목록에 Tab 초점 -> isShowing 거짓 · invalid 참 · hasError 참
+        """
+        _error_shown_with_focus(qtbot, window)
+        window.listView.setFocus(Qt.FocusReason.TabFocusReason)
+        QApplication.processEvents()
+        assert not window.registerError.isShowing()
+        assert window.urlInput.property("invalid") is True
+        assert window.registerError.hasError()
+
+    def test_focus_coming_back_shows_the_same_error_again(
+        self, qtbot: QtBot, window: VodDownloader
+    ) -> None:
+        """초점이 떠났다가 URL 칸에 돌아오면 같은 오류 글로 말풍선이 다시 떠야 한다.
+
+        목록에 Tab 초점 → URL 칸에 Tab 초점 -> isShowing 참 · 글 "Please enter VOD URL."
+        """
+        _error_shown_with_focus(qtbot, window)
+        window.listView.setFocus(Qt.FocusReason.TabFocusReason)
+        QApplication.processEvents()
+        window.urlInput.setFocus(Qt.FocusReason.TabFocusReason)
+        QApplication.processEvents()
+        assert window.registerError.isShowing()
+        assert window.registerError.text() == "Please enter VOD URL."
+
+    def test_escape_keeps_the_red_border_and_focus_return_shows_it(
+        self, qtbot: QtBot, window: VodDownloader
+    ) -> None:
+        """Esc는 말풍선만 닫고 빨간 테두리를 남기며, 초점이 떠났다 돌아오면 말풍선이 다시 떠야 한다.
+
+        Esc -> isShowing 거짓 · invalid 참, 목록 초점 → URL 칸 초점 -> isShowing 참
+        """
+        _error_shown_with_focus(qtbot, window)
+        QTest.keyClick(window.urlInput, Qt.Key.Key_Escape)
+        QApplication.processEvents()
+        assert not window.registerError.isShowing()
+        assert window.urlInput.property("invalid") is True
+        window.listView.setFocus(Qt.FocusReason.TabFocusReason)
+        window.urlInput.setFocus(Qt.FocusReason.TabFocusReason)
+        QApplication.processEvents()
+        assert window.registerError.isShowing()
+
+    def test_pressing_elsewhere_keeps_the_red_border(
+        self, qtbot: QtBot, window: VodDownloader
+    ) -> None:
+        """오류가 뜬 뒤 목록을 누르면 말풍선은 닫히고 빨간 테두리는 남아야 한다.
+
+        누름 = 창(QWindow)에 합성 누름 -> isShowing 거짓 · invalid 참
+        """
+        _error_shown_with_focus(qtbot, window)
+        _click_window_at(window, window.listView.viewport())
+        assert not window.registerError.isShowing()
+        assert window.urlInput.property("invalid") is True
+
+    def test_editing_after_the_bubble_hid_clears_both_for_good(
+        self, qtbot: QtBot, window: VodDownloader
+    ) -> None:
+        """말풍선이 초점을 따라 닫힌 뒤 입력을 고치면 오류가 지워져 초점이 돌아와도 다시 뜨지 않아야 한다.
+
+        목록 초점 → URL 칸에 글 "h" → URL 칸 초점 -> isShowing 거짓 · invalid 거짓 · hasError 거짓
+        """
+        _error_shown_with_focus(qtbot, window)
+        window.listView.setFocus(Qt.FocusReason.TabFocusReason)
+        window.urlInput.setText("h")
+        window.urlInput.setFocus(Qt.FocusReason.TabFocusReason)
+        QApplication.processEvents()
+        assert not window.registerError.isShowing()
+        assert not window.urlInput.property("invalid")
+        assert not window.registerError.hasError()
+
+    def test_window_activation_changes_do_not_hide_it(
+        self, qtbot: QtBot, window: VodDownloader
+    ) -> None:
+        """창 활성 변화로 오는 초점 나감(ActiveWindowFocusReason)에는 말풍선이 그대로여야 한다.
+
+        URL 칸에 FocusOut(ActiveWindowFocusReason) 보냄 -> isShowing 참
+        """
+        _error_shown_with_focus(qtbot, window)
+        QApplication.sendEvent(
+            window.urlInput,
+            QFocusEvent(QEvent.Type.FocusOut, Qt.FocusReason.ActiveWindowFocusReason),
+        )
+        QApplication.processEvents()
+        assert window.registerError.isShowing()
 
 
 class TestErrorBubbleInTheWindow:
