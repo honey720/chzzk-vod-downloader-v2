@@ -336,11 +336,13 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._picking = (
             False  # 목록이 선택 모드다 — 카드 버튼을 숨기고 누름 · 더블 클릭이 고르기다(#561)
         )
-        self._armed = False  # 고르기를 시작한 누름이 이어지는 중 — 카드 안에서 떼면 고른다(#561)
+        self._armed = False  # 고르기를 시작한 Space 누름이 이어지는 중 — 떼면 고른다(#561)
         self._armedModifiers = Qt.KeyboardModifier.NoModifier  # 그 누름 때의 수정자
-        # 그 누름을 시작한 것 — "mouse"(왼쪽 버튼) · "key"(Space). 둘이 겹치면 먼저 시작한 쪽만 따른다
+        # 그 누름을 시작한 것 — "key"(Space)뿐이다. 마우스는 누를 때 바로 고르므로 기다리지 않는다(#611)
         self._armedBy = ""
         self._pressed = False  # 프레임의 pressed 속성(눌린 바탕)을 켰는지(#561)
+        # 왼쪽 버튼을 누른 채인지 — 그동안 Space는 무시한다(먼저 시작한 누름만 따른다, #561 · #611)
+        self._mouseHeld = False
         self._tipsInstalled = False  # 말풍선 필터를 걸었는지 — 처음 호버할 때 건다
         self._levelTexts: list[card_text.SlotTexts] = []  # 접는 단계마다의 3줄 글(#554)
         self._needs: list[int] | None = None  # 단계마다 3줄 필요 폭 — 글이 바뀌면 다시 센다
@@ -562,8 +564,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             owner = self._listOwner()
             if owner is not None:
                 event.accept()
-                # 누르고 있을 때 오는 키 반복은 넘긴다. 마우스로 누른 채면 먼저 시작한 마우스만 따른다
-                if not event.isAutoRepeat() and not self._armed:
+                # 누르고 있을 때 오는 키 반복은 넘긴다. 마우스로 누른 채면 먼저 시작한 마우스만 따른다(이미 골랐다)
+                if not event.isAutoRepeat() and not self._armed and not self._mouseHeld:
                     self._arm(True, event.modifiers(), "key")
                 return
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -632,12 +634,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.progressBar.setPicked(on)
         self._syncPickMark()
 
-    # ---- 뗄 때 고르기 (#561) ----
-    # 누르면 눌린 바탕만 켜고, 카드 안에서 떼면 고른다. 누른 채 카드 밖으로 나가면 눌린 바탕이 꺼지고 그대로
-    # 떼면 아무 일도 없다. 버튼을 누른 동안에는 포인터가 밖에 있어도 옮김 · 뗌이 누른 위젯으로 온다(Qt)
+    # ---- 고르기 — 마우스는 누를 때, Space는 뗄 때 (#561 · #611) ----
+    # 마우스 왼쪽 버튼은 누르는 순간 고르거나 푼다(Windows 탐색기 등 표준 동작, 오너 실기 2026-11-16) — 눌린 바탕은
+    # 켜지 않는다. Space는 누르면 눌린 바탕만 켜고 떼면 고른다(#561 그대로).
+    # 드래그로 순서 바꾸기(2.13.0)가 들어오면 이미 고른 카드를 누를 때만 고르기를 뗄 때로 미룬다 — 누름이
+    # 끌기의 시작일 수 있어서다. 고르지 않은 카드는 그때도 누를 때 고른다
 
     def isPressed(self) -> bool:
-        """눌린 바탕이 켜져 있는지 — 고르기를 시작한 누름이 카드 안에 있는 동안."""
+        """눌린 바탕이 켜져 있는지 — Space를 누르고 있는 동안."""
         return self._pressed
 
     def _setPressed(self, on: bool) -> None:
@@ -652,11 +656,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if self.hoverShade.isVisibleTo(self):
             self.hoverShade.update()
 
-    def _arm(self, on: bool, modifiers: Qt.KeyboardModifier, source: str = "mouse") -> None:
-        """고르기를 시작한 누름이면 뗌을 기다린다 — 수정자는 누를 때의 값을 든다.
+    def _arm(self, on: bool, modifiers: Qt.KeyboardModifier, source: str = "key") -> None:
+        """고르기를 시작한 Space 누름이면 뗌을 기다린다 — 수정자는 누를 때의 값을 든다.
 
         Args:
-            source: 누름을 시작한 것 — "mouse"(왼쪽 버튼) · "key"(Space)
+            source: 누름을 시작한 것 — 지금은 "key"(Space)뿐이다
         """
         self._armed = on
         self._armedModifiers = modifiers
@@ -668,57 +672,38 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._armedBy = ""
         self._setPressed(False)
 
-    def _holds(self, event: QMouseEvent) -> bool:
-        """포인터 밑이 이 카드인지 — 굴러 나가 가려진 부분, 다른 위젯이 덮은 부분은 밖으로 본다.
+    def _pressPick(self, event: QMouseEvent) -> None:
+        """왼쪽 버튼 누름을 목록에 알리고, 고르기를 시작하는 누름이면 바로 고른다(#611).
 
-        커서를 읽지 않고 이벤트의 자리로 창에 묻는다(`QWidget.childAt`) — 마우스를 받지 않는 위젯(focus
-        ring)은 건너뛴다.
-        """
-        point = event.position().toPoint()
-        top = self.window()
-        if top is self:
-            return self.rect().contains(point)
-        under = top.childAt(self.mapTo(top, point))
-        return under is self or (under is not None and self.isAncestorOf(under))
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        """카드 바탕 · 글 · 썸네일을 누르면 목록에 알린다 — 고르기는 뗄 때 한다(#561).
-
-        목록이 「고르기를 시작하는 누름」이라고 답하면(선택 모드, 또는 Ctrl/⌘ · Shift와 함께) 눌린 바탕을
-        켜고 뗌을 기다린다. 카드 버튼은 누름을 스스로 받아 여기 오지 않는다. 목록이 없으면(카드만 띄운
-        테스트) 기본 처리다.
+        목록이 「고르기를 시작하는 누름」이라고 답하면(선택 모드, 또는 Ctrl/⌘ · Shift와 함께) 그 자리에서
+        `cardPicked`를 부른다. Space를 누른 채면 먼저 시작한 Space만 따른다(두 번 고르지 않는다).
         """
         owner = self._listOwner()
-        if event.button() == Qt.MouseButton.LeftButton and owner is not None:
+        if owner is None or self._armedBy == "key":
+            return
+        modifiers = event.modifiers()
+        if owner.cardPressed(self, modifiers):
+            owner.cardPicked(self, modifiers)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """카드 바탕 · 글 · 썸네일을 누르면 목록에 알린다 — 고르기는 누를 때 한다(#611).
+
+        카드 버튼은 누름을 스스로 받아 여기 오지 않는다. 목록이 없으면(카드만 띄운 테스트) 기본 처리다.
+        """
+        if event.button() == Qt.MouseButton.LeftButton and self._listOwner() is not None:
             event.accept()
-            if self._armedBy == "key":
-                return  # Space를 누른 채다 — 먼저 시작한 Space만 따른다(두 번 고르지 않는다)
-            self._arm(owner.cardPressed(self, event.modifiers()), event.modifiers())
+            self._mouseHeld = True
+            self._pressPick(event)
             return
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        """누른 채 옮기면 눌린 바탕이 포인터가 카드 안에 있는지를 따른다 (#561)."""
-        if self._armedBy == "mouse":
-            event.accept()
-            self._setPressed(self._holds(event))
-            return
-        super().mouseMoveEvent(event)
-
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        """고르기를 시작한 누름을 카드 안에서 떼면 목록에 고르기를 알린다 — 밖에서 떼면 아무 일도 없다 (#561)."""
-        if event.button() == Qt.MouseButton.LeftButton and self._armedBy == "key":
-            event.accept()
-            return  # Space를 누른 채 누른 마우스 — Space를 뗄 때 고른다
-        if event.button() == Qt.MouseButton.LeftButton and self._armed:
-            event.accept()
-            inside = self._holds(event)
-            modifiers = self._armedModifiers
-            self._disarm()
-            owner = self._listOwner()
-            if inside and owner is not None:
-                owner.cardPicked(self, modifiers)
-            return
+        """왼쪽 버튼 뗌은 받기만 한다 — 고르기는 누를 때 끝났다(#611)."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._mouseHeld = False
+            if self._listOwner() is not None:
+                event.accept()
+                return
         super().mouseReleaseEvent(event)
 
     def _syncCardButtons(self) -> None:
@@ -1543,16 +1528,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         """카드를 더블 클릭하면 `activate`한다. 버튼은 더블 클릭을 스스로 받아 여기 오지 않는다.
 
-        선택 모드에서는 아무것도 열지 않는다(#561) — 두 번째 누름으로 보고 뗌을 기다린다(빠르게 두 번 누르면
-        골랐다가 푼다). Qt는 더블 클릭의 두 번째 누름을 누름이 아니라 더블 클릭으로만 보낸다.
+        선택 모드에서는 아무것도 열지 않는다(#561) — 두 번째 누름으로 보고 그 자리에서 고르기를 바꾼다(빠르게 두 번
+        누르면 골랐다가 푼다). Qt는 더블 클릭의 두 번째 누름을 누름이 아니라 더블 클릭으로만 보낸다.
         """
         if event.button() == Qt.MouseButton.LeftButton:
             event.accept()
             owner = self._listOwner()
             if self._picking and owner is not None:
-                if self._armedBy == "key":
-                    return  # Space를 누른 채다 — 먼저 시작한 Space만 따른다(누름과 같은 규칙)
-                self._arm(owner.cardPressed(self, event.modifiers()), event.modifiers())
+                self._mouseHeld = True
+                self._pressPick(event)  # 두 번째 누름 — 누름과 같은 규칙(골랐다가 푼다)
                 return
             if not self._picking:
                 self.activate()

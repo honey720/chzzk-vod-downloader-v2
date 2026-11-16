@@ -600,11 +600,11 @@ class ContentListView(QScrollArea):
     def cardPressed(self, widget: ContentItemWidget, modifiers: Qt.KeyboardModifier) -> bool:
         """카드를 눌렀다 — 초점을 목록으로 옮기고, 이 누름이 고르기를 시작하는지 답한다.
 
-        고르지는 않는다 — 고르기는 카드 안에서 뗄 때다(`cardPicked`). 누르면 초점은 목록으로 간다 — URL 칸에
+        고르지는 않는다 — 참이면 카드가 이어서 `cardPicked`를 부른다(누를 때 고름, #611). 누르면 초점은 목록으로 간다 — URL 칸에
         있던 초점이 남지 않게(그 뒤 Ctrl/⌘+A · Delete · Ctrl/⌘+Z가 목록에 듣는다).
 
         Returns:
-            선택 모드이거나 Ctrl/⌘ · Shift와 함께 눌렀으면 참 — 카드가 눌린 바탕을 켜고 뗌을 기다린다.
+            선택 모드이거나 Ctrl/⌘ · Shift와 함께 눌렀으면 참 — 카드가 그 자리에서 고른다.
             평소 클릭은 거짓이다(더블 클릭은 편집 창 · 폴더 열기)
         """
         if self._focusedCard() is not widget:
@@ -615,7 +615,7 @@ class ContentListView(QScrollArea):
     def cardPicked(self, widget: ContentItemWidget, modifiers: Qt.KeyboardModifier) -> None:
         """카드를 골랐다 — 선택 모드면 고르고, 아니면 Ctrl/⌘ · Shift가 선택 모드로 들어가며 고른다.
 
-        카드가 부른다 — 누른 카드 안에서 뗄 때(수정자는 누를 때의 값), 선택 모드의 Space를 누를 때. 선택
+        카드가 부른다 — 왼쪽 버튼을 누를 때, 선택 모드의 Space를 뗄 때(수정자는 누를 때의 값). 선택
         모드 안에서는 그 카드를 고르거나 풀고, Shift는 기준 카드부터 그 카드까지(보이는 차례)를 더한다.
         """
         item = widget.item

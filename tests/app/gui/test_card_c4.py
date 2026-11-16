@@ -950,7 +950,7 @@ class TestSelectBarPlace:
         assert need <= label.contentsRect().width()
 
 
-# ---- 체크 원 · focus ring · 뗄 때 고르기 ----
+# ---- 체크 원 · focus ring · 누를 때 고르기 ----
 
 QSS_PATH = main_module.resource_path(theme.QSS_RELATIVE_PATH)
 COLOUR_SLACK = 24  # 색이 같다고 보는 한도 — 세 채널 차의 합(안티에일리어싱이 섞는 몫)
@@ -1895,106 +1895,89 @@ class TestPickedBorderOverProgressBar:
         assert not _is(_colour_at(window_image, spot.x(), spot.y()), "accent")
 
 
-class TestPickOnRelease:
-    """창(`QWindow`)에 누름 · 옮김 · 뗌을 따로 보내 잰다 — 누른 뒤의 이벤트는 Qt가 누른 카드로 보낸다."""
+class TestPickOnPress:
+    """창(`QWindow`)에 누름 · 옮김 · 뗌을 따로 보내 잰다 — 누른 뒤의 이벤트는 Qt가 누른 카드로 보낸다(#611 176g)."""
 
-    def test_pressing_does_not_pick_until_released_inside(self, window: VodDownloader) -> None:
-        """선택 모드에서 카드를 누르기만 하면 고르지 않고, 카드 안에서 떼면 골라야 한다.
+    def test_pressing_picks_before_release_without_a_pressed_mark(
+        self, window: VodDownloader
+    ) -> None:
+        """선택 모드에서 카드를 누르면 떼기 전에 골라야 하고 눌린 표시는 켜지지 않아야 한다.
 
-        선택 모드, 카드 둘, 첫째를 누름 -> 고른 카드 없음 · 눌린 표시 켜짐 -> 그 자리에서 뗌
-        -> 고른 카드 = 첫째 · 눌린 표시 꺼짐
+        선택 모드, 카드 둘, 첫째를 누름 -> 고른 카드 = 첫째 · 눌린 표시 꺼짐 · 면 pressed 속성 아님
+        -> 그 자리에서 뗌 -> 고른 카드 = 첫째(뗌은 고름을 바꾸지 않는다)
         """
         items = _add(window, D.WAITING, D.WAITING)
         _toggle_select_mode(window, True)
         card = _card(window, items[0])
         _press(window, items[0])
-        assert _picked(window) == []
-        assert card.isPressed()
-        _release(window, items[0])
         assert _picked(window) == [items[0]]
         assert not card.isPressed()
+        assert card.contentFrame.property("pressed") is not True
+        _release(window, items[0])
+        assert _picked(window) == [items[0]]
 
-    def test_releasing_outside_the_card_does_nothing(self, window: VodDownloader) -> None:
-        """누른 채 카드 밖으로 나가 떼면 아무 카드도 고르지 않아야 한다.
+    def test_pressing_a_picked_card_unpicks_it_at_once(self, window: VodDownloader) -> None:
+        """고른 카드를 다시 누르면 떼기 전에 풀려야 한다.
 
-        선택 모드, 카드 둘, 첫째를 누름 -> 둘째 위로 옮겨 뗌 -> 고른 카드 없음, 두 카드 모두 눌린 표시 꺼짐
+        선택 모드, 카드 둘, 첫째 클릭 -> [첫째], 첫째를 누름 -> [] -> 뗌 -> []
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _toggle_select_mode(window, True)
+        _click(window, items[0])
+        assert _picked(window) == [items[0]], "전제: 골랐다"
+        _press(window, items[0])
+        assert _picked(window) == []
+        _release(window, items[0])
+        assert _picked(window) == []
+
+    def test_dragging_out_and_releasing_keeps_the_pick(self, window: VodDownloader) -> None:
+        """누른 채 다른 카드로 옮겨 떼도 누를 때 고른 것이 그대로여야 한다.
+
+        선택 모드, 카드 둘, 첫째를 누름 -> 둘째 위로 옮겨 뗌 -> 고른 카드 = 첫째, 두 카드 모두 눌린 표시 꺼짐
         """
         items = _add(window, D.WAITING, D.WAITING)
         _toggle_select_mode(window, True)
         _press(window, items[0])
-        assert _card(window, items[0]).isPressed(), "전제: 눌린 표시가 켜졌다"
         _drag_to(window, items[1])
-        _release(window, items[1])
-        assert _picked(window) == []
         assert not _card(window, items[0]).isPressed()
         assert not _card(window, items[1]).isPressed()
-
-    def test_pressed_mark_follows_leaving_and_coming_back(self, window: VodDownloader) -> None:
-        """눌린 표시는 누른 채 카드 밖으로 나가면 꺼지고 돌아오면 켜지며, 돌아와 떼면 골라야 한다.
-
-        선택 모드, 카드 둘, 첫째를 누름(켜짐) -> 둘째 위로 옮김(꺼짐 · 둘째도 꺼짐) -> 첫째로 돌아옴(켜짐)
-        -> 뗌(꺼짐) -> 고른 카드 = 첫째
-        """
-        items = _add(window, D.WAITING, D.WAITING)
-        _toggle_select_mode(window, True)
-        first, second = _card(window, items[0]), _card(window, items[1])
-        _press(window, items[0])
-        assert first.isPressed() and first.contentFrame.property("pressed") is True
-        _drag_to(window, items[1])
-        assert not first.isPressed() and first.contentFrame.property("pressed") is not True
-        assert not second.isPressed()
-        assert _picked(window) == []
-        _drag_to(window, items[0])
-        assert first.isPressed() and first.contentFrame.property("pressed") is True
-        _release(window, items[0])
-        assert not first.isPressed()
+        _release(window, items[1])
         assert _picked(window) == [items[0]]
 
     @pytest.mark.parametrize(
-        ("state", "pressed", "hover"),
+        ("state", "pressed"),
         [
-            (D.WAITING, "cardPressedBg", "cardHoverBg"),
-            (D.FINISHED, "cardTintFinishedPressed", "cardTintFinishedHover"),
-            (D.FAILED, "cardTintFailedPressed", "cardTintFailedHover"),
+            (D.WAITING, "cardPressedBg"),
+            (D.FINISHED, "cardTintFinishedPressed"),
+            (D.FAILED, "cardTintFailedPressed"),
         ],
     )
-    def test_pressed_card_ground_is_the_pressed_token(
-        self, window: VodDownloader, state: DownloadState, pressed: str, hover: str
+    def test_pressed_card_ground_is_not_the_pressed_token(
+        self, window: VodDownloader, state: DownloadState, pressed: str
     ) -> None:
-        """누르고 있는 카드의 바탕은 그 카드 종류의 눌린 색이고 떼면 눌린 색이 아니어야 한다.
+        """누르고 있는 카드의 바탕은 그 카드 종류의 눌린 색이 아니어야 한다.
 
-        선택 모드, 대기 · 완료 · 실패 카드를 누름 -> 카드 면 왼쪽에서 넷째 화소 ≈ 눌린 색 토큰(한도 8),
-        호버 색 토큰은 아님 -> 카드 밖으로 옮김 -> 눌린 색이 아님
+        선택 모드, 대기 · 완료 · 실패 카드를 누름 -> 카드 면 왼쪽에서 넷째 화소 ≉ 눌린 색 토큰(한도 8)
         """
         items = _add(window, state, D.WAITING)
         _toggle_select_mode(window, True)
         card = _card(window, items[0])
-        tokens = theme.current_tokens()
-        assert _gap(QColor(tokens[pressed]), QColor(tokens[hover])) > 16, (
-            "전제: 두 색이 한도보다 멀다"
-        )
         _press(window, items[0])
-        assert card.isPressed(), "전제: 눌린 표시가 켜졌다"
-        assert _is(_edge(card, 3), pressed, 8)
-        assert not _is(_edge(card, 3), hover, 8)
-        _drag_to(window, items[1])
+        assert _picked(window) == [items[0]], "전제: 눌러서 골랐다"
         assert not _is(_edge(card, 3), pressed, 8)
-        _release(window, items[1])
+        _release(window, items[0])
 
-    def test_shift_range_is_added_on_release_with_the_modifier_of_the_press(
-        self, window: VodDownloader
-    ) -> None:
-        """Shift 범위는 뗄 때 더해지고, Shift 여부는 누를 때의 값이어야 한다.
+    def test_shift_range_is_added_on_press(self, window: VodDownloader) -> None:
+        """Shift 범위는 누를 때 더해져야 한다.
 
-        선택 모드, 카드 셋, 첫째 클릭 -> 셋째를 Shift와 함께 누름 -> 고른 카드 = 첫째뿐
-        -> Shift 없이 뗌 -> 고른 카드 = 셋 모두
+        선택 모드, 카드 셋, 첫째 클릭 -> 셋째를 Shift와 함께 누름 -> 고른 카드 = 셋 모두 -> 뗌 -> 그대로
         """
         items = _add(window, D.WAITING, D.WAITING, D.WAITING)
         _toggle_select_mode(window, True)
         _click(window, items[0])
         _press(window, items[2], SHIFT)
-        assert _picked(window) == [items[0]]
-        _release(window, items[2])
+        assert sorted(_picked(window), key=items.index) == items
+        _release(window, items[2], SHIFT)
         assert sorted(_picked(window), key=items.index) == items
 
     def test_shift_held_only_at_release_does_not_make_a_range(self, window: VodDownloader) -> None:
@@ -2010,35 +1993,21 @@ class TestPickOnRelease:
         assert sorted(_picked(window), key=items.index) == [items[0], items[2]]
 
     @pytest.mark.parametrize("modifier", [CTRL, SHIFT])
-    def test_modifier_click_outside_select_mode_enters_on_release(
+    def test_modifier_click_outside_select_mode_enters_on_press(
         self, window: VodDownloader, modifier: Qt.KeyboardModifier
     ) -> None:
-        """선택 모드 밖의 Ctrl · Shift+클릭은 누르는 동안 눌린 표시만 켜고 뗄 때 선택 모드로 들어가며 골라야 한다.
+        """선택 모드 밖의 Ctrl · Shift+누름은 떼기 전에 선택 모드로 들어가며 골라야 한다.
 
-        카드 둘, 첫째를 Ctrl(또는 Shift)과 함께 누름 -> 선택 모드 아님 · 눌린 표시 켜짐 -> 뗌
-        -> 선택 모드 · 고른 카드 = 첫째
+        카드 둘, 첫째를 Ctrl(또는 Shift)과 함께 누름 -> 선택 모드 · 고른 카드 = 첫째 · 눌린 표시 꺼짐 -> 뗌 -> 그대로
         """
         items = _add(window, D.WAITING, D.WAITING)
         card = _card(window, items[0])
         _press(window, items[0], modifier)
-        assert not window.listView.isSelecting()
-        assert card.isPressed()
-        _release(window, items[0], modifier)
         assert window.listView.isSelecting()
         assert _picked(window) == [items[0]]
         assert not card.isPressed()
-
-    def test_modifier_click_released_outside_does_not_enter(self, window: VodDownloader) -> None:
-        """선택 모드 밖에서 Ctrl과 함께 누른 뒤 카드 밖에서 떼면 선택 모드로 들어가지 않아야 한다.
-
-        카드 둘, 첫째를 Ctrl과 함께 누름 -> 둘째 위로 옮겨 뗌 -> 선택 모드 아님
-        """
-        items = _add(window, D.WAITING, D.WAITING)
-        _press(window, items[0], CTRL)
-        assert _card(window, items[0]).isPressed(), "전제: 눌린 표시가 켜졌다"
-        _drag_to(window, items[1])
-        _release(window, items[1], CTRL)
-        assert not window.listView.isSelecting()
+        _release(window, items[0], modifier)
+        assert _picked(window) == [items[0]]
 
     def test_plain_click_outside_select_mode_shows_no_pressed_mark(
         self, window: VodDownloader
@@ -2234,9 +2203,10 @@ class TestSpaceOnRelease:
         assert seen == [[items[0]]]
 
     def test_space_while_holding_the_mouse_is_ignored(self, window: VodDownloader) -> None:
-        """마우스로 누른 채 Space를 누르고 떼면 Space는 무시하고 마우스를 뗄 때 한 번만 골라야 한다.
+        """마우스로 누른 채 Space를 누르고 떼면 Space는 무시하고 마우스를 누를 때 한 번만 골라야 한다.
 
-        선택 모드, 첫째를 마우스로 누름 · Space 누름 · 뗌 -> 고른 카드 없음, 마우스 뗌 -> [첫째](바뀐 횟수 1)
+        선택 모드, 첫째를 마우스로 누름 -> [첫째], Space 누름 · 뗌 -> [첫째] · 눌린 바탕 꺼짐,
+        마우스 뗌 -> 바뀐 횟수 1([[첫째]])
         """
         items = self._picking(window, 1)
         card = _card(window, items[0])
@@ -2246,8 +2216,8 @@ class TestSpaceOnRelease:
         focused = window.focusWidget()
         _space(focused, PRESS)
         _space(focused, LIFT)
-        assert _picked(window) == []
-        assert card.isPressed(), "전제: 마우스 누름이 이어진다"
+        assert _picked(window) == [items[0]]
+        assert not card.isPressed()
         _release(window, items[0])
         assert seen == [[items[0]]]
 
