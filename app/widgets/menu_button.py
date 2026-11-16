@@ -3,12 +3,15 @@
 버블은 버튼 오른쪽 안쪽 여백(QSS `QPushButton#menuDownloadButton`의 `padding-right`)에 놓는다. 그 여백은
 버블이 숨어도 그대로라 메뉴바가 움직이지 않는다. 버블 · 테두리는 마우스를 받지 않는 자식 위젯이 그린다 —
 틱마다 `setStyleSheet`을 쓰지 않는다. 색은 테마 토큰으로만 고른다(이 파일에 색 리터럴이 없다).
+
+탭 모양은 밑줄 탭이다(#611): 고른 탭 아래끝에 강조색 밑줄, 키보드 초점은 밑줄과 겹치지 않는 글 둘레 상자.
+둘 다 이 버튼이 그린다 — QSS 테두리는 네 변이 한 색이라 밑줄과 초점을 함께 보일 수 없다.
 """
 
 import math
 
 from PySide6.QtCore import QRectF, Qt, QVariantAnimation
-from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPen, QResizeEvent
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPaintEvent, QPen, QResizeEvent
 from PySide6.QtWidgets import QPushButton, QWidget
 
 import app.theme as theme
@@ -137,6 +140,46 @@ class MenuButton(QPushButton):
     def _onBlinkStep(self, progress: float) -> None:
         """한 주기 안의 자리(0 ~ 1) → 세기 — 0에서 시작해 가운데에서 가장 짙고 끝에서 다시 0(코사인)."""
         self.blinkBorder.setLevel(0.5 - 0.5 * math.cos(2 * math.pi * progress))
+
+    def underlineRect(self) -> QRectF:
+        """고른 탭 밑줄 자리 — 버튼 아래끝, 버튼 폭 그대로(왼쪽 끝 = 탭 왼쪽 끝)."""
+        thick = theme.METRICS["menuUnderline"]
+        return QRectF(0, self.height() - thick, self.width(), thick)
+
+    def focusRect(self) -> QRectF:
+        """키보드 초점 상자 — 글 좌우로 `menuFocusPadX`, 위는 탭 위끝에서 `menuFocusPadY`, 아래는 밑줄 자리 위
+        `menuFocusPadY`까지. 밑줄과 겹치지 않는다(1px 선의 바깥 끝 기준)."""
+        m = theme.METRICS
+        border = 1  # QSS 투명 테두리(style.qss 메뉴바 절)
+        text_width = QFontMetrics(self.font()).horizontalAdvance(self.text())
+        content_left = border + m["menuTabPadX"]
+        content_right = self.width() - border - theme.MENU_BUTTON_PAD_RIGHT
+        text_left = content_left + max(0, (content_right - content_left - text_width) // 2)
+        top = m["menuFocusPadY"]
+        bottom = self.height() - m["menuUnderline"] - m["menuFocusPadY"]
+        return QRectF(
+            text_left - m["menuFocusPadX"],
+            top,
+            text_width + 2 * m["menuFocusPadX"],
+            bottom - top,
+        )
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        """QSS 모양 위에 고른 탭 밑줄 · 키보드 초점 상자를 덧그린다 — 색은 그릴 때마다 토큰을 읽는다."""
+        super().paintEvent(event)
+        checked, focused = self.isChecked(), self.hasFocus()
+        if not (checked or focused):
+            return
+        accent = QColor(theme.current_tokens()["accent"])
+        painter = QPainter(self)
+        if checked:
+            painter.fillRect(self.underlineRect(), accent)
+        if focused:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(accent, 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            radius = theme.METRICS["menuHoverRadius"]
+            painter.drawRoundedRect(self.focusRect().adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         """버블을 오른쪽 안쪽 여백 자리(바깥 끝에서 `menuBubbleInset` 안쪽)에, 테두리를 버튼 전체에 둔다."""

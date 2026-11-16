@@ -6,7 +6,7 @@
 from collections.abc import Callable, Iterator
 
 import pytest
-from PySide6.QtCore import QPoint, QRect
+from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -746,6 +746,151 @@ class TestBarOnlyProgress:
             assert read_rows().get("cardProgress") == '"fill"'
         finally:
             card_display.use(None)
+
+
+UNDERLINE = 2  # 고른 탭 밑줄 굵기(px) — 지시 값(#611 176e)
+TAB_LEFT = 12  # 고른 탭 밑줄 왼쪽 끝(창 x) — 지시 값 = 바깥 여백
+
+
+def _tab_strip(win: VodDownloader) -> tuple[QWidget, QWidget]:
+    """메뉴바에 고르지 않은 탭 하나를 더한다 — 탭이 「VOD 다운」 하나뿐이라 고르지 않은 탭을 잴 자리가 없다."""
+    from app.widgets.menu_button import MenuButton
+
+    other = MenuButton(win.appMenuBar)
+    other.setProperty("role", "menu")
+    other.setCheckable(True)
+    other.setText("Tab")
+    other.setFixedHeight(win.menuDownloadButton.height())
+    win.appMenuGroup.addButton(other)
+    win.appMenuLayout.insertWidget(1, other)
+    _pump()
+    return win.menuDownloadButton, other
+
+
+class TestMenuTabs:
+    """메뉴바 탭은 밑줄 탭 — 고른 탭만 아래 2px 강조색 밑줄(왼쪽 끝 12), 면 없음, 초점은 글 둘레 상자(#611)."""
+
+    def test_selected_tab_has_a_two_pixel_accent_underline(
+        self, window: Callable[..., VodDownloader]
+    ) -> None:
+        """고른 탭의 맨 아래 두 줄은 강조색이고 그 위 줄은 바 면이어야 한다.
+
+        창 폭 900 -> 「VOD 다운」 아래끝 줄 · 그 위 줄 가운데 ≈ accent, 아래끝 − 2 줄 가운데 ≈ surface
+        """
+        win = window(DownloadState.WAITING)
+        tab = win.menuDownloadButton
+        assert tab.isChecked(), "전제: 고른 탭이다"
+        rect = _rect(win, tab)
+        image = win.grab().toImage()
+        x = rect.center().x()
+        for y in range(rect.bottom() - UNDERLINE + 1, rect.bottom() + 1):
+            assert _is(_pixel(image, x, y), "accent"), y
+        assert _is(_pixel(image, x, rect.bottom() - UNDERLINE), "surface")
+
+    def test_underline_starts_at_the_outer_margin(
+        self, window: Callable[..., VodDownloader]
+    ) -> None:
+        """고른 탭 밑줄의 왼쪽 끝은 창 x 12여야 한다.
+
+        창 폭 900 -> 탭 아래끝 줄: x 12 ≈ accent, x 11 ≈ surface
+        """
+        win = window(DownloadState.WAITING)
+        rect = _rect(win, win.menuDownloadButton)
+        image = win.grab().toImage()
+        assert _is(_pixel(image, TAB_LEFT, rect.bottom()), "accent")
+        assert _is(_pixel(image, TAB_LEFT - 1, rect.bottom()), "surface")
+
+    def test_selected_tab_has_no_face(self, window: Callable[..., VodDownloader]) -> None:
+        """고른 탭은 면 없이 바 면 위 굵은 글이어야 한다.
+
+        창 폭 900 -> 「VOD 다운」 굵은 글꼴, 왼쪽 안쪽 3px 가운데 · 위 가장자리 가운데 ≈ surface
+        """
+        win = window(DownloadState.WAITING)
+        tab = win.menuDownloadButton
+        rect = _rect(win, tab)
+        image = win.grab().toImage()
+        assert tab.font().bold()
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surface")
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "surface")
+
+    def test_unselected_tab_has_no_underline(self, window: Callable[..., VodDownloader]) -> None:
+        """고르지 않은 탭은 아래 줄에 강조색이 없고 면도 없어야 한다.
+
+        탭 「Tab」을 더함(고르지 않음) -> 그 탭 아래 두 줄 어디에도 accent 화소가 없다, 왼쪽 안쪽 3px ≈ surface
+        """
+        win = window(DownloadState.WAITING)
+        _, other = _tab_strip(win)
+        assert other.isVisible() and not other.isChecked(), "전제: 보이는 고르지 않은 탭"
+        rect = _rect(win, other)
+        image = win.grab().toImage()
+        bottom = [
+            _pixel(image, x, y)
+            for x in range(rect.left(), rect.right() + 1)
+            for y in range(rect.bottom() - UNDERLINE + 1, rect.bottom() + 1)
+        ]
+        assert not any(_is(colour, "accent") for colour in bottom)
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surface")
+
+    def test_hovered_unselected_tab_has_no_face(self, window: Callable[..., VodDownloader]) -> None:
+        """포인터가 올라간 고르지 않은 탭도 면 · 밑줄 없이 바 면이어야 한다.
+
+        창에 합성 포인터 이동(「Tab」 가운데) -> underMouse, 왼쪽 안쪽 3px ≈ surface, 아래끝 줄 가운데 ≈ surface
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(DownloadState.WAITING)
+        _, other = _tab_strip(win)
+        rect = _rect(win, other)
+        QTest.mouseMove(win.windowHandle(), QPoint(1, 1))  # 앞 테스트의 포인터 자리와 다르게
+        QTest.mouseMove(win.windowHandle(), rect.center())
+        _pump()
+        assert other.underMouse(), "전제: 포인터가 탭 위다"
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surface")
+        assert _is(_pixel(image, rect.center().x(), rect.bottom()), "surface")
+
+    @pytest.mark.parametrize("which", ["selected", "unselected"])
+    def test_keyboard_focus_draws_a_box_around_the_text_above_the_underline(
+        self, window: Callable[..., VodDownloader], qtbot, which: str
+    ) -> None:
+        """키보드 초점을 받은 탭은 글을 둘러싼 강조색 상자가 있고 상자와 밑줄 자리 사이에 바 면 줄이 있어야 한다.
+
+        탭에 Tab 초점 -> 탭 세로 가운데 줄의 accent 화소 맨 왼쪽 < 글 화소 맨 왼쪽, 맨 오른쪽 > 글 화소 맨 오른쪽,
+        밑줄 바로 위 두 줄(아래끝 − 2 · − 3) 가운데 ≈ surface, 초점 전에는 세로 가운데 줄에 accent 화소가 없다
+        """
+        win = window(DownloadState.WAITING)
+        selected, other = _tab_strip(win)
+        tab = selected if which == "selected" else other
+        rect = _rect(win, tab)
+        middle = rect.center().y()
+
+        def accent_columns(image: QImage) -> list[int]:
+            return [
+                x
+                for x in range(rect.left(), rect.right() + 1)
+                if _is(_pixel(image, x, middle), "accent")
+            ]
+
+        assert not accent_columns(win.grab().toImage()), "전제: 초점 전에는 상자가 없다"
+        win.activateWindow()
+        qtbot.waitUntil(win.isActiveWindow, timeout=3000)
+        tab.setFocus(Qt.FocusReason.TabFocusReason)
+        qtbot.waitUntil(tab.hasFocus, timeout=3000)
+        _pump()
+        image = win.grab().toImage()
+        box = accent_columns(image)
+        assert box, "초점 상자가 그려진다"
+        ink = [
+            x
+            for x in range(rect.left(), rect.right() + 1)
+            # 초점 상자의 둥근 모서리(위아래 끝에서 6줄 안) 밖 — 모서리 안티에일리어싱 화소를 글로 세지 않는다
+            for y in range(rect.top() + 8, rect.bottom() - 8)
+            if not _is(_pixel(image, x, y), "surface") and not _is(_pixel(image, x, y), "accent")
+        ]
+        assert ink, "전제: 글 화소가 있다"
+        assert min(box) < min(ink) and max(box) > max(ink)
+        for y in (rect.bottom() - UNDERLINE, rect.bottom() - UNDERLINE - 1):
+            assert _is(_pixel(image, rect.center().x(), y), "surface"), y
 
 
 class TestFieldBorderToken:

@@ -526,11 +526,11 @@ def test_an_unselected_menu_is_muted_text_without_a_face_or_border(window: VodDo
     assert _close(_pixel(button, 3, button.height() // 2), surface)
 
 
-def test_the_selected_menu_keeps_its_face_and_bold_text(window: VodDownloader) -> None:
-    """고른 메뉴(「VOD 다운」)는 버튼 면(surfaceAlt) 위 굵은 글이어야 한다."""
+def test_the_selected_menu_has_bold_text_and_no_face(window: VodDownloader) -> None:
+    """고른 메뉴(「VOD 다운」)는 면 없이 바 면(surface) 위 굵은 글이어야 한다(밑줄 탭, #611)."""
     button = window.menuDownloadButton
     assert button.isChecked() and button.font().bold()
-    assert _close(_pixel(button, 3, button.height() // 2), theme.current_tokens()["surfaceAlt"])
+    assert _close(_pixel(button, 3, button.height() // 2), theme.current_tokens()["surface"])
 
 
 def test_the_chosen_chip_has_the_bar_face_and_a_border_and_no_accent_fill(

@@ -118,6 +118,11 @@ METRICS = {
     "menuBubble": 16,  # 버블(원) 지름 — 기호는 16 격자에 그려 이 크기에서 프로토와 같다
     "menuBubbleGap": 7,  # 메뉴 이름 글 ↔ 버블 사이
     "menuBubbleInset": 7,  # 버튼 오른쪽 바깥 끝(테두리 포함) ↔ 버블
+    # ---- 메뉴바 탭 — 밑줄 탭(#611, 176d 그림 ③): 면 없이 글, 고른 탭만 아래 강조색 밑줄 ----
+    "menuTabPadX": 5,  # 탭 왼쪽 안쪽 여백 — 투명 테두리 1 + 5 = 탭 왼쪽 끝 ↔ 글 6(176d 그림 ③과 같다)
+    "menuUnderline": 2,  # 고른 탭 밑줄 굵기 — 탭 아래끝에 탭 폭 그대로(왼쪽 끝 = 탭 왼쪽 끝)
+    "menuFocusPadX": 4,  # 키보드 초점 상자 ↔ 글 좌우
+    "menuFocusPadY": 2,  # 탭 위끝 ↔ 초점 상자 · 초점 상자 ↔ 밑줄 자리
     # ---- 상단·하단 바 & 창 ----
     "framePadding": 8,  # 상단·하단 바 안쪽 여백 — cardPadding과 같으면 정렬선이 관통
     "frameRadius": 8,  # 상단·하단 바 모서리
@@ -543,6 +548,12 @@ def _card_tints(table: dict, scheme: str) -> None:
         table[f"{state}OnTint"] = _readable_on(table[state], (tint, table[f"cardTint{name}Hover"]))
 
 
+# 메뉴 버튼 오른쪽 안쪽 여백(px) = 바깥 끝 ↔ 버블 + 버블 + 글 ↔ 버블 − 테두리 1px(style.qss 메뉴바 절)
+# — 버블이 숨어도 자리를 둔다(#523, 설계 §2). 초점 상자 자리(app/widgets/menu_button.py)도 이 값을 읽는다
+MENU_BUTTON_PAD_RIGHT = (
+    METRICS["menuBubbleInset"] + METRICS["menuBubble"] + METRICS["menuBubbleGap"] - 1
+)
+
 # METRICS(정수)와 FONTS(문자열)를 두 색 표에 자동 주입한다 — .qss는
 # @cardPadding·@fontSizeTitle 같은 이름으로 참조하고, 파이썬 코드는
 # theme.METRICS["cardPadding"] 정수를 직접 쓴다. 정의 지점은 위 한 곳이다.
@@ -551,11 +562,7 @@ for _table in (DARK, LIGHT):
     _table.update({_name: f"{_value}px" for _name, _value in METRICS.items()})
     _table.update(FONTS)
     _table["barRadius"] = f"{METRICS['barHeight'] // 2}px"
-    # 메뉴 버튼 오른쪽 안쪽 여백 = 바깥 끝 ↔ 버블 + 버블 + 글 ↔ 버블 − 테두리 1px(style.qss QPushButton)
-    # — 버블이 숨어도 자리를 둔다(#523, 설계 §2)
-    _table["menuButtonPadRight"] = (
-        f"{METRICS['menuBubbleInset'] + METRICS['menuBubble'] + METRICS['menuBubbleGap'] - 1}px"
-    )
+    _table["menuButtonPadRight"] = f"{MENU_BUTTON_PAD_RIGHT}px"
 _card_tints(DARK, "dark")
 _card_tints(LIGHT, "light")
 
