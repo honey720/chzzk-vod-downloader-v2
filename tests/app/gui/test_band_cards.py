@@ -1631,6 +1631,30 @@ def _hover(win: VodDownloader, widget: QWidget, fresh: bool = True) -> QRect:
     return rect
 
 
+def _ink_is(win: VodDownloader, rect: QRect, token: str) -> bool:
+    """칩 자리(창 좌표)에서 면과 가장 먼 화소(글 잉크 한가운데)가 text · stateFailed 가운데 token에 더 가까운지 본다.
+
+    면은 왼쪽 안쪽 3px · 세로 가운데 화소다. 테두리 2px는 뺀다.
+    """
+    image = win.grab().toImage()
+    face = _pixel(image, rect.left() + 3, rect.center().y())
+
+    def gap(a: QColor, b: QColor) -> int:
+        return abs(a.red() - b.red()) + abs(a.green() - b.green()) + abs(a.blue() - b.blue())
+
+    ink = max(
+        (
+            _pixel(image, x, y)
+            for x in range(rect.left() + 2, rect.right() - 1)
+            for y in range(rect.top() + 2, rect.bottom() - 1)
+        ),
+        key=lambda colour: gap(colour, face),
+    )
+    tokens = theme.current_tokens()
+    other = "stateFailed" if token == "text" else "text"
+    return gap(ink, QColor(tokens[token])) < gap(ink, QColor(tokens[other]))
+
+
 class TestBarHoverFaces:
     """바 위 동작 버튼의 호버 · 눌림 면은 바 전용 barHover · barPressed, 카드 버튼은 surfaceHover 그대로(176k)."""
 
@@ -1696,6 +1720,48 @@ class TestBarHoverFaces:
                 rect.center(),
             )
             _pump()
+
+    def test_failed_chip_text_is_text_while_hovered_and_failed_after(
+        self, window, scheme: str
+    ) -> None:
+        """실패 칩 글은 호버 · 눌림 동안 text, 포인터를 뗀 뒤 stateFailed여야 한다.
+
+        실패 카드 하나(칩 alert), 창 폭 = 최소폭 + 900(칩 모양), 합성 포인터 이동 · 누름 · 뗌 · 칩 밖으로 이동 ->
+        칩 안에서 면과 가장 먼 화소가 호버 · 눌림 때 stateFailed보다 text에 가깝고, 칩 밖으로 옮긴 뒤 text보다
+        stateFailed에 가깝다
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(DownloadState.FAILED)
+        win.resize(win.minimumWidth() + 900, 600)
+        _pump()
+        chip = win.filterChips["failed"]
+        assert chip.isVisible() and chip.property("alert") is True, "전제: 칩 모양 · 실패 칩 강조"
+        chip.blockSignals(True)  # 누름이 목록 거르기를 바꾸지 않게
+        try:
+            rect = _hover(win, chip)
+            assert _ink_is(win, rect, "text"), f"{scheme} 호버"
+            QTest.mousePress(
+                win.windowHandle(),
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+                rect.center(),
+            )
+            _pump()
+            assert chip.isDown(), "전제: 눌린 채다"
+            assert _ink_is(win, rect, "text"), f"{scheme} 눌림"
+            QTest.mouseRelease(
+                win.windowHandle(),
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+                rect.center(),
+            )
+            QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
+            _pump()
+            assert not chip.underMouse(), "전제: 포인터가 칩 밖이다"
+            assert _ink_is(win, rect, "stateFailed"), f"{scheme} 뗀 뒤"
+        finally:
+            chip.blockSignals(False)
 
     def test_card_button_hover_face_stays_surface_hover(self, window, scheme: str) -> None:
         """카드 ✎ 버튼 호버 면은 surfaceHover 그대로이고 barHover가 아니어야 한다.
