@@ -254,15 +254,15 @@ class TestRows:
         assert label.width() == expected
         assert label.toolTip() == ""
 
-    def test_elided_title_has_no_tooltip(self, qapp) -> None:
-        """잘린 제목에도 툴팁이 없어야 한다 (#599).
+    def test_elided_title_tooltip_is_the_whole_title(self, qapp) -> None:
+        """잘린 제목의 툴팁은 제목 전체여야 한다 (#610).
 
-        제목 = "아주 긴 제목 " × 30 · 카드 폭 400 -> 보이는 글 ≠ 제목, 툴팁 ""
+        제목 = "아주 긴 제목 " × 30 · 카드 폭 400 -> 보이는 글 ≠ 제목, 툴팁 = 제목
         """
         title = "아주 긴 제목 " * 30
         card = _card(title=title, width=400)
         assert card.titleLabel.isElided()
-        assert card.titleLabel.toolTip() == ""
+        assert card.titleLabel.toolTip() == title
 
     def test_path_shows_only_when_it_differs_from_the_default(self, qapp) -> None:
         """저장 위치가 기본 위치면 숨고, 다르면 마지막 폴더 이름과 전체 경로 툴팁으로 보여야 한다.
@@ -843,7 +843,8 @@ class TestSectionLengthInTheInfoTip:
         assert not any(line.startswith("Sections add up to") for line in lines)
 
 
-TIP_DELAY_MS = 40  # 테스트가 줄여 거는 카드 툴팁 지연(ms) — 제품 값 600을 기다리지 않는다(#599)
+# 테스트가 거는 카드 툴팁 지연(ms) — 버튼 · 글 둘 다, 제품 값(버튼 0 · 글 600)을 기다리지 않는다(#599 · #610)
+TIP_DELAY_MS = 40
 
 
 class TestTipBubbles:
@@ -851,7 +852,8 @@ class TestTipBubbles:
 
     @pytest.fixture(autouse=True)
     def _hide_bubble(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-        monkeypatch.setattr(tip_bubble, "HOVER_TIP_DELAY_MS", TIP_DELAY_MS)
+        monkeypatch.setattr(tip_bubble, "CARD_BUTTON_TIP_DELAY_MS", TIP_DELAY_MS)
+        monkeypatch.setattr(tip_bubble, "CARD_TEXT_TIP_DELAY_MS", TIP_DELAY_MS)
         tip_bubble.hide_tip()
         yield
         tip_bubble.hide_tip()
@@ -890,23 +892,19 @@ class TestTipBubbles:
         assert info.toolTip() == ""
         assert tip_bubble.current_bubble() is None or not tip_bubble.current_bubble().isVisible()
 
-    def test_elided_title_shows_no_tooltip(self, qapp, qtbot: QtBot) -> None:
-        """잘린 제목에 들어가도 말풍선도 Qt 툴팁도 뜨지 않아야 한다 (#599).
+    def test_elided_title_shows_the_whole_title_after_the_delay(self, qapp, qtbot: QtBot) -> None:
+        """잘린 제목에 들어가면 지연 뒤 제목 전체가 말풍선으로 뜨고 Qt 툴팁은 뜨지 않아야 한다 (#610).
 
-        제목 "아주 긴 제목 " × 300 · 저장 위치 "D:/vod/lck" · 카드 폭 WIDE(저장 위치가 보인다) · 카드 들어감
-        저장 위치 글 들어감 -> 지연 뒤 말풍선 "D:/vod/lck"(말풍선이 뜨는 상태임을 먼저 확인)
-        저장 위치 글 나감 · 제목 들어감 -> 제목 잘림, 툴팁 "", 말풍선 없음
+        제목 "아주 긴 제목 " × 300 · 카드 폭 WIDE · 카드 들어감 · 제목 들어감
+        -> 제목 잘림, 지연 뒤 말풍선 = 제목 전체, Qt 툴팁 안 보임
         """
         title = "아주 긴 제목 " * 300  # WIDE 폭에서도 잘린다
-        card = _card(title=title, path="D:/vod/lck", width=WIDE)
+        card = _card(title=title, width=WIDE)
         enter(card)
-        enter(card.directoryLabel)
-        qtbot.waitUntil(lambda: bubble_text_for(card.directoryLabel) == "D:/vod/lck", timeout=2000)
-        leave(card.directoryLabel)
         enter(card.titleLabel)
-        qtbot.wait(3 * TIP_DELAY_MS)  # 지연이 지나도 뜨지 않는지 본다
-        assert card.titleLabel.isElided() and card.titleLabel.toolTip() == ""
-        assert tip_bubble.current_bubble() is None or not tip_bubble.current_bubble().isVisible()
+        assert card.titleLabel.isElided()
+        qtbot.waitUntil(lambda: bubble_text_for(card.titleLabel) == title, timeout=2000)
+        assert not qt_tooltip_shown(card.titleLabel)
 
     def test_fitting_title_shows_nothing(self, qapp) -> None:
         """다 보이는 제목에 들어가면 말풍선도 Qt 툴팁도 뜨지 않아야 한다.

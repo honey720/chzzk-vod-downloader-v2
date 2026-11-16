@@ -578,8 +578,8 @@ class Ui_ContentItemWidget(object):
         self.titleRow, self.titleLayout = _row(
             self.contentFrame, "titleRow", theme.METRICS["cardRow2Height"]
         )
-        # 제목 · 정보 글은 잘려도 툴팁을 달지 않는다 — 전체 값은 카드 편집 창에서 본다(오너 2026-11-15, #599)
-        self.titleLabel = ElidingLabel(self.titleRow, with_tip=False)
+        # 제목은 잘렸을 때만 제목 전체를 툴팁으로 단다 — 잘린 채널명과 같은 방식(오너 2026-11-15, #610)
+        self.titleLabel = ElidingLabel(self.titleRow, tip_when_elided=True)
         self.titleLabel.setObjectName("titleLabel")
         self.titleLabel.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.titleLabel.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)

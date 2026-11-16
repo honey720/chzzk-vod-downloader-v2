@@ -67,7 +67,7 @@ def no_network(monkeypatch) -> None:
     # 테스트 아이템의 기본 경로를 전역 설정 경로로 등록한다(#245) — 실제
     # 앱은 시작 시 mainWindow가 밀어 넣는 값이라, 안 넣으면 모든 카드가
     # "전역과 다른 경로"로 판정돼 경로 라벨이 떠서 3행 슬롯을 밀어낸다.
-    monkeypatch.setattr("app.widgets.widget._global_download_path", "C:/Users/LeeDH/Downloads")
+    monkeypatch.setattr("app.widgets.widget._global_download_path", "C:/Users/user/Downloads")
 
 
 def _make_item(content_type="video", title="제목", channel="채널") -> ContentItem:
@@ -83,7 +83,7 @@ def _make_item(content_type="video", title="제목", channel="채널") -> Conten
         [],
         None,
         "",
-        "C:/Users/LeeDH/Downloads",
+        "C:/Users/user/Downloads",
         content_type,
         None,
     )
