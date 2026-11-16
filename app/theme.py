@@ -201,12 +201,8 @@ DARK = {
     # ---- 선·글자 ----
     "border": "#3a3d45",  # 구분선 · 툴팁 · 그룹 상자 · 기본 버튼 테두리
     "borderStrong": "#4c515b",
-    # 바 면(surface) · 칸 면(surfaceAlt) 모두와 비텍스트 대비 3.0 이상인 테두리 — 입력 칸 평소 색 후보 (가)(#611)
-    "fieldBorder": "#797b81",
-    "fieldBorderStrong": "#8c8e93",  # fieldBorder에서 한 단계(ΔE00 약 7) — 후보 (가)의 호버
-    # 입력 칸(URL 칸 · 펼침 칸 · QComboBox) 네 변 테두리 — 후보 (나): borderStrong과 fieldBorder 사이, 칸 면과 2.40 ·
-    # 바 면과 2.83(#611 176h — 오너가 (가) fieldBorder · (나) · (다) borderStrong 셋 가운데 고른다). 호버
-    # (`fieldEdgeHover`)는 이 값에서 파생한다 — 이 값 하나만 바꾸면 된다
+    # 입력 칸(URL 칸 · 펼침 칸 · QComboBox) 네 변 테두리 — 세 후보 가운데 (나)로 정함: 칸 면과 2.40(#611 176i).
+    # 호버(`fieldEdgeHover`)는 이 값에서 파생한다 — 이 값 하나만 바꾸면 된다
     "fieldEdge": "#676b72",
     "text": "#e6e8ec",
     "textMuted": "#a0a6b0",
@@ -278,10 +274,7 @@ LIGHT = {
     # ---- 선·글자 ----
     "border": "#d5d8de",  # 구분선 · 툴팁 · 그룹 상자 · 기본 버튼 테두리
     "borderStrong": "#b9bec7",
-    # 바 면 · 칸 면 모두와 3.0 이상인 테두리 — 입력 칸 평소 색 후보 (가)(#611)
-    "fieldBorder": "#86888c",
-    "fieldBorderStrong": "#747679",  # fieldBorder에서 한 단계(ΔE00 약 7) — 후보 (가)의 호버
-    "fieldEdge": "#989ba0",  # 입력 칸 네 변 테두리 — 후보 (나): 칸 면과 2.40 · 바 면과 2.79(#611 176h)
+    "fieldEdge": "#989ba0",  # 입력 칸 네 변 테두리 — (나)로 정함(#611 176i)
     "text": "#1c1e22",
     "textMuted": "#5b6069",
     "textDisabled": "#9a9fa8",

@@ -49,10 +49,6 @@ PAIRS = [
     ("textMuted", "cardTintFinishedPressed", 3.0, "카드 흐린 글 ↔ 눌린 완료 카드(#561)"),
     ("textMuted", "cardTintFailedPressed", 3.0, "카드 흐린 글 ↔ 눌린 실패 카드(#561)"),
     ("pickMarkRing", "accent", 3.0, "고른 체크 원의 테두리 ↔ 강조색 채움 — 그림(#561)"),
-    ("fieldBorder", "surface", 3.0, "입력 칸 테두리 후보 (가) ↔ 바 면 — 그림(#611)"),
-    ("fieldBorder", "surfaceAlt", 3.0, "입력 칸 테두리 후보 (가) ↔ 칸 면 — 그림(#611)"),
-    ("fieldBorderStrong", "surface", 3.0, "후보 (가) 호버 ↔ 바 면 — 그림(#611)"),
-    ("fieldBorderStrong", "surfaceAlt", 3.0, "후보 (가) 호버 ↔ 칸 면 — 그림(#611)"),
 ]
 
 # 눌린 카드 바탕(#561) — (평소, 호버, 눌림). 채움은 호버 토큰이 없어 None이다
@@ -133,21 +129,21 @@ def test_pair_meets_its_contrast(
     )
 
 
-FIELD_EDGE_FACE = 2.4  # 입력 칸 테두리 후보 (나) ↔ 칸 면 대비 목표(#611 176h)
+FIELD_EDGE_FACE = 2.4  # 입력 칸 테두리 (나) ↔ 칸 면 대비 목표(#611 176h · 176i)
 FIELD_EDGE_SLACK = 0.05  # 목표 대비의 허용 폭 — 16진 색 반올림
 
 
 @pytest.mark.parametrize("scheme", SCHEMES)
-def test_field_edge_is_the_middle_candidate(scheme: str) -> None:
-    """입력 칸 테두리(fieldEdge)는 칸 면과 약 2.4이고 borderStrong(다)과 fieldBorder(가) 사이여야 한다(#611).
+def test_field_edge_keeps_the_chosen_contrast(scheme: str) -> None:
+    """입력 칸 테두리(fieldEdge)는 칸 면과 약 2.4이고 borderStrong보다 진해야 한다(#611).
 
-    fieldEdge ↔ surfaceAlt = 2.4 ± 0.05, borderStrong ↔ surfaceAlt < 그 값 < fieldBorder ↔ surfaceAlt
+    fieldEdge ↔ surfaceAlt = 2.4 ± 0.05, borderStrong ↔ surfaceAlt < 그 값
     """
     table = SCHEMES[scheme]
     face = table["surfaceAlt"]
     ratio = _contrast(table["fieldEdge"], face)
     assert abs(ratio - FIELD_EDGE_FACE) <= FIELD_EDGE_SLACK, f"{scheme}: {ratio:.2f}"
-    assert _contrast(table["borderStrong"], face) < ratio < _contrast(table["fieldBorder"], face)
+    assert _contrast(table["borderStrong"], face) < ratio
 
 
 @pytest.mark.parametrize("scheme", SCHEMES)
