@@ -397,7 +397,7 @@ def test_keyboard_focus_draws_an_accent_border(window: VodDownloader, name: str)
 def test_keyboard_focus_draws_an_accent_bottom_on_a_drop_field(window: VodDownloader) -> None:
     """키보드 초점을 받은 펼침 칸(입력 칸)은 아래 테두리가 강조색이어야 한다(초점 전에는 강조색이 아니다).
 
-    입력 칸은 아래 변만 강조색 2px다(#611 176g) — 정렬 칸에 Tab 초점 -> 아래 테두리 가운데 ≈ accent
+    입력 칸 초점은 네 변 강조색 1px다(#611 176h) — 정렬 칸에 Tab 초점 -> 아래 테두리 가운데 ≈ accent
     """
     widget = window.sortButton
     tokens = theme.current_tokens()

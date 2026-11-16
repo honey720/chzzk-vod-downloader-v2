@@ -554,12 +554,6 @@ QFrame#infoFrame QPushButton:focus {
     border-color: @accent;
 }
 
-/* 바 안의 펼침 칸 초점은 입력 칸 규칙(아래 변만 강조색 2px, 입력 칸 절) — 위 바 버튼 초점보다 구체적으로 다시 건다 */
-QFrame#headerFrame QToolButton[role="drop"]:focus {
-    border-color: @borderStrong;
-    border-bottom: 2px solid @accent;
-}
-
 /* 강조색 채움 버튼(▶) 위 초점 — 채움 · 바 면 모두와 3.0 이상인 초점 테두리(@focusOnAccent) */
 QFrame#infoFrame QPushButton#downloadButton:focus {
     border-color: @focusOnAccent;
@@ -567,20 +561,18 @@ QFrame#infoFrame QPushButton#downloadButton:focus {
 
 /* ---------- 입력 칸 — 값을 쓰는 칸 · 값을 고르는 칸 (#611 — 설계 §13) ----------
  * 입력창(QLineEdit)과 펼침 버튼(role="drop" — 저장 위치 · 정렬 · 좁은 폭의 상태 드롭다운, 아이콘 모양 포함)은 한
- * 모양이다: 면 surfaceAlt · 테두리 1px · 모서리 radius(바 안에서는 controlRadius — 셸 바 절). 테두리는 Fluent 2
- * 입력 칸 방식(#611 176g): 위 · 좌 · 우 변은 옅은 borderStrong, 아래 변만 fieldBorder(바 면 · 칸 면과 3:1 — 아래
- * 변이 칸을 알린다). 펼침 버튼은 바탕 · 테두리만 여기서 칠하고 도형 · 글 · ⌄는
- * app/widgets/header_controls.py::DropButton.paintEvent가 그린다. 설정 단계의 공용 선택 칸도 이 규칙을 쓴다.
- * 상태: 호버 = 각 변 한 단계 진하게(위 · 좌 · 우 fieldEdgeHover, 아래 fieldBorderStrong), 초점 · 펼친 동안 · 눌림 =
- * 아래 변 강조색 2px · 나머지 변은 호버 전 색(호버보다 뒤에 두어 초점이 앞선다 — 아래 안쪽 여백을 1px 줄여 칸
- * 높이 · 글 자리가 그대로다), 꺼짐 = 네 변 옅은 border · 글 textDisabled(면 그대로 — 꺼진 칸은 대비 3:1 대상이
- * 아니다, #611). 테두리를 그리는 것은 이 입력 칸뿐이다 — 버튼은 면으로 모양을 낸다(꺼짐 포함). */
+ * 모양이다: 면 surfaceAlt · 테두리 네 변 같은 1px · 모서리 radius(바 안에서는 controlRadius — 셸 바 절). 펼침
+ * 버튼은 바탕 · 테두리만 여기서 칠하고 도형 · 글 · ⌄는 app/widgets/header_controls.py::DropButton.paintEvent가
+ * 그린다. 설정 단계의 공용 선택 칸도 이 규칙을 쓴다.
+ * 상태(#611 176h — 176g의 「아래 변만 진하게 · 초점 아래 2px」를 바꿈): 평소 = 네 변 fieldEdge, 호버 = 네 변 한 단계
+ * 진하게(fieldEdgeHover), 초점 · 펼친 동안 · 눌림 = 네 변 강조색 1px(호버보다 뒤에 두어 초점이 앞선다 — 굵기가
+ * 같아 칸 높이 · 글 자리가 그대로다), 꺼짐 = 네 변 옅은 border · 글 textDisabled(면 그대로 — 꺼진 칸은 대비 3:1
+ * 대상이 아니다). 테두리를 그리는 것은 이 입력 칸뿐이다 — 버튼은 면으로 모양을 낸다(꺼짐 포함). */
 QLineEdit,
 QToolButton[role="drop"] {
     background-color: @surfaceAlt;
     color: @text;
-    border: 1px solid @borderStrong;
-    border-bottom-color: @fieldBorder;
+    border: 1px solid @fieldEdge;
     border-radius: @radius;
 }
 
@@ -602,24 +594,13 @@ QToolButton[role="drop"] {
 QLineEdit:hover,
 QToolButton[role="drop"]:hover {
     border-color: @fieldEdgeHover;
-    border-bottom-color: @fieldBorderStrong;
 }
 
-/* 아래 변 2px — 늘어난 1px만큼 아래 안쪽 여백을 줄인다(펼침 버튼은 안쪽 여백 0이고 글을 위젯 자리로 그린다) */
 QLineEdit:focus,
 QToolButton[role="drop"]:focus,
 QToolButton[role="drop"]:pressed,
 QToolButton[role="drop"]:open {
-    border-color: @borderStrong;
-    border-bottom: 2px solid @accent;
-}
-
-QLineEdit:focus {
-    padding-bottom: @fieldPadYFocus;
-}
-
-QLineEdit#urlInput:focus {
-    padding-bottom: @fieldPadYFocus;
+    border-color: @accent;
 }
 
 QLineEdit:disabled,
@@ -719,8 +700,7 @@ QFrame#sectionDropLine {
 QComboBox {
     background-color: @surfaceAlt;
     color: @text;
-    border: 1px solid @borderStrong;
-    border-bottom-color: @fieldBorder;
+    border: 1px solid @fieldEdge;
     border-radius: @radius;
     padding: @fieldPadY 8px;
     selection-background-color: @accent;
@@ -729,22 +709,18 @@ QComboBox {
 
 QComboBox:hover {
     border-color: @fieldEdgeHover;
-    border-bottom-color: @fieldBorderStrong;
 }
 
-/* 초점 · 펼친 동안 — 입력 칸과 같다(아래 변 강조색 2px, 아래 안쪽 여백 1px 줄임) */
+/* 초점 · 펼친 동안 — 입력 칸과 같다(네 변 강조색 1px) */
 QComboBox:focus,
 QComboBox:on {
-    border-color: @borderStrong;
-    border-bottom: 2px solid @accent;
-    padding-bottom: @fieldPadYFocus;
+    border-color: @accent;
 }
 
 /* 꺼진 콤보 — 입력 칸과 같이 테두리 옅은 border · 글 textDisabled(#611). 면은 그대로 */
 QComboBox:disabled {
     color: @textDisabled;
     border: 1px solid @border;
-    padding-bottom: @fieldPadY;
 }
 
 /* 닫힌 화살표 버튼(#240 감사 항목 1) — 여기를 비워두면 Fusion 기본 버튼

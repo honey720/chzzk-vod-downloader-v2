@@ -171,7 +171,7 @@ METRICS = {
     "buttonPadX": 14,  # 기본 버튼 좌우 안쪽 여백
     # URL 입력창 안쪽 좌우 여백 — 펼침 버튼(app/widgets/header_controls.py BUTTON_PADDING)과 같은 값(#611)
     "fieldPadX": 10,
-    "fieldPadY": 5,  # 입력창 · 콤보 안쪽 위아래 여백 — 초점 때 아래는 1 줄인다(fieldPadYFocus, #611 176g)
+    "fieldPadY": 5,  # 입력창 · 콤보 안쪽 위아래 여백 — 테두리가 네 변 1px라 초점 때도 그대로다(#611)
 }
 
 #: 글자 위계 — 위(제목)에서 아래(경로)로 무게가 내려간다. 값은 QSS 문자열.
@@ -201,13 +201,13 @@ DARK = {
     # ---- 선·글자 ----
     "border": "#3a3d45",  # 구분선 · 툴팁 · 그룹 상자 · 기본 버튼 테두리
     "borderStrong": "#4c515b",
-    # 입력 칸(URL 칸 · 펼침 칸 · QComboBox) 테두리 — 바 면(surface) · 칸 면(surfaceAlt) 모두와 비텍스트 대비 3.0
-    # 이상(WCAG 1.4.11, #611). 구분선(border)은 그대로 옅게 둔다
+    # 바 면(surface) · 칸 면(surfaceAlt) 모두와 비텍스트 대비 3.0 이상인 테두리 — 입력 칸 평소 색 후보 (가)(#611)
     "fieldBorder": "#797b81",
-    "fieldBorderStrong": "#8c8e93",  # 입력 칸 호버 — fieldBorder에서 한 단계(border → borderStrong과 같은 ΔE00 약 7)
-    # 입력 칸 위 · 좌 · 우 변 호버 — 평소 변(borderStrong)에서 밝게 한 단계(ΔE00 6.8, border → borderStrong과 같은
-    # 크기). 아래 변만 fieldBorder로 칸을 알린다(Fluent 2 입력 칸, #611 176g)
-    "fieldEdgeHover": "#5e646e",
+    "fieldBorderStrong": "#8c8e93",  # fieldBorder에서 한 단계(ΔE00 약 7) — 후보 (가)의 호버
+    # 입력 칸(URL 칸 · 펼침 칸 · QComboBox) 네 변 테두리 — 후보 (나): borderStrong과 fieldBorder 사이, 칸 면과 2.40 ·
+    # 바 면과 2.83(#611 176h — 오너가 (가) fieldBorder · (나) · (다) borderStrong 셋 가운데 고른다). 호버
+    # (`fieldEdgeHover`)는 이 값에서 파생한다 — 이 값 하나만 바꾸면 된다
+    "fieldEdge": "#676b72",
     "text": "#e6e8ec",
     "textMuted": "#a0a6b0",
     "textDisabled": "#6b7078",
@@ -278,10 +278,10 @@ LIGHT = {
     # ---- 선·글자 ----
     "border": "#d5d8de",  # 구분선 · 툴팁 · 그룹 상자 · 기본 버튼 테두리
     "borderStrong": "#b9bec7",
-    # 입력 칸 테두리 — 바 면 · 칸 면 모두와 3.0 이상(#611)
+    # 바 면 · 칸 면 모두와 3.0 이상인 테두리 — 입력 칸 평소 색 후보 (가)(#611)
     "fieldBorder": "#86888c",
-    "fieldBorderStrong": "#747679",  # 입력 칸 호버 — fieldBorder에서 한 단계(ΔE00 약 7)
-    "fieldEdgeHover": "#a2a6af",  # 입력 칸 위 · 좌 · 우 변 호버 — borderStrong에서 어둡게 한 단계(ΔE00 6.6)
+    "fieldBorderStrong": "#747679",  # fieldBorder에서 한 단계(ΔE00 약 7) — 후보 (가)의 호버
+    "fieldEdge": "#989ba0",  # 입력 칸 네 변 테두리 — 후보 (나): 칸 면과 2.40 · 바 면과 2.79(#611 176h)
     "text": "#1c1e22",
     "textMuted": "#5b6069",
     "textDisabled": "#9a9fa8",
@@ -328,6 +328,8 @@ TINT_DE00 = {
 TINT_TEXT_CONTRAST = 4.5  # 색조 위 글의 대비 하한 — 설계 §11.5
 # 눌린 카드 바탕 ↔ 호버 바탕 ΔE00 목표 — 카드 면 → 호버와 같은 크기로 한 단계 더(#561)
 PRESS_DE00 = 3.0
+# 입력 칸 호버 테두리 ↔ 평소 테두리 ΔE00 — border → borderStrong 한 단계와 같은 크기(#611 176g · 176h)
+FIELD_HOVER_DE00 = 6.7
 
 # ---- 선택 모드의 체크 원(#561) ----
 # 정수 px가 아닌 값이라 METRICS(QSS에 "Npx"로 들어간다)에 두지 않는다
@@ -529,6 +531,21 @@ def _readable_on(color: str, grounds: tuple[str, ...]) -> str:
     return color
 
 
+def _field_hover(edge: str, face: str) -> str:
+    """입력 칸 호버 테두리 — 평소 테두리에서 칸 면과 멀어지는 쪽으로 밝기만 한 단계(ΔE00 `FIELD_HOVER_DE00`) 옮긴 색.
+
+    평소 색(`fieldEdge`) 하나만 바꾸면 호버가 따라오게 파생한다(#611 176h).
+    """
+    big_l, a, b = _oklab(edge)
+    direction = 1.0 if _oklab(face)[0] < 0.6 else -1.0
+    step = 0.0
+    moved = edge
+    while step < 1.0 and delta_e00(edge, moved) < FIELD_HOVER_DE00:
+        step += 0.001
+        moved = _from_oklab((big_l + direction * step, a, b))
+    return moved
+
+
 def _card_tints(table: dict, scheme: str) -> None:
     """완료 · 실패 색조(+ 호버 · 눌림 · 그 위 상태 글 색)를 표에 더한다.
 
@@ -567,11 +584,11 @@ for _table in (DARK, LIGHT):
     _table.update({_name: f"{_value}px" for _name, _value in METRICS.items()})
     _table.update(FONTS)
     _table["barRadius"] = f"{METRICS['barHeight'] // 2}px"
-    # 초점 때 아래 안쪽 여백 — 아래 변이 1px → 2px로 굵어진 만큼 줄여 칸 높이 · 글 자리를 지킨다(#611 176g)
-    _table["fieldPadYFocus"] = f"{METRICS['fieldPadY'] - 1}px"
     _table["menuButtonPadRight"] = f"{MENU_BUTTON_PAD_RIGHT}px"
 _card_tints(DARK, "dark")
 _card_tints(LIGHT, "light")
+DARK["fieldEdgeHover"] = _field_hover(DARK["fieldEdge"], DARK["surfaceAlt"])
+LIGHT["fieldEdgeHover"] = _field_hover(LIGHT["fieldEdge"], LIGHT["surfaceAlt"])
 
 #: 카드 상태 이름 — 파이썬(`setProperty`)과 QSS(`[state="..."]`)가 공유하는 어휘.
 #: 상태 아이콘·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서
