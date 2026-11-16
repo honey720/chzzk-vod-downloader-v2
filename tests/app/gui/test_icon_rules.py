@@ -20,7 +20,7 @@ import app.widgets.contentItemWidget as card_face
 from app.widgets import icons
 
 REPO = Path(__file__).resolve().parents[3]
-GRIDS = (16,)  # 동작 아이콘이 쓰이는 그림 칸 — 카드 버튼 · 바 버튼 · 메뉴 줄(px)
+GRIDS = (16, 20)  # 동작 아이콘이 쓰이는 그림 칸 — 카드 버튼 · 메뉴 줄 16, 바 버튼 · 하단 칸 20(px)
 
 
 class _Recorder:
@@ -134,14 +134,14 @@ def test_action_icon_ink_takes_the_same_share_of_its_grid(
 
 
 GEAR_TEETH = 6  # 톱니바퀴 톱니 수 — 지시 값(#611 176g, 여덟에서 줄임)
-GEAR_INK_MAX = 0.82  # 톱니바퀴 잉크 긴 변 / 칸 16 상한 — 지시 「0.8 안팎」(옛 그림 0.875)
+GEAR_INK_MAX = 0.82  # 톱니바퀴 잉크 긴 변 / 칸 상한 — 지시 「0.8 안팎」(옛 그림 0.875)
 
 
 def test_gear_has_six_short_teeth_and_lighter_ink(qapp: QApplication) -> None:
-    """톱니바퀴는 톱니가 여섯이고 칸 16에서 잉크 긴 변이 0.82 이하여야 한다.
+    """톱니바퀴는 톱니가 여섯이고 칸 16 · 20에서 잉크 긴 변이 0.82 이하여야 한다.
 
     칸 16 · 배율 4 그림, 가운데에서 반지름 6px(톱니 몸통만 지나는 원)을 720점 돌며 잉크(불투명도 0.25 초과)가
-    이어진 덩어리 수 == 6, 잉크 긴 변 / 칸 <= 0.82
+    이어진 덩어리 수 == 6, 칸 16 · 20(바 그림 칸 narrowIcon, 176j)마다 잉크 긴 변 / 칸 <= 0.82
     """
     import math
 
@@ -157,7 +157,8 @@ def test_gear_has_six_short_teeth_and_lighter_ink(qapp: QApplication) -> None:
         marks.append(image.pixelColor(x, y).alphaF() > 0.25)
     runs = sum(1 for i, inked in enumerate(marks) if inked and not marks[i - 1])
     assert runs == GEAR_TEETH
-    assert _ink_span("gear", side) <= GEAR_INK_MAX
+    for grid in (16, 20):
+        assert _ink_span("gear", grid) <= GEAR_INK_MAX, grid
 
 
 def test_open_folder_and_closed_folder_are_different_drawings(qapp: QApplication) -> None:
@@ -175,28 +176,28 @@ def test_open_folder_and_closed_folder_are_different_drawings(qapp: QApplication
     )
 
 
-def test_icon_grids_are_card_16_and_bar_16() -> None:
-    """아이콘 그림 칸 크기 토큰은 카드 16 · 바 16이고 카드 버튼 상자는 24여야 한다.
+def test_icon_grids_are_card_16_and_bar_20() -> None:
+    """아이콘 그림 칸 크기 토큰은 카드 16 · 바 20 · 메뉴 줄 16이고 카드 버튼 상자는 24여야 한다.
 
-    actionGlyph -> 16, barGlyph · narrowIcon · menuIcon -> 16, cardButton -> 24
+    actionGlyph -> 16, barGlyph · narrowIcon -> 20, menuIcon -> 16, cardButton -> 24
     """
     metrics = theme.METRICS
 
     assert (metrics["actionGlyph"], metrics["cardButton"]) == (16, 24)
-    assert (metrics["barGlyph"], metrics["narrowIcon"], metrics["menuIcon"]) == (16, 16, 16)
+    assert (metrics["barGlyph"], metrics["narrowIcon"], metrics["menuIcon"]) == (20, 20, 16)
 
 
 def test_icon_button_refuses_a_glyph_size_outside_the_icon_grids(qapp: QApplication) -> None:
     """IconButton은 아이콘 그림 칸 토큰이 아닌 크기 토큰을 받지 않아야 한다.
 
-    setGlyphMetric("cardButton") -> ValueError, "barGlyph" -> glyphSize() == 16
+    setGlyphMetric("cardButton") -> ValueError, "barGlyph" -> glyphSize() == 20
     """
     button = icons.IconButton()
 
     with pytest.raises(ValueError):
         button.setGlyphMetric("cardButton")
     button.setGlyphMetric("barGlyph")
-    assert button.glyphSize() == 16
+    assert button.glyphSize() == 20
 
 
 @pytest.mark.parametrize("state", icons.BUBBLE_STATES)
