@@ -405,7 +405,7 @@ class TestNoHorizontalOverflow:
 
         long_item = _make_item(
             title="VeryLongTitleWithNoSpacesAtAllThatCannotWrapOrBreakAnywhereSoItForcesWidth1234567890",
-            download_path="C:/Users/LeeDH/Desktop/VeryLongFolderNameNoSpaces/AnotherLongSubfolder/FileNameHere.mp4",
+            download_path="C:/Users/user/Desktop/VeryLongFolderNameNoSpaces/AnotherLongSubfolder/FileNameHere.mp4",
         )
         model.addItem(long_item)
         for _ in range(8):  # 실측으로 확인한 수렴에 필요한 최소 횟수보다 넉넉히
