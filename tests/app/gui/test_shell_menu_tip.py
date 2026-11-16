@@ -374,7 +374,7 @@ def _close(a: QColor, b: str) -> bool:
     return abs(a.red() - c.red()) + abs(a.green() - c.green()) + abs(a.blue() - c.blue()) <= 24
 
 
-@pytest.mark.parametrize("name", ["fetchButton", "settingsButton", "sortButton", "selectButton"])
+@pytest.mark.parametrize("name", ["fetchButton", "settingsButton", "selectButton"])
 def test_keyboard_focus_draws_an_accent_border(window: VodDownloader, name: str) -> None:
     """키보드 초점을 받은 바 컨트롤의 테두리는 강조색이어야 한다(초점 전에는 강조색이 아니다).
 
@@ -392,6 +392,27 @@ def test_keyboard_focus_draws_an_accent_border(window: VodDownloader, name: str)
     _pump()
     assert widget.hasFocus(), "전제: 초점을 받았다"
     assert _close(_top_border(widget), tokens["accent"])
+
+
+def test_keyboard_focus_draws_an_accent_bottom_on_a_drop_field(window: VodDownloader) -> None:
+    """키보드 초점을 받은 펼침 칸(입력 칸)은 아래 테두리가 강조색이어야 한다(초점 전에는 강조색이 아니다).
+
+    입력 칸은 아래 변만 강조색 2px다(#611 176g) — 정렬 칸에 Tab 초점 -> 아래 테두리 가운데 ≈ accent
+    """
+    widget = window.sortButton
+    tokens = theme.current_tokens()
+
+    def bottom() -> QColor:
+        image = widget.grab().toImage()
+        ratio = image.devicePixelRatio()
+        return image.pixelColor(int(widget.width() / 2 * ratio), int((widget.height() - 1) * ratio))
+
+    assert not _close(bottom(), tokens["accent"]), "전제: 초점 전에는 강조색 테두리가 아니다"
+    window.activateWindow()
+    widget.setFocus(Qt.FocusReason.TabFocusReason)
+    _pump()
+    assert widget.hasFocus(), "전제: 초점을 받았다"
+    assert _close(bottom(), tokens["accent"])
 
 
 def test_the_list_has_focus_when_the_window_opens(qapp: QApplication) -> None:
