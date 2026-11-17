@@ -109,7 +109,7 @@ SURFACES = {
         "fieldBg": "#2f3239",
         "surfaceHover": "#383c44",
         "surfacePressed": "#282b31",
-        "thumbBg": "#1f2126",
+        "thumbBg": "#1a1c21",  # 카드 면과 같이 반 단계 내림 — 오너 결정(2026-11-17, #611 176s)
         "border": "#3a3d45",
         "borderStrong": "#4c515b",
         "text": "#e6e8ec",
@@ -667,3 +667,17 @@ def test_field_edge_hover_differs_from_the_focus_edge(scheme: str) -> None:
     table = SCHEMES[scheme]
     gap = _de00(table["fieldEdgeHover"], table["accent"])
     assert gap >= FOCUS_GAP_MIN, f"{scheme}: {gap:.2f}"
+
+
+DARK_THUMB_MIN = 3.0  # 다크 썸네일 자리표시 ↔ 카드 평소 면 ΔE00 하한 — 지시문 176s
+
+
+def test_dark_thumbnail_placeholder_stands_apart_from_the_card_face() -> None:
+    """다크 썸네일 자리표시는 카드 평소 면과 ΔE00 3.0 이상 떨어지고 카드 면보다 어두워야 한다(#611 176s).
+
+    ΔE00(thumbBg, cardBg) >= 3.0, L*(thumbBg) < L*(cardBg)
+    """
+    table = theme.DARK
+    gap = _de00(table["thumbBg"], table["cardBg"])
+    assert gap >= DARK_THUMB_MIN, f"{gap:.2f}"
+    assert _lab(table["thumbBg"])[0] < _lab(table["cardBg"])[0]
