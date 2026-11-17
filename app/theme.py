@@ -192,7 +192,7 @@ DARK = {
     # ---- 바탕 ----
     "windowBg": "#1b1c1f",  # 창 배경
     "surface": "#24262b",  # 떠 있는 패널 — 드롭다운 메뉴 · 콤보 팝업 · 설정 창 그룹 상자
-    # 메뉴바 · 헤더바 · 하단바 면 — 카드 면(cardBg)에서 카드 호버 한 단계(ΔE00 약 3.0)만큼 어둡게. 헤더가 목록 첫
+    # 메뉴바 · 헤더바 · 하단바 면 — 카드 면(cardBg)에서 카드 선택 면 한 단계(ΔE00 약 3.0)만큼 어둡게. 헤더가 목록 첫
     # 행처럼 읽히지 않게 바를 목록과 다른 면으로 둔다(#611 176i — 176h 바 면 (A)안)
     "barBg": "#222329",
     "surfaceAlt": "#2f3239",  # 기본 버튼 · 꺼진 ▶ · 고른 메뉴 바탕
@@ -239,12 +239,14 @@ DARK = {
     # 흰 테두리가 보인다(#561)
     "pickMarkScrim": "#000000",
     "cardBg": "#2b2d33",
-    "cardHoverBg": "#35363c",  # 카드 호버 바탕 — 카드 면에서 밝게 한 단계(ΔE00 약 3.0, 설계 §12.1, #550)
+    # 고른 카드 면 — 카드 면에서 밝게 한 단계(ΔE00 약 3.0, 설계 §12.1, #550). 강조색을 섞지 않는 중립 면이다
+    # (Windows 11 목록 방식, #611 176q). 호버 면(cardHoverBg)은 이 값에서 반 단계로 파생한다(`_card_hover`)
+    "cardSelectedBg": "#35363c",
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) ----
     # running/failed는 기존 값을 그대로 승계한다 — 실패 빨강(#FF6969)은
     # tests/app/gui/test_failure_display.py가 상태 표시에서 직접 확인한다.
     # 상태 글은 같은 색상에서 카드 바탕 위 4.5 이상인 가장 가까운 밝기(#512 — 대기 2.76 · 일시정지 4.13이었다).
-    # 대기 · 일시정지는 호버 카드 면(cardHoverBg) 위에서도 4.5가 되게 OKLab 밝기만 더 올렸다(3.94였다,
+    # 대기 · 일시정지는 고른 카드 면(cardSelectedBg) 위에서도 4.5가 되게 OKLab 밝기만 더 올렸다(3.94였다,
     # #611 176m)
     "stateWaiting": "#9a9fa6",  # 대기 — 회색
     "stateRunning": "#55B5FF",  # 진행 — 파랑
@@ -275,7 +277,7 @@ DARK = {
 LIGHT = {
     # ---- 바탕 ----
     # 창 배경 — 바 면과 같은 회색, 그 위 흰 카드가 떠 있다(Windows 11 설정 앱 방식, #611 176m). 대화 상자 바탕도 같다.
-    # 라이트 바탕 넷(windowBg · barBg · cardHoverBg · rowHoverBg)은 border의 OKLCH 색상각에 border 채도의 절반을
+    # 라이트 바탕 넷(windowBg · barBg · cardSelectedBg · rowHoverBg)은 border의 OKLCH 색상각에 border 채도의 절반을
     # 준 푸른 회색이다(#611 176o). 밝기는 Windows 11 바탕 #f3f3f3에 맞춘 안(오너 2026-11-17, 176p)
     "windowBg": "#f2f3f6",
     "surface": "#ffffff",
@@ -324,11 +326,12 @@ LIGHT = {
     # 흰 테두리가 보인다(#561)
     "pickMarkScrim": "#000000",
     "cardBg": "#ffffff",
-    # 카드 호버 바탕 — 바 면(= 창 배경)에서 어둡게 한 단계(ΔE00 약 3.2, 176p). 카드 면에서 한 단계면 바 면과
-    # 같아져 호버가 바탕에 묻힌다(카드 면에서는 ΔE00 약 6.1, #611 176m). 고른 카드도 이 면을 쓴다(176p)
-    "cardHoverBg": "#e4e4e7",
+    # 고른 카드 면 — 바 면(= 창 배경)에서 어둡게 한 단계(ΔE00 약 3.2, 176p). 카드 면에서 한 단계면 바 면과
+    # 같아져 고른 면이 바탕에 묻힌다(카드 면에서는 ΔE00 약 5.8, #611 176m). 176p까지의 호버 면 값 그대로다 —
+    # 호버 면(cardHoverBg)은 이 값에서 반 단계로 파생한다(#611 176q)
+    "cardSelectedBg": "#e4e4e7",
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) — 흰 배경 대비용으로 짙게 눌렀다 ----
-    # 대기 · 받는 중 · 일시정지는 호버 카드 면(cardHoverBg) 위에서도 4.5가 되게 같은 색상에서 OKLab 밝기만
+    # 대기 · 받는 중 · 일시정지는 고른 카드 면(cardSelectedBg) 위에서도 4.5가 되게 같은 색상에서 OKLab 밝기만
     # 낮췄다(3.85 · 3.77 · 3.51이었다, #611 176m)
     "stateWaiting": "#60656c",
     "stateRunning": "#0a61c7",
@@ -353,6 +356,8 @@ TINT_DE00 = {
     "light": 10.0,
 }  # 색조 ↔ 카드 면 ΔE00 목표 — 설계 §8의 6(오너 2026-11-02)
 TINT_TEXT_CONTRAST = 4.5  # 색조 위 글의 대비 하한 — 설계 §11.5
+# 카드 호버 면 ↔ 평소 면 ΔE00 — 선택 면(한 단계, 약 3.0)의 반 단계(Windows 11 목록 방식, #611 176q)
+CARD_HOVER_DE00 = 1.5
 # 입력 칸 호버 테두리 ↔ 평소 테두리 ΔE00 — border → borderStrong 한 단계와 같은 크기(#611 176g · 176h)
 FIELD_HOVER_DE00 = 6.7
 
@@ -516,7 +521,7 @@ def _tinted(
 
 
 def _hover_of(tint: str, card: str, hover: str) -> str:
-    """색조 면의 호버 — 카드 면 → 호버 바탕과 같은 OKLab 밝기 차를 색조에 옮긴다(설계 §12.1 카드 호버)."""
+    """색조 면의 호버 · 선택 면 — 카드 면 → `hover`와 같은 OKLab 밝기 차를 색조에 옮긴다(설계 §12.1 카드 호버)."""
     big_l, a, b = _oklab(tint)
     return _from_oklab((big_l + _oklab(hover)[0] - _oklab(card)[0], a, b))
 
@@ -554,20 +559,39 @@ def _field_hover(edge: str, face: str) -> str:
     return moved
 
 
+def _card_hover(table: dict) -> None:
+    """카드 호버 면(`cardHoverBg`)을 표에 더한다 — 평소 면 → 선택 면 OKLab 직선 위 ΔE00 `CARD_HOVER_DE00` 지점.
+
+    선택 면 쪽으로 가므로 라이트의 푸른 회색 기운도 선택 면과 같은 쪽이다. 선택 면보다 옅어 호버 ≠ 선택이고
+    그 위 글 대비는 평소 면 · 선택 면 사이에 든다(#611 176q).
+    """
+    rest, goal = _oklab(table["cardBg"]), _oklab(table["cardSelectedBg"])
+    moved = table["cardBg"]
+    for step in range(1, 1001):
+        share = step / 1000
+        moved = _from_oklab(tuple(r + (g - r) * share for r, g in zip(rest, goal, strict=True)))
+        if delta_e00(table["cardBg"], moved) >= CARD_HOVER_DE00:
+            break
+    table["cardHoverBg"] = moved
+
+
 def _card_tints(table: dict, scheme: str) -> None:
-    """완료 · 실패 색조(+ 호버 · 그 위 상태 글 색)를 표에 더한다.
+    """완료 · 실패 색조(+ 호버 · 선택 면 · 그 위 상태 글 색)를 표에 더한다.
 
     색조 세기는 목표(ΔE00)를 먼저 정한다(설계 §8의 6). 본문 · 보조 글은 그 세기에서 4.5를 지키는지
-    본다. 상태 글(완료 초록 · 실패 빨강)은 색조 위에서 4.5가 되게 같은 색상의 밝기만 옮긴 색을 따로 둔다
-    (`state…OnTint`) — 라이트의 완료 초록은 흰 카드에서 이미 4.5라 색조가 조금만 생겨도 4.5 아래로 내려간다.
+    본다. 호버 · 선택 면은 중립 카드의 평소 → 호버 · 선택 밝기 차를 색조에 옮긴다(#611 176q). 상태 글(완료
+    초록 · 실패 빨강)은 색조 세 면 위에서 4.5가 되게 같은 색상의 밝기만 옮긴 색을 따로 둔다(`state…OnTint`) —
+    라이트의 완료 초록은 흰 카드에서 이미 4.5라 색조가 조금만 생겨도 4.5 아래로 내려간다.
     """
-    card, hover, target = table["cardBg"], table["cardHoverBg"], TINT_DE00[scheme]
+    card, target = table["cardBg"], TINT_DE00[scheme]
     texts = (table["text"], table["textMuted"])
     for name, state in (("Finished", "stateFinished"), ("Failed", "stateFailed")):
         tint = _tinted(card, table[state], target, texts)
         table[f"cardTint{name}"] = tint
-        table[f"cardTint{name}Hover"] = _hover_of(tint, card, hover)
-        table[f"{state}OnTint"] = _readable_on(table[state], (tint, table[f"cardTint{name}Hover"]))
+        table[f"cardTint{name}Hover"] = _hover_of(tint, card, table["cardHoverBg"])
+        table[f"cardTint{name}Selected"] = _hover_of(tint, card, table["cardSelectedBg"])
+        grounds = (tint, table[f"cardTint{name}Hover"], table[f"cardTint{name}Selected"])
+        table[f"{state}OnTint"] = _readable_on(table[state], grounds)
 
 
 # 메뉴 버튼 오른쪽 안쪽 여백(px) = 바깥 끝 ↔ 버블 + 버블 + 글 ↔ 버블 − 테두리 1px(style.qss 메뉴바 절)
@@ -585,6 +609,8 @@ for _table in (DARK, LIGHT):
     _table.update(FONTS)
     _table["barRadius"] = f"{METRICS['barHeight'] // 2}px"
     _table["menuButtonPadRight"] = f"{MENU_BUTTON_PAD_RIGHT}px"
+_card_hover(DARK)
+_card_hover(LIGHT)
 _card_tints(DARK, "dark")
 _card_tints(LIGHT, "light")
 DARK["fieldEdgeHover"] = _field_hover(DARK["fieldEdge"], DARK["fieldBg"])

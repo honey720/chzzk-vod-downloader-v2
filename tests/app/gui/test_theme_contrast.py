@@ -364,7 +364,7 @@ def test_info_meets_the_bubble_conditions(scheme: str) -> None:
 LIGHT_TINTED = {
     "windowBg": "#f2f3f6",
     "barBg": "#f2f3f6",
-    "cardHoverBg": "#e4e4e7",
+    "cardSelectedBg": "#e4e4e7",  # 176p까지의 호버 면 값이 고른 카드 면이 됐다(#611 176q)
     "rowHoverBg": "#e4e4e7",
 }
 LIGHT_KEPT = {
@@ -377,7 +377,7 @@ LIGHT_KEPT = {
 def test_light_ground_is_the_blue_grey(token: str) -> None:
     """라이트 바탕 넷은 지시 값이고 파랑 채널이 빨강보다 커야 한다(무채색이 아님).
 
-    windowBg · barBg = #f2f3f6, cardHoverBg · rowHoverBg = #e4e4e7, blue − red > 0
+    windowBg · barBg = #f2f3f6, cardSelectedBg · rowHoverBg = #e4e4e7, blue − red > 0
     """
     value = theme.LIGHT[token].lower()
     assert value == LIGHT_TINTED[token]

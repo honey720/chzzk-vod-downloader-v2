@@ -159,14 +159,14 @@ QLabel#thumbnailLabel {
     padding: 0px;
 }
 
-/* 카드 호버 — 바탕 한 단계(#550). `hover`는 app/widgets/widget.py::setHovered가 심는다 — QSS
+/* 카드 호버 — 바탕 반 단계(#550 · #611 176q). `hover`는 app/widgets/widget.py::setHovered가 심는다 — QSS
  * :hover는 목록이 바뀐 뒤 포인터 밑 카드를 다시 맞출 수 없다(app/widgets/view.py::_rehover) */
 #contentFrame[hover="true"] {
     background-color: @cardHoverBg;
 }
 
 /* 완료 · 실패 카드 전체 색조(#554 — 설계 §12.1 카드 배치 · §8의 6). 색은 theme.py가 상태 색의 색상 ·
- * ΔE00 목표로 셈한다. `tint`는 app/widgets/widget.py::applyStateStyle이 심는다. 호버면 그 색조에서 한 단계 */
+ * ΔE00 목표로 셈한다. `tint`는 app/widgets/widget.py::applyStateStyle이 심는다. 호버면 그 색조에서 반 단계 */
 #contentFrame[tint="finished"] {
     background-color: @cardTintFinished;
 }
@@ -183,9 +183,21 @@ QLabel#thumbnailLabel {
     background-color: @cardTintFailedHover;
 }
 
-/* 고른 행(선택 모드, #611 — 설계 §13)은 바탕 규칙이 따로 없다 — 평소 면 · 호버 면을 그대로 쓰고, 고른 표시는
- * 카드 면이 그리는 왼쪽 강조색 띠와 체크 원뿐이다(#611 176p). `picked`는
- * app/widgets/contentItemWidget.py::CardFace.setSelected가 심는다 */
+/* 고른 행(선택 모드, #611 — 설계 §13): 카드 면(색조 카드면 색조 면)에서 한 단계인 중립 선택 면 — 강조색을
+ * 섞지 않는다(Windows 11 목록 방식, #611 176q). 고름+호버도 선택 면 그대로다. 왼쪽 강조색 띠는 카드 면이
+ * 그린다. `picked`는 app/widgets/contentItemWidget.py::CardFace.setSelected가 심는다. 속성 수가 같은 호버 ·
+ * 색조 규칙보다 뒤에 두어 이기게 하고, 색조 카드는 속성 둘 규칙으로 중립 선택 규칙을 이긴다 */
+#contentFrame[picked="true"] {
+    background-color: @cardSelectedBg;
+}
+
+#contentFrame[tint="finished"][picked="true"] {
+    background-color: @cardTintFinishedSelected;
+}
+
+#contentFrame[tint="failed"][picked="true"] {
+    background-color: @cardTintFailedSelected;
+}
 
 /* 색조 위 상태 글 — 같은 색상의 밝기만 옮겨 4.5를 지키는 색(theme.py `…OnTint`) */
 #contentFrame[tint="finished"] #statusLabel[state="finished"] {

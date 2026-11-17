@@ -1782,7 +1782,7 @@ class TestBarHoverFaces:
 
 
 class TestLightLayers:
-    """라이트 층 순서 — 바디 = 바 면, 그 위 흰 카드, 호버 · 고른 카드는 바 면보다 한 단계 어둡게(#611 176m)."""
+    """라이트 층 순서 — 바디 = 바 면, 그 위 흰 카드, 고른 카드는 바 면보다 한 단계 어둡게(#611 176m · 176q)."""
 
     @pytest.mark.parametrize("scheme", ["light"], indirect=True)
     def test_body_is_the_bar_face_and_the_card_is_white(self, window, scheme: str) -> None:
@@ -1805,29 +1805,32 @@ class TestLightLayers:
         assert face == QColor(Qt.GlobalColor.white), face.name()
 
     @pytest.mark.parametrize("scheme", ["light"], indirect=True)
-    def test_hovered_card_is_one_step_darker_than_the_bar(self, window, scheme: str) -> None:
-        """라이트 호버 카드 면은 cardHoverBg이고 바 면과 ΔE00 3 이상 떨어져야 한다.
+    def test_picked_card_is_one_step_darker_than_the_bar(self, window, scheme: str) -> None:
+        """라이트 고른 카드 면은 cardSelectedBg이고 바 면과 ΔE00 3 이상 떨어져야 한다(#611 176q).
 
-        대기 카드 하나, 합성 포인터 이동(카드 가운데) -> 카드 왼쪽 안쪽 2px · 세로 가운데 ≈ cardHoverBg,
-        ΔE00(그 화소, 헤더바 빈 자리 화소) >= 3, 그 화소가 바 화소보다 어둡다
+        대기 카드 하나, 선택 모드, 합성 클릭으로 고름 -> 포인터 (1, 1) -> 카드 왼쪽 안쪽 6px · 세로 가운데 ≈
+        cardSelectedBg, ΔE00(그 화소, 헤더바 빈 자리 화소) >= 3, 그 화소가 바 화소보다 어둡다
         """
+        from PySide6.QtTest import QTest
+
         win = window(DownloadState.WAITING)
-        card = _card(win, 0)
-        rect = _hover(win, card)
+        rect = _pick_first(win)
+        QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
+        _pump()
         image = win.grab().toImage()
         bar = _rect(win, win.headerFrame)
         bar_face = _pixel(image, bar.left() + 2, bar.center().y())
-        face = _pixel(image, rect.left() + 2, rect.center().y())
-        assert _is(face, "cardHoverBg"), face.name()
+        face = _pixel(image, rect.left() + BAND_CLEAR, rect.center().y())
+        assert _is(face, "cardSelectedBg"), face.name()
         step = theme.delta_e00(face.name(), bar_face.name())
-        assert step >= 3.0, f"호버 {face.name()} · 바 {bar_face.name()} = {step:.2f}"
+        assert step >= 3.0, f"고름 {face.name()} · 바 {bar_face.name()} = {step:.2f}"
         assert face.lightnessF() < bar_face.lightnessF()
 
 
 LIGHT_BODY = (
     "#f2f3f6"  # 라이트 바디 · 바 면 — border 색상각 · 절반 채도, #f3f3f3 밝기 안(#611 176p 지시 값)
 )
-LIGHT_HOVER = "#e4e4e7"  # 라이트 호버 카드 면 — 같은 규칙(#611 176p 지시 값)
+LIGHT_PICKED = "#e4e4e7"  # 라이트 고른 카드 면 — 176p 호버 면 값 그대로(#611 176q)
 TINT_SLACK = 1  # 색조 화소를 지시 값과 같다고 보는 한 채널 차 — 16진 반올림
 BLUE_OVER_RED = 3  # 푸른 회색이라고 보는 파랑 − 빨강 채널 차 하한 — 무채색이면 0
 
@@ -1845,7 +1848,7 @@ def _near(colour: QColor, value: str) -> bool:
 
 
 class TestLightTint:
-    """라이트 바디 · 바 · 호버 카드 면은 무채색이 아니라 border 색상각의 푸른 회색이다(#611 176o)."""
+    """라이트 바디 · 바 · 고른 카드 면은 무채색이 아니라 border 색상각의 푸른 회색이다(#611 176o · 176q)."""
 
     @pytest.mark.parametrize("scheme", ["light"], indirect=True)
     def test_body_and_bar_are_the_blue_grey(self, window, scheme: str) -> None:
@@ -1865,25 +1868,29 @@ class TestLightTint:
             assert colour.blue() - colour.red() >= BLUE_OVER_RED, f"{name} {colour.name()}"
 
     @pytest.mark.parametrize("scheme", ["light"], indirect=True)
-    def test_hovered_card_is_the_blue_grey(self, window, scheme: str) -> None:
-        """라이트 호버 카드 면 화소가 #e4e4e7이고 파랑이 빨강보다 3 이상 커야 한다.
+    def test_picked_card_is_the_blue_grey(self, window, scheme: str) -> None:
+        """라이트 고른 카드 면 화소가 #e4e4e7이고 파랑이 빨강보다 3 이상 커야 한다(#611 176q).
 
-        대기 카드 하나, 합성 포인터 이동(카드 가운데) -> 카드 왼쪽 안쪽 2px · 세로 가운데 ≈ #e4e4e7
-        (채널마다 1 이내), blue − red >= 3
+        대기 카드 하나, 선택 모드, 합성 클릭으로 고름(포인터는 카드 위) -> 카드 왼쪽 안쪽 6px · 세로 가운데 ≈
+        #e4e4e7(채널마다 1 이내), blue − red >= 3
         """
         win = window(DownloadState.WAITING)
-        rect = _hover(win, _card(win, 0))
-        face = _pixel(win.grab().toImage(), rect.left() + 2, rect.center().y())
-        assert _near(face, LIGHT_HOVER), face.name()
+        rect = _pick_first(win)
+        face = _face_at(win, rect)
+        assert _near(face, LIGHT_PICKED), face.name()
         assert face.blue() - face.red() >= BLUE_OVER_RED, face.name()
 
 
-# 고른 카드 면 — 고르지 않은 카드와 같은 면(#611 176p 오너 결정: 고른 면 색 없음, 띠 · 체크 원만)
+# 카드 면 — 호버 반 단계 · 고름 한 단계 중립 면(#611 176q 오너 결정: 선택 면 색 넣음, 강조색 없음)
 PICKED = {
-    DownloadState.WAITING: ("cardBg", "cardHoverBg"),
-    DownloadState.FINISHED: ("cardTintFinished", "cardTintFinishedHover"),
-    DownloadState.FAILED: ("cardTintFailed", "cardTintFailedHover"),
-}  # 카드 상태 -> (포인터 밖 면 토큰, 호버 면 토큰)
+    DownloadState.WAITING: ("cardBg", "cardHoverBg", "cardSelectedBg"),
+    DownloadState.FINISHED: (
+        "cardTintFinished",
+        "cardTintFinishedHover",
+        "cardTintFinishedSelected",
+    ),
+    DownloadState.FAILED: ("cardTintFailed", "cardTintFailedHover", "cardTintFailedSelected"),
+}  # 카드 상태 -> (평소 면 토큰, 호버 면 토큰, 선택 면 토큰)
 PICK_STATES = [DownloadState.WAITING, DownloadState.FINISHED, DownloadState.FAILED]
 BAND_CLEAR = 6  # 고른 카드 왼쪽 강조색 띠(4px) 밖에서 면을 재는 안쪽 거리(px)
 
@@ -1910,17 +1917,17 @@ def _face_at(win: VodDownloader, rect: QRect) -> QColor:
 
 
 class TestPickedFace:
-    """고른 카드 면은 고르지 않은 카드와 같은 면이고 고른 표시는 왼쪽 띠 · 체크 원뿐이다(#611 176p)."""
+    """고른 카드 면은 중립 선택 면(한 단계)이고 호버여도 그대로다 — 왼쪽 띠 · 체크 원도 있다(#611 176q)."""
 
     @pytest.mark.parametrize("scheme", ["dark", "light"], indirect=True)
     @pytest.mark.parametrize("state", PICK_STATES, ids=lambda s: s.name)
-    def test_picked_face_is_the_rest_face(
+    def test_picked_face_is_the_selected_face(
         self, window, qtbot: QtBot, scheme: str, state: DownloadState
     ) -> None:
-        """포인터가 밖에 있는 고른 카드 면 화소가 그 상태의 평소 면이고 띠 · 체크 원이 있어야 한다.
+        """포인터가 밖에 있는 고른 카드 면 화소가 그 상태의 선택 면이고 띠 · 체크 원이 있어야 한다.
 
         카드 하나(대기 · 완료 · 실패), 선택 모드, 합성 클릭으로 고름 -> 포인터 (1, 1) -> 카드 왼쪽 안쪽 6px ·
-        세로 가운데 ≈ PICKED 평소 면 토큰(채널마다 1 이내), 띠 애니메이션 끝 -> 왼쪽 끝 화소 ≈ accent,
+        세로 가운데 ≈ PICKED 선택 면 토큰(채널마다 1 이내), 띠 애니메이션 끝 -> 왼쪽 끝 화소 ≈ accent,
         체크 원은 고른 모양
         """
         from PySide6.QtTest import QTest
@@ -1932,30 +1939,68 @@ class TestPickedFace:
         card = _card(win, 0)
         assert not card.isHovered(), "전제: 호버가 꺼졌다"
         qtbot.waitUntil(lambda: card.contentFrame.band() == 1.0)
-        rest, _hovered = PICKED[state]
+        _rest, _hovered, selected = PICKED[state]
         tokens = theme.current_tokens()
         image = win.grab().toImage()
         face = _pixel(image, rect.left() + BAND_CLEAR, rect.center().y())
-        assert _near(face, tokens[rest]), f"{scheme} {state.name}: {face.name()}"
+        assert _near(face, tokens[selected]), f"{scheme} {state.name}: {face.name()}"
         band = _pixel(image, rect.left(), rect.center().y())
         assert _near(band, tokens["accent"]), f"{scheme} {state.name} 띠: {band.name()}"
         assert card.thumbnailLabel.hasPickMark() and card.thumbnailLabel.isMarkPicked()
 
     @pytest.mark.parametrize("scheme", ["dark", "light"], indirect=True)
     @pytest.mark.parametrize("state", PICK_STATES, ids=lambda s: s.name)
-    def test_picked_and_hovered_face_is_the_hover_face(
+    def test_picked_and_hovered_face_is_the_selected_face(
         self, window, scheme: str, state: DownloadState
     ) -> None:
-        """포인터가 위에 있는 고른 카드 면 화소가 그 상태의 호버 면이어야 한다.
+        """포인터가 위에 있는 고른 카드 면 화소가 그 상태의 선택 면이어야 한다.
 
         카드 하나(대기 · 완료 · 실패), 선택 모드, 합성 클릭으로 고름 -> 합성 포인터 이동((1, 1) -> 카드 가운데)
-        -> 카드 왼쪽 안쪽 6px · 세로 가운데 ≈ PICKED 호버 면 토큰(채널마다 1 이내)
+        -> 카드 왼쪽 안쪽 6px · 세로 가운데 ≈ PICKED 선택 면 토큰(채널마다 1 이내)
         """
         win = window(state)
         rect = _pick_first(win)
         _hover(win, _card(win, 0))
         assert _card(win, 0).isHovered(), "전제: 호버가 켜졌다"
-        _rest, hovered = PICKED[state]
+        _rest, _hovered, selected = PICKED[state]
         face = _face_at(win, rect)
-        want = theme.current_tokens()[hovered]
+        want = theme.current_tokens()[selected]
         assert _near(face, want), f"{scheme} {state.name}: {face.name()}"
+
+    @pytest.mark.parametrize("scheme", ["dark", "light"], indirect=True)
+    @pytest.mark.parametrize("state", PICK_STATES, ids=lambda s: s.name)
+    def test_four_faces_of_one_card(self, window, scheme: str, state: DownloadState) -> None:
+        """같은 카드의 평소 · 호버 · 선택 · 선택+호버 화소는 평소 ≠ 호버 ≠ 선택, 선택+호버 = 선택이어야 한다.
+
+        카드 하나(대기 · 완료 · 실패) -> 포인터 (1, 1): 평소, 카드 가운데: 호버, 선택 모드에서 고르고
+        (1, 1): 선택, 다시 카드 가운데: 선택+호버 — 카드 왼쪽 안쪽 6px · 세로 가운데 화소.
+        각 화소 ≈ PICKED 토큰(채널마다 1 이내), 평소 ≉ 호버, 호버 ≉ 선택, 선택+호버 ≈ 선택
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(state)
+        card = _card(win, 0)
+        QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
+        _pump()
+        rect = _rect(win, card)
+        rest = _face_at(win, rect)
+        _hover(win, card)
+        assert card.isHovered(), "전제: 호버가 켜졌다"
+        hovered = _face_at(win, rect)
+        assert _pick_first(win) == rect, "전제: 선택 모드에서 카드 자리가 그대로다"
+        QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
+        _pump()
+        assert not card.isHovered(), "전제: 호버가 꺼졌다"
+        selected = _face_at(win, rect)
+        _hover(win, card)
+        assert card.isHovered(), "전제: 호버가 다시 켜졌다"
+        both = _face_at(win, rect)
+        seen = (
+            f"{scheme} {state.name}: {rest.name()} {hovered.name()} {selected.name()} {both.name()}"
+        )
+        tokens = theme.current_tokens()
+        for colour, token in zip((rest, hovered, selected), PICKED[state], strict=True):
+            assert _near(colour, tokens[token]), f"{token} {seen}"
+        assert not _near(rest, hovered.name()), seen
+        assert not _near(hovered, selected.name()), seen
+        assert _near(both, selected.name()), seen
