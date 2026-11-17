@@ -339,6 +339,16 @@ def test_info_is_the_progress_hue(scheme: str) -> None:
 
 
 @pytest.mark.parametrize("scheme", SCHEMES)
+def test_info_is_the_progress_color(scheme: str) -> None:
+    """정보 토큰은 그 테마의 진행 색(stateRunning)과 값이 같아야 한다(설계 §11.5, #611 176n).
+
+    두 테마의 stateInfo · stateRunning -> 소문자 16진 값이 같음
+    """
+    table = SCHEMES[scheme]
+    assert table["stateInfo"].lower() == table["stateRunning"].lower()
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
 def test_info_meets_the_bubble_conditions(scheme: str) -> None:
     """정보 토큰도 버블 조건(기호 4.5 · 바탕 3.0)을 지켜야 한다 — 쓰는 자리가 생겨도 같은 기준.
 
