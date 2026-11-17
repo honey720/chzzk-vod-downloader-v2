@@ -1549,17 +1549,20 @@ class TestBarFaces:
     def test_bar_face_is_bar_bg_and_not_the_card_face(self, window, scheme: str, name: str) -> None:
         """바의 빈 자리는 barBg이고 같은 창 카드 면(cardBg)과 달라야 한다.
 
-        대기 카드 하나, 창 폭 900 -> 바 왼쪽 끝 2px · 세로 가운데 ≈ barBg, 카드 왼쪽 안쪽 가운데 ≈ cardBg,
-        두 화소가 다르다
+        대기 카드 하나, 창 폭 900 -> 바 왼쪽 끝 2px · 세로 가운데 ≈ barBg, 카드 왼쪽 안쪽 가운데 ≈ cardBg
+        (채널마다 1 이내), 바 화소 ≉ cardBg
         """
         win = window(DownloadState.WAITING)
         image = win.grab().toImage()
         bar = _rect(win, getattr(win, name))
         card = _rect(win, _card(win, 0))
         face = _pixel(image, bar.left() + 2, bar.center().y())
-        assert _is(_pixel(image, card.left() + 2, card.center().y()), "cardBg"), "전제: 카드 면"
-        assert _is(face, "barBg"), f"{scheme} {name}: {face.name()}"
-        assert not _is(face, "cardBg"), f"{scheme} {name}: {face.name()}"
+        tokens = theme.current_tokens()
+        card_face = _pixel(image, card.left() + 2, card.center().y())
+        assert _near(card_face, tokens["cardBg"]), f"전제: 카드 면 {card_face.name()}"
+        assert _near(face, tokens["barBg"]), f"{scheme} {name}: {face.name()}"
+        # 다크 바 면 ↔ 카드 면은 채널 차 합 14(#611 176r)라 SLACK(24)로는 가릴 수 없다
+        assert not _near(face, tokens["cardBg"]), f"{scheme} {name}: {face.name()}"
 
     @pytest.mark.parametrize("name", ["urlInput", "sortButton"])
     def test_field_face_is_field_bg(self, window, scheme: str, name: str) -> None:
@@ -1892,6 +1895,11 @@ PICKED = {
     DownloadState.FAILED: ("cardTintFailed", "cardTintFailedHover", "cardTintFailedSelected"),
 }  # 카드 상태 -> (평소 면 토큰, 호버 면 토큰, 선택 면 토큰)
 PICK_STATES = [DownloadState.WAITING, DownloadState.FINISHED, DownloadState.FAILED]
+DARK_FACES = {
+    DownloadState.WAITING: ("#26282e", "#2d2f35", "#35363c"),
+    DownloadState.FINISHED: ("#1f2c24", "#26332b", "#2d3a32"),
+    DownloadState.FAILED: ("#362321", "#3d2a28", "#45312f"),
+}  # 다크 카드 상태 -> (평소, 호버, 선택) 면 — 평소 면을 반 단계 내린 값(#611 176r)
 BAND_CLEAR = 6  # 고른 카드 왼쪽 강조색 띠(4px) 밖에서 면을 재는 안쪽 거리(px)
 
 
@@ -2004,3 +2012,33 @@ class TestPickedFace:
         assert not _near(rest, hovered.name()), seen
         assert not _near(hovered, selected.name()), seen
         assert _near(both, selected.name()), seen
+
+    @pytest.mark.parametrize("scheme", ["dark"], indirect=True)
+    @pytest.mark.parametrize("state", PICK_STATES, ids=lambda s: s.name)
+    def test_dark_faces_are_the_176r_values(
+        self, window, scheme: str, state: DownloadState
+    ) -> None:
+        """다크 카드의 평소 · 호버 · 선택 화소는 DARK_FACES 값이어야 한다.
+
+        다크, 카드 하나(대기 · 완료 · 실패) -> 포인터 (1, 1): 평소, 카드 가운데: 호버, 선택 모드에서 고르고
+        (1, 1): 선택 — 카드 왼쪽 안쪽 6px · 세로 가운데 화소 ≈ DARK_FACES(채널마다 1 이내)
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(state)
+        card = _card(win, 0)
+        QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
+        _pump()
+        rect = _rect(win, card)
+        rest = _face_at(win, rect)
+        _hover(win, card)
+        assert card.isHovered(), "전제: 호버가 켜졌다"
+        hovered = _face_at(win, rect)
+        assert _pick_first(win) == rect, "전제: 선택 모드에서 카드 자리가 그대로다"
+        QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
+        _pump()
+        assert not card.isHovered(), "전제: 호버가 꺼졌다"
+        selected = _face_at(win, rect)
+        seen = f"{state.name}: {rest.name()} {hovered.name()} {selected.name()}"
+        for colour, want in zip((rest, hovered, selected), DARK_FACES[state], strict=True):
+            assert _near(colour, want), f"{want} {seen}"

@@ -114,7 +114,7 @@ SURFACES = {
         "borderStrong": "#4c515b",
         "text": "#e6e8ec",
         "textMuted": "#a0a6b0",
-        "cardBg": "#2b2d33",
+        "cardBg": "#26282e",  # 반 단계 어둡게 — 오너 결정(2026-11-17, #611 176r)
         "scrollHandle": "#4c515b",
         "scrollHandleHover": "#5e646f",
     },
@@ -513,25 +513,98 @@ CARD_FACES = [
 HALF_STEP = (1.2, 2.0)  # 호버 면 ↔ 평소 면 ΔE00 허용 범위 — 반 단계 약 1.5, 16진 반올림 폭 포함
 ONE_STEP = 2.8  # 선택 면 ↔ 평소 면 ΔE00 하한 — 한 단계 약 3.0(완료 · 실패 색조는 2.9 안팎)
 DARK_SELECTED_MIN = 3.0  # 다크 중립 선택 면 ↔ 평소 면 ΔE00 하한 — 지시문 176q
+CARD_HOVER_HALF = 1.5  # 다크 호버 면의 두 반쪽 ΔE00 하한 — 반 단계(#611 176r)
+MIDPOINT_SLACK = (
+    0.5  # 다크 호버 면의 두 반쪽(평소 ↔ 호버, 호버 ↔ 선택) ΔE00 차 상한 — 16진 반올림 폭
+)
+DARK_REST_176Q = {
+    "cardBg": "#2b2d33",
+    "cardTintFinished": "#243129",
+    "cardTintFailed": "#3b2826",
+}  # 176q의 다크 평소 면(#611 176q 보고) — 176r 평소 면은 이보다 선택 면에서 멀어야 한다
+DARK_SELECTED_FACES = {
+    "cardSelectedBg": "#35363c",
+    "cardTintFinishedSelected": "#2d3a32",
+    "cardTintFailedSelected": "#45312f",
+}  # 다크 선택 면 — 그 위 글 4.5를 맞춘 176q 값 그대로(#611 176r)
+BAR_TO_CARD_MIN = 1.5  # 다크 바 면 ↔ 카드 평소 면 ΔE00 하한(#611 176r)
 
 
-@pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize(("rest", "hover", "selected"), CARD_FACES)
-def test_card_hover_is_half_a_step_and_selected_one_step(
-    scheme: str, rest: str, hover: str, selected: str
+def test_light_card_hover_is_half_a_step_and_selected_one_step(
+    rest: str, hover: str, selected: str
 ) -> None:
-    """카드 호버 면은 평소 면에서 반 단계, 선택 면은 한 단계여야 하고 호버 ≠ 선택이어야 한다(#611 176q).
+    """라이트 카드 호버 면은 평소 면에서 반 단계, 선택 면은 한 단계여야 하고 호버 ≠ 선택이어야 한다(#611 176q).
 
     ΔE00(평소, 호버) 1.2 ~ 2.0, ΔE00(평소, 선택) >= 2.8, ΔE00(평소, 호버) < ΔE00(평소, 선택),
     호버 ≠ 선택(16진 값)
     """
-    table = SCHEMES[scheme]
+    table = theme.LIGHT
     half = _de00(table[rest], table[hover])
     one = _de00(table[rest], table[selected])
-    assert HALF_STEP[0] <= half <= HALF_STEP[1], f"{scheme} {hover}: {half:.2f}"
-    assert one >= ONE_STEP, f"{scheme} {selected}: {one:.2f}"
+    assert HALF_STEP[0] <= half <= HALF_STEP[1], f"light {hover}: {half:.2f}"
+    assert one >= ONE_STEP, f"light {selected}: {one:.2f}"
     assert half < one
     assert table[hover].lower() != table[selected].lower()
+
+
+@pytest.mark.parametrize(("rest", "hover", "selected"), CARD_FACES)
+def test_dark_card_hover_is_midway_between_rest_and_selected(
+    rest: str, hover: str, selected: str
+) -> None:
+    """다크 카드 호버 면은 평소 면 · 선택 면 가운데여야 한다(#611 176r).
+
+    ΔE00(평소, 호버) >= 1.5, ΔE00(호버, 선택) >= 1.5, 두 값 차 <= 0.5, 호버 ≠ 선택(16진 값)
+    """
+    table = theme.DARK
+    near = _de00(table[rest], table[hover])
+    far = _de00(table[hover], table[selected])
+    assert near >= CARD_HOVER_HALF and far >= CARD_HOVER_HALF, f"{hover}: {near:.2f} {far:.2f}"
+    assert abs(near - far) <= MIDPOINT_SLACK, f"{hover}: {near:.2f} {far:.2f}"
+    assert table[hover].lower() != table[selected].lower()
+
+
+@pytest.mark.parametrize(("rest", "_hover", "selected"), CARD_FACES)
+def test_dark_selected_face_is_farther_than_in_176q(rest: str, _hover: str, selected: str) -> None:
+    """다크 평소 면 ↔ 선택 면 ΔE00은 176q 값보다 커야 한다(#611 176r).
+
+    ΔE00(평소, 선택) > ΔE00(176q 평소 #2b2d33 · #243129 · #3b2826, 선택)
+    """
+    step = _de00(theme.DARK[rest], theme.DARK[selected])
+    before = _de00(DARK_REST_176Q[rest], theme.DARK[selected])
+    assert step > before, f"{rest}: {step:.2f} <= {before:.2f}"
+
+
+def test_dark_selected_faces_keep_the_176q_values() -> None:
+    """다크 선택 면(중립 · 완료 · 실패)은 176q 값 그대로여야 한다(#611 176r).
+
+    cardSelectedBg #35363c · cardTintFinishedSelected #2d3a32 · cardTintFailedSelected #45312f
+    """
+    changed = {
+        k: theme.DARK[k] for k, v in DARK_SELECTED_FACES.items() if theme.DARK[k].lower() != v
+    }
+    assert changed == {}
+
+
+def test_dark_card_face_is_lighter_than_the_bar_face() -> None:
+    """다크 카드 평소 면은 바 면보다 밝고 ΔE00 1.5 이상 떨어져야 한다(#611 176r).
+
+    L*(cardBg) > L*(barBg), ΔE00(barBg, cardBg) >= 1.5
+    """
+    card, bar = theme.DARK["cardBg"], theme.DARK["barBg"]
+    assert _lab(card)[0] > _lab(bar)[0], f"{card} {bar}"
+    assert _de00(bar, card) >= BAR_TO_CARD_MIN, f"{_de00(bar, card):.2f}"
+
+
+def test_dark_layers_get_lighter_from_the_list_to_the_selected_card() -> None:
+    """다크 면 밝기는 빈 목록 < 바 < 카드 평소 < 호버 < 선택 차례여야 한다(#611 176r).
+
+    L*: windowBg < barBg < cardBg < cardHoverBg < cardSelectedBg
+    """
+    layers = ("windowBg", "barBg", "cardBg", "cardHoverBg", "cardSelectedBg")
+    lightness = [_lab(theme.DARK[name])[0] for name in layers]
+    assert lightness == sorted(lightness), dict(zip(layers, lightness, strict=True))
+    assert len(set(lightness)) == len(layers)
 
 
 def test_dark_selected_card_is_at_least_three_from_the_rest_face() -> None:
