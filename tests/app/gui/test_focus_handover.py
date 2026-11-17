@@ -27,6 +27,8 @@ ANSWER_TRIES = 150  # 확인 대화상자가 뜨기를 기다리는 횟수 — 2
 ANSWER_STEP_MS = 20  # 확인 대화상자를 찾는 간격(ms)
 # 답을 못 낸 확인 대화상자를 닫는 시한(ms) — exec() 안에 갇혀 테스트가 끝나지 않는 것을 막는다
 ANSWER_WATCHDOG_MS = 10000
+# 이 테스트가 건 확인 응답 예약을 거두는 함수 — 테스트 끝에 부른다
+_ANSWER_CANCELS: list[Callable[[], None]] = []
 
 
 class _Engine:
@@ -99,6 +101,14 @@ def _click(win: QWidget, widget: QWidget) -> None:
     QTest.mouseClick(win.windowHandle(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier(0), spot)
 
 
+@pytest.fixture(autouse=True)
+def _cancel_answers() -> Iterator[None]:
+    """테스트가 끝나면 남은 tick · watchdog 예약을 거둔다 — 뒤 테스트의 대화상자를 건드리지 않게."""
+    yield
+    while _ANSWER_CANCELS:
+        _ANSWER_CANCELS.pop()()
+
+
 def _answer_yes(how: str) -> None:
     """곧 뜰 확인 대화상자에서 Yes · 「멈추고 지우기」를 고른다 — 마우스 누름 또는 그 단추에 초점을 두고 Enter.
 
@@ -107,8 +117,11 @@ def _answer_yes(how: str) -> None:
     """
     tries = [0]
     found: list[QMessageBox | None] = [None]  # tick이 찾은 확인 대화상자 — watchdog은 이것만 닫는다
+    alive = [True]  # 거두면 거짓 — 그 뒤에 터진 tick은 아무것도 하지 않는다
 
     def tick() -> None:
+        if not alive[0]:
+            return
         box = QApplication.activeModalWidget()
         if not isinstance(box, QMessageBox) or not box.isVisible():
             tries[0] += 1
@@ -116,7 +129,7 @@ def _answer_yes(how: str) -> None:
                 QTimer.singleShot(ANSWER_STEP_MS, tick)
             return
         found[0] = box
-        box.finished.connect(watch.deleteLater)  # 대화상자가 닫히면 watchdog을 거둔다
+        box.finished.connect(watch.stop)  # 대화상자가 닫히면 watchdog을 멈춘다
         yes_roles = (QMessageBox.ButtonRole.YesRole, QMessageBox.ButtonRole.DestructiveRole)
         target = next((b for b in box.buttons() if box.buttonRole(b) in yes_roles), None)
         if not isinstance(target, QPushButton):
@@ -137,11 +150,16 @@ def _answer_yes(how: str) -> None:
         box = found[0] or QApplication.activeModalWidget()
         if isinstance(box, QMessageBox) and box.isVisible():
             box.reject()
+
+    def cancel() -> None:
+        alive[0] = False
+        watch.stop()
         watch.deleteLater()
 
-    watch = QTimer(QApplication.instance())  # 대화상자가 닫히면 거둘 수 있게 객체로 둔다
+    watch = QTimer(QApplication.instance())  # 멈추고 거둘 수 있게 객체로 둔다
     watch.setSingleShot(True)
     watch.timeout.connect(watchdog)
+    _ANSWER_CANCELS.append(cancel)
     QTimer.singleShot(ANSWER_STEP_MS, tick)
     watch.start(ANSWER_WATCHDOG_MS)
 
