@@ -33,43 +33,6 @@ PAIRS = [
     ("stateWaiting", "cardHoverBg", 4.5, "대기 상태 글 ↔ 호버 카드(#611 176m)"),
     ("stateRunning", "cardHoverBg", 4.5, "받는 중 상태 글 ↔ 호버 카드(#611 176m)"),
     ("statePaused", "cardHoverBg", 4.5, "일시정지 상태 글 ↔ 호버 카드(#611 176m)"),
-    ("text", "cardPickedBg", 4.5, "본문 글 ↔ 고른 카드(#611 176o)"),
-    ("textMuted", "cardPickedBg", 4.5, "흐린 글 ↔ 고른 카드(#611 176o)"),
-    ("stateWaiting", "cardPickedBg", 4.5, "대기 상태 글 ↔ 고른 카드(#611 176o)"),
-    ("stateRunning", "cardPickedBg", 4.5, "받는 중 상태 글 ↔ 고른 카드(#611 176o)"),
-    ("statePaused", "cardPickedBg", 4.5, "일시정지 상태 글 ↔ 고른 카드(#611 176o)"),
-    ("text", "cardPickedHoverBg", 4.5, "본문 글 ↔ 호버한 고른 카드(#611 176o)"),
-    ("textMuted", "cardPickedHoverBg", 4.5, "흐린 글 ↔ 호버한 고른 카드(#611 176o)"),
-    ("stateWaiting", "cardPickedHoverBg", 4.5, "대기 상태 글 ↔ 호버한 고른 카드(#611 176o)"),
-    ("stateRunning", "cardPickedHoverBg", 4.5, "받는 중 상태 글 ↔ 호버한 고른 카드(#611 176o)"),
-    ("statePaused", "cardPickedHoverBg", 4.5, "일시정지 상태 글 ↔ 호버한 고른 카드(#611 176o)"),
-    ("text", "cardTintFinishedPicked", 4.5, "본문 글 ↔ 고른 완료 카드(#611 176o)"),
-    ("textMuted", "cardTintFinishedPicked", 4.5, "흐린 글 ↔ 고른 완료 카드(#611 176o)"),
-    (
-        "stateFinishedOnTint",
-        "cardTintFinishedPicked",
-        4.5,
-        "완료 상태 글 ↔ 고른 완료 카드(#611 176o)",
-    ),
-    ("text", "cardTintFinishedPickedHover", 4.5, "본문 글 ↔ 호버한 고른 완료 카드(#611 176o)"),
-    ("textMuted", "cardTintFinishedPickedHover", 4.5, "흐린 글 ↔ 호버한 고른 완료 카드(#611 176o)"),
-    (
-        "stateFinishedOnTint",
-        "cardTintFinishedPickedHover",
-        4.5,
-        "완료 상태 글 ↔ 호버한 고른 완료 카드(#611 176o)",
-    ),
-    ("text", "cardTintFailedPicked", 4.5, "본문 글 ↔ 고른 실패 카드(#611 176o)"),
-    ("textMuted", "cardTintFailedPicked", 4.5, "흐린 글 ↔ 고른 실패 카드(#611 176o)"),
-    ("stateFailedOnTint", "cardTintFailedPicked", 4.5, "실패 상태 글 ↔ 고른 실패 카드(#611 176o)"),
-    ("text", "cardTintFailedPickedHover", 4.5, "본문 글 ↔ 호버한 고른 실패 카드(#611 176o)"),
-    ("textMuted", "cardTintFailedPickedHover", 4.5, "흐린 글 ↔ 호버한 고른 실패 카드(#611 176o)"),
-    (
-        "stateFailedOnTint",
-        "cardTintFailedPickedHover",
-        4.5,
-        "실패 상태 글 ↔ 호버한 고른 실패 카드(#611 176o)",
-    ),
     ("textMuted", "cardTintFinishedHover", 4.5, "흐린 글 ↔ 호버한 완료 카드(#611 176m)"),
     ("textMuted", "cardTintFailedHover", 4.5, "흐린 글 ↔ 호버한 실패 카드(#611 176m)"),
     ("stateFinishedOnTint", "cardTintFinished", 4.5, "완료 상태 글 ↔ 완료 카드(#554)"),
@@ -425,50 +388,3 @@ def test_light_ground_is_the_blue_grey(token: str) -> None:
 def test_light_bar_button_faces_are_kept(token: str) -> None:
     """라이트 barHover · barPressed는 바뀌지 않아야 한다 — #c2c5c9 · #b8bbc1."""
     assert theme.LIGHT[token].lower() == LIGHT_KEPT[token]
-
-
-PICKED_FACES = [
-    ("cardPickedBg", "cardPickedHoverBg", "cardHoverBg", "cardBg"),
-    (
-        "cardTintFinishedPicked",
-        "cardTintFinishedPickedHover",
-        "cardTintFinishedHover",
-        "cardTintFinished",
-    ),
-    ("cardTintFailedPicked", "cardTintFailedPickedHover", "cardTintFailedHover", "cardTintFailed"),
-]  # (고른 면, 고름+호버 면, 같은 카드의 호버 면, 같은 카드의 평소 면)
-
-
-@pytest.mark.parametrize("scheme", SCHEMES)
-@pytest.mark.parametrize(("picked", "picked_hover", "hover", "rest"), PICKED_FACES)
-def test_picked_face_is_not_the_hover_face(
-    scheme: str, picked: str, picked_hover: str, hover: str, rest: str
-) -> None:
-    """고른 면 · 고름+호버 면은 호버 면과 달라야 하고 평소 면보다 파랑 쪽으로 기울어야 한다(#611 176o).
-
-    picked ≠ hover, picked_hover ≠ hover, (blue − red)(picked) > (blue − red)(rest) — 강조색을 섞음
-    """
-    table = SCHEMES[scheme]
-    assert table[picked].lower() != table[hover].lower()
-    assert table[picked_hover].lower() != table[hover].lower()
-
-    def lean(value: str) -> int:
-        return int(value[5:7], 16) - int(value[1:3], 16)
-
-    assert lean(table[picked]) > lean(table[rest]), (table[picked], table[rest])
-
-
-@pytest.mark.parametrize(("picked", "picked_hover", "hover", "rest"), PICKED_FACES)
-def test_dark_picked_hover_is_the_picked_face(
-    picked: str, picked_hover: str, hover: str, rest: str
-) -> None:
-    """다크 고름+호버 면은 고른 면과 같아야 한다 — 더 밝히지 않는다(#611 176o)."""
-    assert theme.DARK[picked_hover].lower() == theme.DARK[picked].lower()
-
-
-@pytest.mark.parametrize(("picked", "picked_hover", "hover", "rest"), PICKED_FACES)
-def test_light_picked_hover_is_darker_than_the_picked_face(
-    picked: str, picked_hover: str, hover: str, rest: str
-) -> None:
-    """라이트 고름+호버 면은 고른 면보다 어두워야 한다 — 상대 휘도가 작다(#611 176o)."""
-    assert _luminance(theme.LIGHT[picked_hover]) < _luminance(theme.LIGHT[picked])

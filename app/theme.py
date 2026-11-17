@@ -95,7 +95,7 @@ METRICS = {
     # 맞춰 위아래로 4씩 넘친다 — 2줄 제목을 덮지 않는다(widget.py::_placeCardButtons, 176j)
     "cardButton": 24,
     "cardStatusIcon": 16,  # 3줄 상태 원 아이콘 지름(px) — 메뉴 버블과 같은 그림
-    # 고른 행 왼쪽 끝 강조색 세로 띠 폭(px) — 행 바탕 한 단계와 함께 고름을 알린다(설계 §13, #611). 카드 면과
+    # 고른 행 왼쪽 끝 강조색 세로 띠 폭(px) — 체크 원과 함께 고름을 알린다(바탕은 그대로, #611 176p). 카드 면과
     # progress bar가 그린다(띠가 진행 막대 위) — 줄 배치는 그대로다. 3 · 4 · 5 비교 뒤 4(오너 2026-11-15)
     "cardSelectBar": 4,
     # 선택 모드의 체크 원(#561) — 썸네일 왼쪽 위에 얹는다. 썸네일 위라 카드 폭 · 줄 배치는 그대로다
@@ -325,7 +325,7 @@ LIGHT = {
     "pickMarkScrim": "#000000",
     "cardBg": "#ffffff",
     # 카드 호버 바탕 — 바 면(= 창 배경)에서 어둡게 한 단계(ΔE00 약 3.0). 카드 면에서 한 단계면 바 면과
-    # 같아져 호버가 바탕에 묻힌다(카드 면에서는 ΔE00 약 6.1, #611 176m). 고른 카드 면은 따로 셈한다(cardPickedBg)
+    # 같아져 호버가 바탕에 묻힌다(카드 면에서는 ΔE00 약 6.1, #611 176m). 고른 카드도 이 면을 쓴다(176p)
     "cardHoverBg": "#e1e2e5",
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) — 흰 배경 대비용으로 짙게 눌렀다 ----
     # 대기 · 받는 중 · 일시정지는 호버 카드 면(cardHoverBg) 위에서도 4.5가 되게 같은 색상에서 OKLab 밝기만
@@ -353,13 +353,6 @@ TINT_DE00 = {
     "light": 10.0,
 }  # 색조 ↔ 카드 면 ΔE00 목표 — 설계 §8의 6(오너 2026-11-02)
 TINT_TEXT_CONTRAST = 4.5  # 색조 위 글의 대비 하한 — 설계 §11.5
-# ---- 고른 카드 면(선택 모드, #611 176o) ----
-# 고른 면은 그 카드 면(색조 카드면 색조 면)에 accent를 sRGB 선형 보간으로 섞어 이 ΔE00만큼 떨어뜨린다 —
-# 호버 회색과 색으로 갈리고, 그 위 글은 다시 맞추지 않아도 4.5다(176n 4 (나))
-PICK_DE00 = 6.0
-# 라이트 고름+호버 ↔ 고른 면 ΔE00 — OKLab 밝기만 어둡게 한 단계. 다크는 고름+호버 = 고른 면이다(밝히면
-# 대기 · 일시정지 글이 4.5 아래로 내려간다 — 176n 4)
-PICK_HOVER_DE00 = 3.0
 # 입력 칸 호버 테두리 ↔ 평소 테두리 ΔE00 — border → borderStrong 한 단계와 같은 크기(#611 176g · 176h)
 FIELD_HOVER_DE00 = 6.7
 
@@ -561,53 +554,12 @@ def _field_hover(edge: str, face: str) -> str:
     return moved
 
 
-def _accent_mixed(face: str, accent: str, target: float) -> str:
-    """`face`에 `accent`를 sRGB 선형 보간으로 섞어 `face`와 ΔE00 `target`이 되는 가장 옅은 색."""
-    face_rgb = [int(face[i : i + 2], 16) for i in (1, 3, 5)]
-    accent_rgb = [int(accent[i : i + 2], 16) for i in (1, 3, 5)]
-    mixed = face
-    for step in range(1001):
-        share = step / 1000
-        mixed = "#" + "".join(
-            f"{round(f + (a - f) * share):02x}" for f, a in zip(face_rgb, accent_rgb, strict=True)
-        )
-        if delta_e00(face, mixed) >= target:
-            return mixed
-    return mixed
-
-
-def _picked_faces(face: str, accent: str, scheme: str) -> tuple[str, str]:
-    """고른 면과 고름+호버 면 — 고른 면은 `face`에 강조색을 섞고, 라이트 고름+호버는 거기서 밝기만 한 단계 어둡게.
-
-    다크 고름+호버는 고른 면 그대로다(176n 4 — 더 밝히면 상태 글이 4.5 아래로 내려간다).
-    """
-    picked = _accent_mixed(face, accent, PICK_DE00)
-    if scheme == "dark":
-        return picked, picked
-    big_l, a, b = _oklab(picked)
-    step = 0.0
-    hovered = picked
-    while step < 0.5 and delta_e00(picked, hovered) < PICK_HOVER_DE00:
-        step += 0.0005
-        hovered = _from_oklab((big_l - step, a, b))
-    return picked, hovered
-
-
-def _card_picked(table: dict, scheme: str) -> None:
-    """중립 카드의 고른 면 · 고름+호버 면(`cardPickedBg` · `cardPickedHoverBg`)을 표에 더한다(#611 176o)."""
-    table["cardPickedBg"], table["cardPickedHoverBg"] = _picked_faces(
-        table["cardBg"], table["accent"], scheme
-    )
-
-
 def _card_tints(table: dict, scheme: str) -> None:
     """완료 · 실패 색조(+ 호버 · 그 위 상태 글 색)를 표에 더한다.
 
     색조 세기는 목표(ΔE00)를 먼저 정한다(설계 §8의 6). 본문 · 보조 글은 그 세기에서 4.5를 지키는지
     본다. 상태 글(완료 초록 · 실패 빨강)은 색조 위에서 4.5가 되게 같은 색상의 밝기만 옮긴 색을 따로 둔다
     (`state…OnTint`) — 라이트의 완료 초록은 흰 카드에서 이미 4.5라 색조가 조금만 생겨도 4.5 아래로 내려간다.
-    고른 면 · 고름+호버 면(`cardTint…Picked` · `…PickedHover`)도 여기서 더하고 상태 글은 그 면 위에서도 4.5를
-    지킨다(#611 176o).
     """
     card, hover, target = table["cardBg"], table["cardHoverBg"], TINT_DE00[scheme]
     texts = (table["text"], table["textMuted"])
@@ -615,11 +567,7 @@ def _card_tints(table: dict, scheme: str) -> None:
         tint = _tinted(card, table[state], target, texts)
         table[f"cardTint{name}"] = tint
         table[f"cardTint{name}Hover"] = _hover_of(tint, card, hover)
-        picked, picked_hover = _picked_faces(tint, table["accent"], scheme)
-        table[f"cardTint{name}Picked"] = picked
-        table[f"cardTint{name}PickedHover"] = picked_hover
-        grounds = (tint, table[f"cardTint{name}Hover"], picked, picked_hover)
-        table[f"{state}OnTint"] = _readable_on(table[state], grounds)
+        table[f"{state}OnTint"] = _readable_on(table[state], (tint, table[f"cardTint{name}Hover"]))
 
 
 # 메뉴 버튼 오른쪽 안쪽 여백(px) = 바깥 끝 ↔ 버블 + 버블 + 글 ↔ 버블 − 테두리 1px(style.qss 메뉴바 절)
@@ -639,8 +587,6 @@ for _table in (DARK, LIGHT):
     _table["menuButtonPadRight"] = f"{MENU_BUTTON_PAD_RIGHT}px"
 _card_tints(DARK, "dark")
 _card_tints(LIGHT, "light")
-_card_picked(DARK, "dark")
-_card_picked(LIGHT, "light")
 DARK["fieldEdgeHover"] = _field_hover(DARK["fieldEdge"], DARK["fieldBg"])
 LIGHT["fieldEdgeHover"] = _field_hover(LIGHT["fieldEdge"], LIGHT["fieldBg"])
 

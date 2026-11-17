@@ -1712,10 +1712,10 @@ class TestFocusRing:
     def test_picked_and_focused_shows_the_inner_ring_over_the_left_bar(
         self, window: VodDownloader, qtbot: QtBot
     ) -> None:
-        """고른 카드가 키보드 초점을 받으면 안쪽 고리가 왼쪽 띠 위에 보이고 그 안쪽은 띠 · 고른 바탕이어야 한다.
+        """고른 카드가 키보드 초점을 받으면 안쪽 고리가 왼쪽 띠 위에 보이고 그 안쪽은 띠 · 평소 카드 면이어야 한다.
 
-        선택 모드, 카드에 키보드 초점 · Space · 띠 애니메이션 끝 -> 창의 행 안쪽 화소 0 · 1 ≈ focusOnAccent(고리),
-        2 · 3 ≈ accent(띠 4px의 남은 2px), 4 ≈ cardPickedBg(고른 행 바탕, #611 176o)
+        선택 모드, 카드에 키보드 초점 · Space · 띠 애니메이션 끝, 호버 아님 -> 창의 행 안쪽 화소 0 · 1 ≈
+        focusOnAccent(고리), 2 · 3 ≈ accent(띠 4px의 남은 2px), 4 ≈ cardBg(고른 면 색 없음, #611 176p)
         """
         items = _add(window, D.WAITING, D.WAITING)
         _toggle_select_mode(window, True)
@@ -1728,15 +1728,17 @@ class TestFocusRing:
         assert _is(_inside(window, card, 1), "focusOnAccent")
         assert _is(_inside(window, card, 2), "accent")
         assert _is(_inside(window, card, 3), "accent")
-        assert _is(_inside(window, card, 4), "cardPickedBg")
+        assert not card.isHovered(), "전제: 호버가 아니다"
+        assert _is(_inside(window, card, 4), "cardBg")
 
-    def test_picked_only_is_a_left_accent_bar_on_the_picked_background(
+    def test_picked_only_is_a_left_accent_bar_on_the_card_face(
         self, window: VodDownloader, qtbot: QtBot
     ) -> None:
-        """고르기만 한(키보드 초점 없는) 카드는 왼쪽 끝 4px 강조색 띠와 고른 행 바탕이고 고리가 없어야 한다.
+        """고르기만 한(키보드 초점 없는) 카드는 왼쪽 끝 4px 강조색 띠와 평소 카드 면이고 고리가 없어야 한다.
 
-        선택 모드, 카드 둘, 첫째 클릭 · 둘째에 키보드 초점 · 띠 애니메이션 끝 -> 첫째 카드 면 화소 0 ~ 3 ≈ accent,
-        4 ≈ cardPickedBg(#611 176o), 창의 첫째 행 안쪽 화소 0 ≈ accent(고리 없음), focus ring은 둘째에 있음
+        선택 모드, 카드 둘, 첫째 클릭 · 둘째에 키보드 초점 · 띠 애니메이션 끝 · 합성 포인터를 창 (1, 1)로 ->
+        첫째 카드 면 화소 0 ~ 3 ≈ accent, 4 ≈ cardBg(#611 176p), 창의 첫째 행 안쪽 화소 0 ≈ accent(고리 없음),
+        focus ring은 둘째에 있음
         """
         items = _add(window, D.WAITING, D.WAITING)
         _toggle_select_mode(window, True)
@@ -1746,8 +1748,11 @@ class TestFocusRing:
         card = _card(window, items[0])
         assert card.isSelected() and not card.hasKeyFocus()
         qtbot.waitUntil(lambda: card.contentFrame.band() == 1.0)
+        QTest.mouseMove(window.windowHandle(), QPoint(1, 1))
+        _settle()
+        assert not card.isHovered(), "전제: 호버가 꺼졌다"
         assert all(_is(_edge(card, depth), "accent") for depth in (0, 1, 2, 3))
-        assert _is(_edge(card, 4), "cardPickedBg")
+        assert _is(_edge(card, 4), "cardBg")
         assert _is(_inside(window, card, 0), "accent")
 
 
@@ -1944,28 +1949,33 @@ class TestPickOnPress:
         assert _picked(window) == [items[0]]
 
     @pytest.mark.parametrize(
-        ("state", "picked"),
+        ("state", "hovered"),
         [
-            (D.WAITING, "cardPickedBg"),
-            (D.FINISHED, "cardTintFinishedPicked"),
-            (D.FAILED, "cardTintFailedPicked"),
+            (D.WAITING, "cardHoverBg"),
+            (D.FINISHED, "cardTintFinishedHover"),
+            (D.FAILED, "cardTintFailedHover"),
         ],
     )
-    def test_pressed_card_ground_is_the_picked_ground(
-        self, window: VodDownloader, state: DownloadState, picked: str
+    def test_pressed_card_ground_is_the_hover_ground(
+        self, window: VodDownloader, state: DownloadState, hovered: str
     ) -> None:
-        """누르고 있는 카드의 바탕은 고른 카드 바탕과 같아야 한다 — 눌린 바탕은 없다(#611 176i · 176o).
+        """누르고 있는 고른 카드의 바탕은 그 종류의 호버 면이어야 한다 — 눌린 바탕 · 고른 면 색은 없다(#611 176p).
 
-        다크, 선택 모드, 대기 · 완료 · 실패 카드를 누름 -> 카드 면 왼쪽에서 일곱째 화소 ≈ 그 종류의 고른 면
-        토큰(한도 8). 다크 고름+호버 면 = 고른 면이라 포인터가 카드 위여도 같다
+        다크, 선택 모드, 대기 · 완료 · 실패 카드에 합성 포인터를 (1, 1) -> 카드 면으로 옮겨 누름 -> 카드 면 왼쪽에서
+        일곱째 화소 ≈ 그 종류의 호버 토큰(한도 8)
         """
         items = _add(window, state, D.WAITING)
         _toggle_select_mode(window, True)
         card = _card(window, items[0])
+        QTest.mouseMove(window.windowHandle(), QPoint(1, 1))
+        _drag_to(window, items[0])
         _press(window, items[0])
-        assert _picked(window) == [items[0]], "전제: 눌러서 골랐다"
-        assert _is(_edge(card, 6), picked, 8)  # 왼쪽 강조색 띠(0 ~ 3) 밖
+        picked, on_card = _picked(window), card.isHovered()
+        ground = _edge(card, 6)  # 왼쪽 강조색 띠(0 ~ 3) 밖
         _release(window, items[0])
+        assert picked == [items[0]], "전제: 눌러서 골랐다"
+        assert on_card, "전제: 포인터가 카드 위다"
+        assert _is(ground, hovered, 8), ground.name()
 
     def test_shift_range_is_added_on_press(self, window: VodDownloader) -> None:
         """Shift 범위는 누를 때 더해져야 한다.
