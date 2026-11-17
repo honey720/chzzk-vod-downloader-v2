@@ -54,7 +54,7 @@ from app.widgets.icons import IconButton
 from app.widgets.menu_button import MenuButton
 from app.widgets.narrow_steps import step_level
 from app.widgets.select_bar import SelectBar
-from app.widgets.focus_ring import KeyFocusMarker
+from app.widgets.focus_ring import KeyFocusMarker, track_input
 from app.widgets.tip_bubble import ErrorTip, close_floats_if_left, install_tips, shortcut_tip
 from app.widgets.os_notice import DownloadEndNotice
 from app.widgets.view import ContentListView
@@ -213,6 +213,7 @@ class VodDownloader(QMainWindow):
         self.minimumParts: dict[str, int] = {}  # 창 최소폭을 정한 줄마다의 폭(_contentMinimumWidth)
         self.setupUi(self)
         self.setupDynamicUi()
+        track_input(self)  # 키보드로 연 대화상자는 첫 초점 버튼에 focus ring(#622 188c)
 
         width_ratio = 0.45
         height_ratio = 0.5

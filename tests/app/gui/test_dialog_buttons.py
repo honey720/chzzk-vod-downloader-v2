@@ -26,6 +26,8 @@ import CVDv2 as main_module
 from app.views.dialog import SettingDialog
 from app.views.mainWindow import VodDownloader
 from app.views.section_dialog import SectionDeleteButton
+from app.viewmodels.data import ContentItem
+from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import hold_style
 from tests.app.gui.test_card_c3 import _de00
 from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 이름으로 쓴다
@@ -516,3 +518,152 @@ class TestConfirmBox:
 
         self._ask(check)
         assert seen == {"edge": True, "face": True}, scheme
+
+
+def _busy_window(tmp_path) -> tuple[VodDownloader, ContentItem, list[QWidget]]:
+    """메인 창 · 받는 중 카드 하나 — 붙잡아 둘 목록도 돌려준다(addWidget은 창을 붙잡지 않는다)."""
+    item = _make_item(str(tmp_path))
+    item.downloadState = DownloadState.RUNNING
+    win = open_window(tmp_path, item)
+    return win, item, [win]
+
+
+def _while_asking(
+    qtbot: QtBot, open_: Callable[[], None], check: Callable[[QMessageBox], None]
+) -> None:
+    """`open_()`이 띄운 확인 창이 뜬 동안 `check(box)`를 부른 뒤 Esc로 닫는다 — 뜨지 않았으면 실패다."""
+    failures: list[BaseException] = []
+    asked: list[bool] = []
+
+    def run() -> None:
+        box = QApplication.activeModalWidget()
+        if not isinstance(box, QMessageBox):
+            QTimer.singleShot(10, run)
+            return
+        asked.append(True)
+        try:
+            _activate(qtbot, box)
+            check(box)
+        except BaseException as error:  # 실패를 exec 밖으로 옮긴다
+            failures.append(error)
+        QTest.keyClick(box, Qt.Key.Key_Escape)
+
+    QTimer.singleShot(0, run)
+    open_()
+    _pump()
+    assert asked, "확인 창이 뜨지 않았다"
+    if failures:
+        raise failures[0]
+
+
+def _opening_focus(box: QMessageBox) -> dict[str, object]:
+    """막 연 확인 창 Cancel의 초점 · keyFocus · 가장자리(accent인지)."""
+    cancel = box.button(QMessageBox.StandardButton.Cancel)
+    edge, _face = _edge_and_face(cancel)
+    return {
+        "focus": cancel.hasFocus(),
+        "keyFocus": cancel.property("keyFocus"),
+        "accent edge": _is(edge, "accent"),
+    }
+
+
+KEY_OPENED = {"focus": True, "keyFocus": True, "accent edge": True}  # 키보드로 연 창의 첫 초점
+MOUSE_OPENED = {"focus": True, "keyFocus": False, "accent edge": False}  # 마우스로 연 창의 첫 초점
+
+
+class TestOpeningFocusFollowsTheInput:
+    """대화상자가 열리며 받은 첫 초점은 창을 연 입력의 종류를 따른다(#622 188c)."""
+
+    def test_delete_key_opens_the_confirm_box_with_a_ring_on_cancel(
+        self, qtbot: QtBot, tmp_path, scheme: str
+    ) -> None:
+        """받는 중 카드에서 Delete 키로 연 확인 창의 Cancel은 키보드 초점이고 가장자리가 accent여야 한다.
+
+        받는 중 카드에 마우스 까닭 초점, 창(QWindow)에 Delete 키 -> Cancel 초점 · keyFocus True · 가장자리 ≈ accent
+        """
+        win, item, held = _busy_window(tmp_path)
+        _activate(qtbot, win)
+        card = win.listView.widgetFor(item)
+        card.setFocus(
+            Qt.FocusReason.MouseFocusReason
+        )  # 그 전 초점은 마우스 — 연 입력을 따르는지 본다
+        qtbot.waitUntil(card.hasFocus, timeout=ACTIVE_WAIT_MS)
+        seen: dict[str, object] = {}
+
+        def check(box: QMessageBox) -> None:
+            seen.update(_opening_focus(box))
+
+        _while_asking(qtbot, lambda: QTest.keyClick(win.windowHandle(), Qt.Key.Key_Delete), check)
+        assert seen == KEY_OPENED, scheme
+        held.clear()
+
+    def test_card_delete_click_opens_the_confirm_box_without_a_ring(
+        self, qtbot: QtBot, tmp_path, scheme: str
+    ) -> None:
+        """받는 중 카드의 ✕를 마우스로 눌러 연 확인 창의 Cancel은 키보드 초점이 아니고 가장자리가 accent가 아니어야 한다.
+
+        받는 중 카드, 창에 Tab 키를 먼저 보냄, ✕ 가운데로 합성 이동 · 클릭 -> Cancel 초점 · keyFocus False ·
+        가장자리 ≠ accent
+        """
+        win, item, held = _busy_window(tmp_path)
+        _activate(qtbot, win)
+        QTest.keyClick(
+            win.windowHandle(), Qt.Key.Key_Tab
+        )  # 마지막 입력이 키보드였어도 클릭이 덮는다
+        _pump()
+        button = win.listView.widgetFor(item).deleteButton
+        _park(win)
+        spot = _rect(win, button).center()
+        QTest.mouseMove(win.windowHandle(), spot)
+        qtbot.waitUntil(button.isVisible, timeout=ACTIVE_WAIT_MS)
+        seen: dict[str, object] = {}
+
+        def check(box: QMessageBox) -> None:
+            seen.update(_opening_focus(box))
+
+        _while_asking(
+            qtbot,
+            lambda: QTest.mouseClick(win.windowHandle(), Qt.MouseButton.LeftButton, pos=spot),
+            check,
+        )
+        assert seen == MOUSE_OPENED, scheme
+        held.clear()
+
+    @pytest.mark.parametrize("by_key", [True, False], ids=["space", "click"])
+    def test_select_bar_delete_follows_the_input(
+        self, qtbot: QtBot, tmp_path, scheme: str, by_key: bool
+    ) -> None:
+        """선택 줄 지우기 버튼을 Space로 누르면 확인 창 Cancel에 ring이 있고, 클릭으로 누르면 없어야 한다.
+
+        받는 중 카드 모두 고름(Ctrl+A), 지우기 버튼에 Tab 까닭 초점 -> 창에 Space -> KEY_OPENED,
+        지우기 버튼 가운데 합성 클릭 -> MOUSE_OPENED
+        """
+        win, _item, held = _busy_window(tmp_path)
+        _activate(qtbot, win)
+        win.listView.setFocus(Qt.FocusReason.OtherFocusReason)
+        QTest.keyClick(win.listView, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+        _pump()
+        button = win.selectBar.deleteButton
+        qtbot.waitUntil(button.isVisible, timeout=ACTIVE_WAIT_MS)
+        if by_key:
+            button.setFocus(Qt.FocusReason.TabFocusReason)
+            qtbot.waitUntil(button.hasFocus, timeout=ACTIVE_WAIT_MS)
+
+            def open_() -> None:
+                QTest.keyClick(win.windowHandle(), Qt.Key.Key_Space)
+
+        else:
+            spot = _rect(win, button).center()
+            _park(win)
+
+            def open_() -> None:
+                QTest.mouseClick(win.windowHandle(), Qt.MouseButton.LeftButton, pos=spot)
+
+        seen: dict[str, object] = {}
+
+        def check(box: QMessageBox) -> None:
+            seen.update(_opening_focus(box))
+
+        _while_asking(qtbot, open_, check)
+        assert seen == (KEY_OPENED if by_key else MOUSE_OPENED), scheme
+        held.clear()
