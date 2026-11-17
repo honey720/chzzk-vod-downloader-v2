@@ -192,8 +192,9 @@ DARK = {
     # ---- 바탕 ----
     "windowBg": "#1b1c1f",  # 창 배경
     "surface": "#24262b",  # 떠 있는 패널 — 드롭다운 메뉴 · 콤보 팝업 · 설정 창 그룹 상자
-    # 메뉴바 · 헤더바 · 하단바 면 — 카드 면(cardBg)에서 카드 선택 면 한 단계(ΔE00 약 3.0)만큼 어둡게. 헤더가 목록 첫
-    # 행처럼 읽히지 않게 바를 목록과 다른 면으로 둔다(#611 176i — 176h 바 면 (A)안)
+    # 메뉴바 · 헤더바 · 하단바 면 — 176q 카드 면(#2b2d33)에서 한 단계(ΔE00 약 3.0) 어둡게 정했다. 176r에서 카드 면을
+    # 내린 뒤 거리는 1.65다. 헤더가 목록 첫 행처럼 읽히지 않게 바를 목록과 다른 면으로 둔다(#611 176i — 176h 바 면
+    # (A)안)
     "barBg": "#222329",
     "surfaceAlt": "#2f3239",  # 기본 버튼 · 꺼진 ▶ · 고른 메뉴 바탕
     # 입력 칸(URL 칸 · 펼침 칸 · QComboBox) · 고른 칩 · 켠 선택 버튼 면 — 다크는 surfaceAlt와 같다(#611 176i · 176j)
@@ -238,9 +239,12 @@ DARK = {
     # 안 고른 체크 원의 바탕 — 그릴 때 불투명도(PICK_MARK_SCRIM_ALPHA)를 낮춰 쓴다. 밝은 썸네일 위에서도
     # 흰 테두리가 보인다(#561)
     "pickMarkScrim": "#000000",
-    "cardBg": "#2b2d33",
-    # 고른 카드 면 — 카드 면에서 밝게 한 단계(ΔE00 약 3.0, 설계 §12.1, #550). 강조색을 섞지 않는 중립 면이다
-    # (Windows 11 목록 방식, #611 176q). 호버 면(cardHoverBg)은 이 값에서 반 단계로 파생한다(`_card_hover`)
+    # 카드 평소 면 — 176q 값(#2b2d33)에서 OKLab 밝기만 ΔE00 약 1.5 내렸다. 평소 · 선택 구분이 약했다(오너 재실기
+    # 2026-11-17, #611 176r). 바 면(barBg)과 1.65 — 바 면보다 밝다
+    "cardBg": "#26282e",
+    # 고른 카드 면 — 강조색을 섞지 않는 중립 면이다(Windows 11 목록 방식, #611 176q). 그 위 글 4.5에 맞춘 값이라
+    # 176r에서 평소 면만 내리고 이 값은 그대로 뒀다(평소 면과 ΔE00 4.57). 호버 면(cardHoverBg)은 평소 면 ·
+    # 이 값 사이에서 파생한다(`_card_hover`)
     "cardSelectedBg": "#35363c",
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) ----
     # running/failed는 기존 값을 그대로 승계한다 — 실패 빨강(#FF6969)은
@@ -356,8 +360,14 @@ TINT_DE00 = {
     "light": 10.0,
 }  # 색조 ↔ 카드 면 ΔE00 목표 — 설계 §8의 6(오너 2026-11-02)
 TINT_TEXT_CONTRAST = 4.5  # 색조 위 글의 대비 하한 — 설계 §11.5
-# 카드 호버 면 ↔ 평소 면 ΔE00 — 선택 면(한 단계, 약 3.0)의 반 단계(Windows 11 목록 방식, #611 176q)
+# 카드 호버 면 ↔ 평소 면 ΔE00 — 선택 면(한 단계, 약 3.0)의 반 단계(Windows 11 목록 방식, #611 176q). 라이트만 쓴다
 CARD_HOVER_DE00 = 1.5
+# 호버 면을 평소 면 · 선택 면의 OKLab 가운데로 두는 스킴 — 다크는 평소 면을 내려 선택 면과 4.57이 됐으므로
+# 반 단계 대신 가운데로 둔다(#611 176r)
+CARD_HOVER_MIDPOINT = {"dark": True, "light": False}
+# 색조 채도를 셈하는 기준 면 — 176r에서 다크 평소 면만 내리고 색조 선택 면을 그대로 두려고, 채도는 176q 평소
+# 면에서 셈하고 밝기만 옮긴다. None이면 지금 평소 면(cardBg)에서 셈한다
+TINT_CHROMA_BASE = {"dark": "#2b2d33", "light": None}
 # 입력 칸 호버 테두리 ↔ 평소 테두리 ΔE00 — border → borderStrong 한 단계와 같은 크기(#611 176g · 176h)
 FIELD_HOVER_DE00 = 6.7
 
@@ -559,13 +569,19 @@ def _field_hover(edge: str, face: str) -> str:
     return moved
 
 
-def _card_hover(table: dict) -> None:
-    """카드 호버 면(`cardHoverBg`)을 표에 더한다 — 평소 면 → 선택 면 OKLab 직선 위 ΔE00 `CARD_HOVER_DE00` 지점.
+def _card_hover(table: dict, scheme: str) -> None:
+    """카드 호버 면(`cardHoverBg`)을 표에 더한다 — 평소 면 → 선택 면 OKLab 직선 위의 한 지점.
 
-    선택 면 쪽으로 가므로 라이트의 푸른 회색 기운도 선택 면과 같은 쪽이다. 선택 면보다 옅어 호버 ≠ 선택이고
-    그 위 글 대비는 평소 면 · 선택 면 사이에 든다(#611 176q).
+    라이트는 ΔE00 `CARD_HOVER_DE00` 지점, 다크는 가운데(`CARD_HOVER_MIDPOINT`, #611 176r)다. 선택 면 쪽으로
+    가므로 라이트의 푸른 회색 기운도 선택 면과 같은 쪽이다. 선택 면보다 옅어 호버 ≠ 선택이고 그 위 글 대비는
+    평소 면 · 선택 면 사이에 든다(#611 176q).
     """
     rest, goal = _oklab(table["cardBg"]), _oklab(table["cardSelectedBg"])
+    if CARD_HOVER_MIDPOINT[scheme]:
+        table["cardHoverBg"] = _from_oklab(
+            tuple((r + g) / 2 for r, g in zip(rest, goal, strict=True))
+        )
+        return
     moved = table["cardBg"]
     for step in range(1, 1001):
         share = step / 1000
@@ -582,14 +598,19 @@ def _card_tints(table: dict, scheme: str) -> None:
     본다. 호버 · 선택 면은 중립 카드의 평소 → 호버 · 선택 밝기 차를 색조에 옮긴다(#611 176q). 상태 글(완료
     초록 · 실패 빨강)은 색조 세 면 위에서 4.5가 되게 같은 색상의 밝기만 옮긴 색을 따로 둔다(`state…OnTint`) —
     라이트의 완료 초록은 흰 카드에서 이미 4.5라 색조가 조금만 생겨도 4.5 아래로 내려간다.
+
+    채도는 `TINT_CHROMA_BASE` 면에서 셈하고, 평소 · 호버 · 선택 면은 그 면 → 각 중립 면의 밝기 차만 옮긴다 —
+    다크는 평소 면을 내려도 색조 선택 면이 그대로다(#611 176r).
     """
     card, target = table["cardBg"], TINT_DE00[scheme]
+    base = TINT_CHROMA_BASE[scheme] or card
     texts = (table["text"], table["textMuted"])
     for name, state in (("Finished", "stateFinished"), ("Failed", "stateFailed")):
-        tint = _tinted(card, table[state], target, texts)
+        tint_at_base = _tinted(base, table[state], target, texts)
+        tint = _hover_of(tint_at_base, base, card) if base != card else tint_at_base
         table[f"cardTint{name}"] = tint
-        table[f"cardTint{name}Hover"] = _hover_of(tint, card, table["cardHoverBg"])
-        table[f"cardTint{name}Selected"] = _hover_of(tint, card, table["cardSelectedBg"])
+        table[f"cardTint{name}Hover"] = _hover_of(tint_at_base, base, table["cardHoverBg"])
+        table[f"cardTint{name}Selected"] = _hover_of(tint_at_base, base, table["cardSelectedBg"])
         grounds = (tint, table[f"cardTint{name}Hover"], table[f"cardTint{name}Selected"])
         table[f"{state}OnTint"] = _readable_on(table[state], grounds)
 
@@ -609,8 +630,8 @@ for _table in (DARK, LIGHT):
     _table.update(FONTS)
     _table["barRadius"] = f"{METRICS['barHeight'] // 2}px"
     _table["menuButtonPadRight"] = f"{MENU_BUTTON_PAD_RIGHT}px"
-_card_hover(DARK)
-_card_hover(LIGHT)
+_card_hover(DARK, "dark")
+_card_hover(LIGHT, "light")
 _card_tints(DARK, "dark")
 _card_tints(LIGHT, "light")
 DARK["fieldEdgeHover"] = _field_hover(DARK["fieldEdge"], DARK["fieldBg"])

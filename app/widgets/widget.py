@@ -445,7 +445,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return self._hovered
 
     def setHovered(self, hovered: bool) -> None:
-        """호버를 켜고 끈다 — 카드 바탕 반 단계(`cardHoverBg`, 고른 카드는 선택 면 그대로)와 카드 버튼 (#550).
+        """호버를 켜고 끈다 — 카드 바탕 호버 면(`cardHoverBg`, 고른 카드는 선택 면 그대로)와 카드 버튼 (#550).
 
         포인터의 들어감 · 나감과 목록의 다시 맞추기(`ContentListView._rehover` — 목록이 바뀐 뒤
         포인터 밑의 카드가 달라졌을 때)가 부른다. 같은 값이면 아무것도 하지 않는다.
