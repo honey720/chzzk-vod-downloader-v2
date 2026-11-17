@@ -82,7 +82,7 @@ SURFACES = {
         "border": "#d5d8de",
         "borderStrong": "#b9bec7",
         "text": "#1c1e22",
-        "textMuted": "#5b6069",
+        "textMuted": "#555a63",  # 호버한 색조 카드 위 4.5 — 오너 결정(2026-11-17, #611 176m)
         "cardBg": "#ffffff",
         "scrollHandle": "#c3c7cd",
         "scrollHandleHover": "#aeb3bb",
