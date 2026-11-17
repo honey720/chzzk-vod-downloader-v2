@@ -45,6 +45,7 @@ from app.viewmodels import card_display, card_text
 from app.viewmodels.card_text import short_time  # noqa: F401 — 바깥(footer_bar · 테스트)이 이 자리에서 import한다
 from app.viewmodels.data import ContentItem
 from app.widgets.contentItemWidget import HoverShade, Ui_ContentItemWidget
+from app.widgets.focus_ring import HANDOVER
 from app.widgets.narrow_steps import step_level
 from app.widgets.tip_bubble import install_tips
 from core.engine.session import get_thread_session
@@ -506,12 +507,16 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         키보드 초점인지는 초점 이벤트의 사유로 정한다. 창이 다시 활성이 되어 돌아온 초점
         (`ActiveWindowFocusReason`)은 창을 떠나기 전의 종류를 따른다 — 마우스로 받은 초점이
-        창을 오갔다고 키보드 초점(focus ring)이 되지 않는다(#561).
+        창을 오갔다고 키보드 초점(focus ring)이 되지 않는다(#561). 다른 위젯이 꺼지거나 숨어서 Qt가 넘겨준
+        초점은 넘겨준 쪽의 종류를 따른다 — 마우스로 누른 ■이 꺼져 넘어온 초점에는 고리가 없다(#611 176n).
         """
         super().focusInEvent(event)
         returning = event.reason() == Qt.FocusReason.ActiveWindowFocusReason
+        inherited = HANDOVER.arrived(self, event.reason())
         if returning and self._focusBeforeLeaving is not None:
             key = self._focusBeforeLeaving
+        elif inherited is not None:
+            key = inherited
         else:
             key = event.reason() not in _POINTER_REASONS
         self._focusBeforeLeaving = None
@@ -527,6 +532,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         super().focusOutEvent(event)
         self._spaceHeld = False  # 뗌은 이 카드로 오지 않는다
+        HANDOVER.left(self, self._keyFocus, event.reason())
         leaving = event.reason() == Qt.FocusReason.ActiveWindowFocusReason
         self._focusBeforeLeaving = self._keyFocus if leaving else None
         self._setKeyFocus(False)
