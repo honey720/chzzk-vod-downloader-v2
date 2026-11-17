@@ -9,8 +9,12 @@ from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import QAction, QCursor, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QComboBox, QStyle, QStyleOptionComboBox, QWidget
 
-from app.widgets.header_controls import ChoiceMenu
+from app.widgets.header_controls import MENU_SEP, ChoiceMenu
 from app.widgets.tip_bubble import close_floats_if_left
+
+# 메뉴 줄 글을 닫힌 칸 글과 따로 줄 때 쓰는 항목 역할 — 값은 `이름\x1f흐린 글`(`ChoiceMenu` 항목 글과 같은 꼴).
+# 없으면 메뉴 줄은 항목 글(DisplayRole) 하나다. UserRole은 항목 값(`addItem`의 data)이 쓴다
+MENU_TEXT_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 class _WindowLeaveWatch(QObject):
@@ -42,7 +46,8 @@ class ChoiceCombo(QComboBox):
     누르기 · Tab으로만 받는다(`StrongFocus`) — Qt 기본(`WheelFocus`)이면 휠이 초점을 주면서 값을 바꾼다.
 
     메뉴는 열 때마다 모델에서 다시 채운다. 열린 동안 항목 글이 바뀌면(해상도 크기 조회 도착) 메뉴 글도
-    따라 고친다.
+    따라 고친다. 메뉴 줄을 이름 · 오른쪽 흐린 글 두 칸으로 그리려면 항목에 `MENU_TEXT_ROLE`을 준다
+    (`setMenuText`) — 닫힌 칸 글은 항목 글 그대로다.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -68,7 +73,8 @@ class ChoiceCombo(QComboBox):
         current = self.currentIndex()
         active: QAction | None = None
         for row in range(self.count()):
-            action = menu.addChoice(self.itemText(row), row)
+            name, detail = self.menuText(row)
+            action = menu.addChoice(name, row, detail)
             action.setEnabled(self._rowEnabled(row))
             if row == current:
                 active = action
@@ -110,6 +116,18 @@ class ChoiceCombo(QComboBox):
             return
         super().mousePressEvent(event)
 
+    def setMenuText(self, row: int, name: str, detail: str) -> None:
+        """그 줄의 메뉴 글을 이름(왼쪽) · 흐린 글(오른쪽) 두 칸으로 준다 — 닫힌 칸 글은 바꾸지 않는다."""
+        self.setItemData(row, f"{name}{MENU_SEP}{detail}" if detail else name, MENU_TEXT_ROLE)
+
+    def menuText(self, row: int) -> tuple[str, str]:
+        """그 줄의 메뉴 글 (이름, 흐린 글) — `MENU_TEXT_ROLE`이 없으면 (항목 글, 빈 글)."""
+        text = self.itemData(row, MENU_TEXT_ROLE)
+        if not isinstance(text, str):
+            return self.itemText(row), ""
+        name, _sep, detail = text.partition(MENU_SEP)
+        return name, detail
+
     def _rowEnabled(self, row: int) -> bool:
         flags = self.model().flags(
             self.model().index(row, self.modelColumn(), self.rootModelIndex())
@@ -135,7 +153,8 @@ class ChoiceCombo(QComboBox):
         for action in self.menuWidget.choices():
             row = action.data()
             if isinstance(row, int) and 0 <= row < self.count():
-                action.setText(self.itemText(row))
+                name, detail = self.menuText(row)
+                action.setText(f"{name}{MENU_SEP}{detail}" if detail else name)
 
     # ---- 모양 · 입력 ----
 

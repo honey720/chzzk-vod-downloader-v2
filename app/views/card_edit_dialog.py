@@ -19,10 +19,9 @@ import copy
 import logging
 from collections.abc import Callable
 
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtWidgets import (
     QAbstractButton,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -41,6 +40,7 @@ from app.viewmodels import card_text
 from app.viewmodels.data import SECTION_CHECK_UNVERIFIED, ContentItem
 from app.viewmodels.section_edit import SectionEditViewModel, keep_section_head
 from app.views.section_dialog import SectionEditDialog
+from app.widgets.choice_combo import ChoiceCombo
 from app.widgets.eliding_label import ElidingLabel, PathLabel
 from app.widgets.tip_bubble import install_tips
 from app.widgets.widget import path_display_parts
@@ -63,19 +63,6 @@ SECTION_FIELDS = (
     "section_bytes",
 )
 DIALOG_WIDTH = 520  # 창 폭(px) — 프로토 카드 편집 창 값에서 시작(설계 §12.3 — 크기는 정하는 중)
-
-
-class _WheelGuard(QObject):
-    """초점이 없는 드롭다운이 휠로 값을 바꾸지 않게 휠을 막는다(설계 §4).
-
-    그 드롭다운 하나에만 건다 — 앱 전체에 거는 필터가 아니다.
-    """
-
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if event.type() == QEvent.Type.Wheel and not watched.hasFocus():
-            event.ignore()
-            return True
-        return False
 
 
 class CardEditDialog(QDialog):
@@ -154,13 +141,12 @@ class CardEditDialog(QDialog):
         self.nameRowLabel = QLabel(self)
         form.addRow(self.nameRowLabel, name_row)
 
-        self.resolutionCombo = QComboBox(self)
+        # 초점이 있을 때만 휠로 값이 바뀐다 — ChoiceCombo의 휠 규칙(설계 §4)
+        self.resolutionCombo = ChoiceCombo(self)
         self.resolutionCombo.setObjectName("cardEditResolution")
-        self.resolutionCombo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._wheelGuard = _WheelGuard(self)
-        self.resolutionCombo.installEventFilter(self._wheelGuard)
         for index, rep in enumerate(item.unique_reps):
             self.resolutionCombo.addItem(self._repText(rep), index)
+            self._setRepMenuText(index, rep)
         self.resolutionCombo.setCurrentIndex(max(self._pickedIndex(), 0))
         self.resolutionCombo.currentIndexChanged.connect(self._onResolutionChanged)
         self.resolutionRowLabel = QLabel(self)
@@ -271,14 +257,23 @@ class CardEditDialog(QDialog):
     # ---- 해상도 ----
 
     @staticmethod
-    def _repText(rep) -> str:
-        """해상도 목록의 한 줄 — 「1080p(원본) 60fps · 595.34 MB」. 크기를 모르면 조회 중 글 그대로."""
-        text = card_text.rep_label(rep)
+    def _repParts(rep) -> tuple[str, str]:
+        """해상도 한 줄의 (이름, 크기) — (「1080p(원본) 60fps」, 「595.34 MB」). 크기를 모르면 조회 중 글."""
+        name = card_text.rep_label(rep)
         secondary = card_text.rep_secondary(rep)
         if secondary:
-            text = f"{text} {secondary}"
-        size = rep[-1] if len(rep) > 2 else ""
-        return f"{text} · {size}" if size else text
+            name = f"{name} {secondary}"
+        return name, rep[-1] if len(rep) > 2 else ""
+
+    @classmethod
+    def _repText(cls, rep) -> str:
+        """닫힌 칸에 보이는 해상도 글 — 「1080p(원본) 60fps · 595.34 MB」."""
+        name, size = cls._repParts(rep)
+        return f"{name} · {size}" if size else name
+
+    def _setRepMenuText(self, index: int, rep) -> None:
+        """펼친 메뉴의 해상도 줄 — 이름 왼쪽 · 크기 오른쪽 흐린 글(헤더 저장 위치 메뉴와 같은 두 칸, #620)."""
+        self.resolutionCombo.setMenuText(index, *self._repParts(rep))
 
     def _pickedIndex(self) -> int:
         """카드가 지금 고른 해상도의 목록 번호. 없으면 -1.
@@ -308,7 +303,9 @@ class CardEditDialog(QDialog):
         함께 끊기므로 늦게 온 조회가 지운 창을 건드리지 않는다.
         """
         if 0 <= index < self.resolutionCombo.count() and index < len(self._item.unique_reps):
-            self.resolutionCombo.setItemText(index, self._repText(self._item.unique_reps[index]))
+            rep = self._item.unique_reps[index]
+            self.resolutionCombo.setItemText(index, self._repText(rep))
+            self._setRepMenuText(index, rep)
 
     def setWaitingHint(self, waiting: bool) -> None:
         """받는 중인 배치가 이 카드를 기다리는지에 맞춰 아래쪽 안내를 켜고 끈다(구간 창과 같다)."""

@@ -18,6 +18,8 @@ import app.views.card_edit_dialog as dialog_mod
 from app.viewmodels.data import SECTION_CHECK_UNVERIFIED, ContentItem
 from app.views.card_edit_dialog import CardEditDialog
 from app.views.mainWindow import VodDownloader
+from app.widgets.choice_combo import ChoiceCombo
+from app.widgets.header_controls import ChoiceMenu
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from app.widgets import tip_bubble
@@ -67,6 +69,15 @@ def _open(win: VodDownloader, item: ContentItem) -> CardEditDialog:
     dialog = win._editDialog
     assert dialog is not None and dialog.isVisible(), "✎를 눌렀는데 편집 창이 열리지 않았다"
     return dialog
+
+
+def _open_resolution_menu(qtbot, dialog: CardEditDialog) -> ChoiceMenu:
+    """해상도 칸의 메뉴를 펼친다(키 · 누르기가 부르는 `showPopup`)."""
+    combo = dialog.resolutionCombo
+    assert isinstance(combo, ChoiceCombo), "전제: 해상도 칸이 ChoiceCombo다"
+    combo.showPopup()
+    qtbot.waitUntil(combo.menuWidget.isVisible)
+    return combo.menuWidget
 
 
 def _pick(dialog: CardEditDialog, resolution: int) -> None:
@@ -320,6 +331,38 @@ class TestResolution:
         win.listView.widgetFor(item)._repSizeFetched.emit(1, "300.00 MB")
         _pump()
         assert dialog.resolutionCombo.itemText(1) == "480p · 300.00 MB"
+
+    def test_menu_rows_put_the_size_in_the_muted_column(self, qtbot, tmp_path) -> None:
+        """해상도 메뉴 줄은 이름이 왼쪽 칸, 크기가 오른쪽 흐린 칸이어야 하고 닫힌 칸 글은 그대로여야 한다.
+
+        1080p 60fps · 480p 30fps, 1080p 크기 "1.00 GB" 도착 뒤 펼침
+        -> 메뉴 [("1080p 60fps", "1.00 GB"), ("480p", "Checking...")], 닫힌 칸 "1080p 60fps · 1.00 GB"
+        """
+        item = _make_item(str(tmp_path))
+        win = _window(tmp_path, item)
+        win.listView.widgetFor(item)._repSizeFetched.emit(0, "1.00 GB")
+        _pump()
+        dialog = _open(win, item)
+        menu = _open_resolution_menu(qtbot, dialog)
+        rows = [(ChoiceMenu.nameOf(a), ChoiceMenu.detailOf(a)) for a in menu.choices()]
+        assert rows == [("1080p 60fps", "1.00 GB"), ("480p", "Checking...")]
+        assert dialog.resolutionCombo.currentText() == "1080p 60fps · 1.00 GB"
+
+    def test_size_arriving_while_the_menu_is_open_updates_its_row(self, qtbot, tmp_path) -> None:
+        """해상도 메뉴가 열린 사이 크기 조회가 도착하면 그 줄의 흐린 칸이 고쳐져야 한다.
+
+        메뉴 펼침 뒤 480p 크기 "300.00 MB" 도착 -> 메뉴 둘째 줄 ("480p", "300.00 MB"), 메뉴 열린 채
+        """
+        item = _make_item(str(tmp_path))
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        menu = _open_resolution_menu(qtbot, dialog)
+        second = menu.choices()[1]
+        assert ChoiceMenu.detailOf(second) == "Checking...", "전제: 조회 중"
+        win.listView.widgetFor(item)._repSizeFetched.emit(1, "300.00 MB")
+        _pump()
+        assert menu.isVisible()
+        assert (ChoiceMenu.nameOf(second), ChoiceMenu.detailOf(second)) == ("480p", "300.00 MB")
 
     def test_size_arriving_after_the_dialog_closed_is_safe(self, qtbot, tmp_path) -> None:
         """창이 닫혀 지워진 뒤 크기 조회가 도착해도 앱이 멈추지 않고 카드에만 들어가야 한다.
