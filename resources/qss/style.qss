@@ -344,6 +344,48 @@ QPushButton[role="subtle"]:disabled {
     color: @textDisabled;
 }
 
+/* ---------- 대화상자 버튼 (#622 — Windows 11 표준 대화상자 버튼) ----------
+ * 설정 · 편집 · 구간 · 확인 창 안의 버튼. 보조 버튼은 입력 칸 면(fieldBg) + 옅은 1px 테두리(border), 호버 · 눌림은
+ * 테두리를 그대로 두고 면만 한 단계씩(dialogButtonHover · dialogButtonPressed). 주 동작(role="primary")은 위
+ * 강조색 채움 규칙 그대로다 — 속성 선택자가 더 구체적이라 아래 규칙이 덮지 않는다. 본 창 바 버튼 · 카드 버튼은
+ * 대화상자 밖이라 이 절과 무관하다.
+ * 키보드로 받은 초점에만 강조색 테두리를 그린다 — `keyFocus`는 app/widgets/focus_ring.py::KeyFocusMarker가 창마다
+ * 버튼에 심는다("true"일 때만 그린다). 강조색 채움 버튼은 채움과 3.0 이상인 focusOnAccent(본 창 ▶와 같다) */
+QDialog QPushButton {
+    background-color: @fieldBg;
+    border-color: @border;
+}
+
+QDialog QPushButton:hover {
+    background-color: @dialogButtonHover;
+    border-color: @border;
+}
+
+QDialog QPushButton:pressed {
+    background-color: @dialogButtonPressed;
+    border-color: @border;
+}
+
+/* 꺼짐은 기본 버튼 규칙과 같게 — 위 호버 규칙보다 뒤에 두어 꺼진 버튼이 호버 면을 받지 않는다 */
+QDialog QPushButton:disabled {
+    background-color: @surface;
+    border-color: @border;
+}
+
+QDialog QPushButton[keyFocus="true"]:focus {
+    border-color: @accent;
+}
+
+QDialog QPushButton[role="primary"][keyFocus="true"]:focus {
+    border-color: @focusOnAccent;
+}
+
+/* 테두리 없는 부차 버튼(편집 창 「기본값」)은 초점 동안만 1px 테두리를 두고 그만큼 안쪽 여백을 줄인다 — 크기 그대로 */
+QDialog QPushButton[role="subtle"][keyFocus="true"]:focus {
+    border: 1px solid @accent;
+    padding: 3px 7px;
+}
+
 /* ---------- 셸 바 컨트롤 모양 · 상태 (#536 — 설계 §11.3 · §11.5 · §11.7) ----------
  * 메뉴바 · 헤더바 · 하단바 안의 컨트롤만 — 설정 창 · 편집 창은 설정 메뉴 단계에서 맞춘다.
  * 높이(@barControl)는 코드가 건다(mainWindow._applyBarControls). 모서리는 컨트롤 반경, 칩도 같다.

@@ -675,6 +675,12 @@ DARK["fieldEdgeHover"] = _field_hover(DARK["fieldEdge"], DARK["fieldBg"])
 LIGHT["fieldEdgeHover"] = _field_hover(LIGHT["fieldEdge"], LIGHT["fieldBg"])
 _bar_faces(DARK)
 _bar_faces(LIGHT)
+# 대화상자 버튼(Windows 11 표준, #622) 호버 · 눌림 면 — 평소 면(fieldBg)에서 한 단계 · 두 단계. 다크는 평소 면이
+# surfaceAlt와 같아 기본 버튼 단계(surfaceHover · surfacePressed)를 쓰고, 라이트는 흰 면에서 회색 단계를 하나씩 내려간다
+DARK["dialogButtonHover"] = DARK["surfaceHover"]
+DARK["dialogButtonPressed"] = DARK["surfacePressed"]
+LIGHT["dialogButtonHover"] = LIGHT["surfaceAlt"]
+LIGHT["dialogButtonPressed"] = LIGHT["surfaceHover"]
 
 #: 카드 상태 이름 — 파이썬(`setProperty`)과 QSS(`[state="..."]`)가 공유하는 어휘.
 #: 상태 아이콘·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서

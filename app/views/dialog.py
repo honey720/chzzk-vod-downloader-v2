@@ -1,5 +1,7 @@
+import app.theme as theme
 from app.system import settings
 from app.widgets.choice_combo import ChoiceCombo
+from app.widgets.focus_ring import watch_dialog_buttons
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -115,6 +117,7 @@ class SettingDialog(QDialog):
 
         self.setupUi(self)
         self.setupDynamicUi()
+        self._keyFocus = watch_dialog_buttons(self)  # 키보드 초점에만 버튼 테두리(#622)
 
     def setupUi(self, dialog: QDialog) -> None:
         """위젯·레이아웃 조립 — 구 uic 생성물의 setupUi와 같은 구조·순서·objectName."""
@@ -197,6 +200,11 @@ class SettingDialog(QDialog):
         self.dialogButtonBox.setStandardButtons(
             QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
         )
+        # OK가 주 동작(강조색 채움 — 편집 창 저장 · 구간 창 확인과 같다, #622). 버튼 상자가 만들며 이미 스타일을
+        # 입혔다 — 속성을 바꾼 뒤 다시 입힌다
+        ok = self.dialogButtonBox.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setProperty("role", "primary")
+        theme.repolish(ok)
         self.settingLayout.addWidget(self.dialogButtonBox)
 
         self.retranslateUi(dialog)

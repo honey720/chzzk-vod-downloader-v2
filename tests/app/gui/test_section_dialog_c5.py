@@ -906,8 +906,8 @@ def _pixel(widget: QWidget, x: int, y: int) -> QColor:
 def test_the_delete_button_is_a_box_with_the_app_surface_tokens(qtbot, tmp_path, basis) -> None:  # noqa: F811
     """구간 행 ✕는 면 · 테두리가 있는 상자이고 호버하면 면이 호버 색이어야 한다.
 
-    행 A · B, 다크 -> ✕ 왼쪽 안쪽 3px · 세로 가운데 화소 == surfaceAlt, 왼쪽 끝 0px 화소 == border.
-    창(QWindow)에 합성 포인터 이동으로 ✕ 가운데에 올림 -> 같은 화소 == surfaceHover, 왼쪽 끝 == borderStrong.
+    행 A · B, 다크 -> ✕ 왼쪽 안쪽 3px · 세로 가운데 화소 == fieldBg, 왼쪽 끝 0px 화소 == border.
+    창(QWindow)에 합성 포인터 이동으로 ✕ 가운데에 올림 -> 같은 화소 == dialogButtonHover, 왼쪽 끝 == border(#622).
     role 속성 없음(흐린 글자 버튼 아님), 글 크기 == fontSizeMeta
     """
     dialog = _editor(qtbot, tmp_path, basis, [A, B])
@@ -917,7 +917,7 @@ def test_the_delete_button_is_a_box_with_the_app_surface_tokens(qtbot, tmp_path,
 
     assert button.property("role") is None
     assert f"{button.font().pixelSize()}px" == theme.FONTS["fontSizeMeta"]
-    assert _pixel(button, 3, middle) == QColor(tokens["surfaceAlt"])
+    assert _pixel(button, 3, middle) == QColor(tokens["fieldBg"])
     assert _pixel(button, 0, middle) == QColor(tokens["border"])
     # 합성 이벤트다 — 실제 포인터는 옮기지 않는다(QWindow에 보낸다, safety.md)
     # 창 안의 다른 자리를 거쳐 옮긴다 — ✕ 가운데로 한 번만 옮기면 ✕가 포인터 아래로 잡히지 않았다(실측)
@@ -925,8 +925,8 @@ def test_the_delete_button_is_a_box_with_the_app_surface_tokens(qtbot, tmp_path,
         QTest.mouseMove(dialog.windowHandle(), spot)
         _pump()
     qtbot.waitUntil(button.underMouse, timeout=3000)
-    assert _pixel(button, 3, middle) == QColor(tokens["surfaceHover"])
-    assert _pixel(button, 0, middle) == QColor(tokens["borderStrong"])
+    assert _pixel(button, 3, middle) == QColor(tokens["dialogButtonHover"])
+    assert _pixel(button, 0, middle) == QColor(tokens["border"])
 
 
 def test_the_card_delete_button_keeps_its_icon_look(qtbot, tmp_path, basis) -> None:  # noqa: F811

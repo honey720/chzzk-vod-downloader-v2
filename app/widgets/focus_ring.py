@@ -11,7 +11,7 @@
 
 from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QPushButton, QWidget
 
 import app.theme as theme
 
@@ -187,6 +187,23 @@ class KeyFocusMarker(QObject):
     위젯마다 건다(`watch`) — 앱 전체 필터가 아니다.
     """
 
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        # 지켜보는 창이 열리는 중 — 이 동안 받은 초점은 키보드 초점이 아니다(#622)
+        self._opening = False
+
+    def watch_opening(self, window: QWidget) -> None:
+        """창이 열릴 때 받는 첫 초점을 키보드 초점으로 치지 않는다 (#622).
+
+        `QDialog`는 보일 때 초점 위젯에 Tab 까닭의 초점 들어옴을 스스로 보낸다(키를 누르지 않아도). 그래서 창의
+        보임(Show)부터 그 이벤트 루프 턴이 끝날 때까지 받은 초점은 마우스 초점처럼 다룬다 — 마우스로 연 확인 창의
+        기본 버튼에 focus ring이 생기지 않는다.
+        """
+        window.installEventFilter(self)
+
+    def _endOpening(self) -> None:
+        self._opening = False
+
     def watch(self, widget: QWidget) -> None:
         """그 위젯의 초점 들어옴 · 나감을 지켜본다 — 처음에는 키보드 초점이 아닌 것으로 둔다.
 
@@ -199,6 +216,11 @@ class KeyFocusMarker(QObject):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         kind = event.type()
+        if kind == QEvent.Type.Show and watched.isWidgetType() and watched.isWindow():
+            if not self._opening:
+                self._opening = True
+                QTimer.singleShot(0, self._endOpening)
+            return False
         if kind not in (QEvent.Type.FocusIn, QEvent.Type.FocusOut) or not watched.isWidgetType():
             return False
         reason = event.reason()
@@ -206,6 +228,8 @@ class KeyFocusMarker(QObject):
             HANDOVER.left(watched, watched.property("keyFocus") is True, reason)
             if reason in _KEEP_REASONS:
                 return False
+            keyboard = False
+        elif self._opening:
             keyboard = False
         else:
             inherited = HANDOVER.arrived(watched, reason)
@@ -219,3 +243,17 @@ class KeyFocusMarker(QObject):
             watched.setProperty("keyFocus", keyboard)
             theme.repolish(watched)
         return False
+
+
+def watch_dialog_buttons(dialog: QWidget) -> KeyFocusMarker:
+    """대화상자 안 버튼 모두에 키보드 초점 표시를 건다 — 그 창의 `KeyFocusMarker`를 돌려준다 (#622).
+
+    지금 있는 버튼(`QPushButton`과 그 하위)만 건다. 나중에 만드는 버튼(구간 창의 행 ✕)은 만드는 쪽이 돌려받은
+    marker로 `watch`한다. 걸지 않은 버튼은 `keyFocus`가 없어 focus ring이 없다(마우스 누름에 테두리가 생기는
+    쪽으로 새지 않는다). marker는 대화상자의 자식이라 창과 함께 사라진다.
+    """
+    marker = KeyFocusMarker(dialog)
+    marker.watch_opening(dialog)
+    for button in dialog.findChildren(QPushButton):
+        marker.watch(button)
+    return marker
