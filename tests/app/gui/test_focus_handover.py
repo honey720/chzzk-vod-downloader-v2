@@ -25,6 +25,8 @@ from tests.app.gui.card_helpers import drop_new_top_levels, enter, hold_style, s
 
 ANSWER_TRIES = 150  # 확인 대화상자가 뜨기를 기다리는 횟수 — 20ms 간격, 3초
 ANSWER_STEP_MS = 20  # 확인 대화상자를 찾는 간격(ms)
+# 답을 못 낸 확인 대화상자를 닫는 시한(ms) — exec() 안에 갇혀 테스트가 끝나지 않는 것을 막는다
+ANSWER_WATCHDOG_MS = 10000
 
 
 class _Engine:
@@ -98,8 +100,13 @@ def _click(win: QWidget, widget: QWidget) -> None:
 
 
 def _answer_yes(how: str) -> None:
-    """곧 뜰 확인 대화상자에서 Yes · 「멈추고 지우기」를 고른다 — 마우스 누름 또는 그 단추에 초점을 두고 Enter."""
+    """곧 뜰 확인 대화상자에서 Yes · 「멈추고 지우기」를 고른다 — 마우스 누름 또는 그 단추에 초점을 두고 Enter.
+
+    답을 내지 못하면(대화상자를 못 찾음 · 단추를 못 찾음 · 늦게 뜸) 시한 뒤 열린 확인 대화상자를 닫는다 —
+    테스트는 exec() 밖으로 나와 뒤의 전제 단언(다운로드가 멈췄다 · 카드가 지워졌다)에서 실패한다.
+    """
     tries = [0]
+    answered = [False]
 
     def tick() -> None:
         box = QApplication.activeModalWidget()
@@ -109,8 +116,11 @@ def _answer_yes(how: str) -> None:
                 QTimer.singleShot(ANSWER_STEP_MS, tick)
             return
         yes_roles = (QMessageBox.ButtonRole.YesRole, QMessageBox.ButtonRole.DestructiveRole)
-        target = next(b for b in box.buttons() if box.buttonRole(b) in yes_roles)
-        assert isinstance(target, QPushButton)
+        target = next((b for b in box.buttons() if box.buttonRole(b) in yes_roles), None)
+        if not isinstance(target, QPushButton):
+            box.reject()
+            return
+        answered[0] = True
         if how == "mouse":
             spot = target.mapTo(box, target.rect().center())
             QTest.mouseClick(
@@ -120,7 +130,13 @@ def _answer_yes(how: str) -> None:
             target.setFocus(Qt.FocusReason.TabFocusReason)
             QTest.keyClick(box.windowHandle(), Qt.Key.Key_Return)
 
+    def watchdog() -> None:
+        box = QApplication.activeModalWidget()
+        if not answered[0] and isinstance(box, QMessageBox) and box.isVisible():
+            box.reject()
+
     QTimer.singleShot(ANSWER_STEP_MS, tick)
+    QTimer.singleShot(ANSWER_WATCHDOG_MS, watchdog)
 
 
 @pytest.fixture
