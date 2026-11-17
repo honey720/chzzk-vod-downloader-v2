@@ -1810,14 +1810,14 @@ class TestBarHoverFaces:
 
 
 class TestLightLayers:
-    """라이트 층 순서 — 바디 = 바 면, 그 위 흰 카드, 고른 카드는 바 면보다 한 단계 어둡게(#611 176m · 176q)."""
+    """라이트 층 순서 — 바디는 바 면보다 반 단계 밝게, 그 위 흰 카드, 고른 카드는 바 면보다 한 단계 어둡게(#611 176v)."""
 
     @pytest.mark.parametrize("scheme", ["light"], indirect=True)
-    def test_body_is_the_bar_face_and_the_card_is_white(self, window, scheme: str) -> None:
-        """라이트 목록의 빈 자리는 바 면, 카드 면은 흰색이어야 한다.
+    def test_body_is_lighter_than_the_bar_and_the_card_is_white(self, window, scheme: str) -> None:
+        """라이트 목록의 빈 자리는 windowBg로 바 면보다 밝고, 카드 면은 흰색이어야 한다.
 
-        대기 카드 하나, 창 폭 900 · 높이 600 -> 목록 아래 빈 자리 가운데 ≈ 헤더바 빈 자리 화소 · barBg,
-        카드 왼쪽 안쪽 2px · 세로 가운데 ≈ 흰색
+        대기 카드 하나, 창 폭 900 · 높이 600 -> 목록 아래 빈 자리 가운데 ≈ windowBg · 헤더바 빈 자리 화소
+        ≈ barBg, 바디 밝기 > 바 밝기, 카드 왼쪽 안쪽 2px · 세로 가운데 = 흰색 (176v)
         """
         win = window(DownloadState.WAITING)
         image = win.grab().toImage()
@@ -1828,7 +1828,10 @@ class TestLightLayers:
         body = _pixel(image, listing.center().x(), listing.bottom() - 10)
         bar_face = _pixel(image, bar.left() + 2, bar.center().y())
         assert _is(bar_face, "barBg"), f"전제: 바 면 {bar_face.name()}"
-        assert body == bar_face, f"바디 {body.name()} · 바 {bar_face.name()}"
+        assert _is(body, "windowBg"), f"바디 {body.name()}"
+        assert body.lightnessF() > bar_face.lightnessF(), (
+            f"바디 {body.name()} · 바 {bar_face.name()}"
+        )
         face = _pixel(image, card.left() + 2, card.center().y())
         assert face == QColor(Qt.GlobalColor.white), face.name()
 
@@ -1855,9 +1858,8 @@ class TestLightLayers:
         assert face.lightnessF() < bar_face.lightnessF()
 
 
-LIGHT_BODY = (
-    "#f2f3f6"  # 라이트 바디 · 바 면 — border 색상각 · 절반 채도, #f3f3f3 밝기 안(#611 176p 지시 값)
-)
+LIGHT_BAR = "#f2f3f6"  # 라이트 바 면 — border 색상각 · 절반 채도, #f3f3f3 밝기(#611 176p)
+LIGHT_BODY = "#f9fafd"  # 라이트 바디 — 바 면에서 OKLab 밝기만 반 단계 밝게(#611 176v 지시 값)
 LIGHT_PICKED = "#e4e4e7"  # 라이트 고른 카드 면 — 176p 호버 면 값 그대로(#611 176q)
 TINT_SLACK = 1  # 색조 화소를 지시 값과 같다고 보는 한 채널 차 — 16진 반올림
 BLUE_OVER_RED = 3  # 푸른 회색이라고 보는 파랑 − 빨강 채널 차 하한 — 무채색이면 0
@@ -1880,10 +1882,10 @@ class TestLightTint:
 
     @pytest.mark.parametrize("scheme", ["light"], indirect=True)
     def test_body_and_bar_are_the_blue_grey(self, window, scheme: str) -> None:
-        """라이트 목록 빈 자리 · 헤더바 빈 자리 화소가 #f2f3f6이고 파랑이 빨강보다 3 이상 커야 한다.
+        """라이트 목록 빈 자리는 #f9fafd · 헤더바 빈 자리는 #f2f3f6이고 둘 다 파랑이 빨강보다 3 이상 커야 한다.
 
-        대기 카드 하나, 창 폭 900 · 높이 600 -> 목록 아래 빈 자리 가운데 · 헤더바 왼쪽 안쪽 2px ≈ #f2f3f6
-        (채널마다 1 이내), 두 화소 모두 blue − red >= 3
+        대기 카드 하나, 창 폭 900 · 높이 600 -> 목록 아래 빈 자리 가운데 ≈ #f9fafd · 헤더바 왼쪽 안쪽 2px ≈
+        #f2f3f6(채널마다 1 이내), 두 화소 모두 blue − red >= 3, 바디가 바보다 밝다 (176v)
         """
         win = window(DownloadState.WAITING)
         image = win.grab().toImage()
@@ -1891,9 +1893,10 @@ class TestLightTint:
         bar = _rect(win, win.headerFrame)
         body = _pixel(image, listing.center().x(), listing.bottom() - 10)
         bar_face = _pixel(image, bar.left() + 2, bar.center().y())
-        for name, colour in (("바디", body), ("바", bar_face)):
-            assert _near(colour, LIGHT_BODY), f"{name} {colour.name()}"
+        for name, colour, want in (("바디", body, LIGHT_BODY), ("바", bar_face, LIGHT_BAR)):
+            assert _near(colour, want), f"{name} {colour.name()}"
             assert colour.blue() - colour.red() >= BLUE_OVER_RED, f"{name} {colour.name()}"
+        assert body.lightnessF() > bar_face.lightnessF(), f"{body.name()} {bar_face.name()}"
 
     @pytest.mark.parametrize("scheme", ["light"], indirect=True)
     def test_picked_card_is_the_blue_grey(self, window, scheme: str) -> None:

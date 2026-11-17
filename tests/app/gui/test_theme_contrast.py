@@ -122,7 +122,7 @@ SURFACES = {
         "scrollHandleHover": "#5e646f",
     },
     "light": {
-        "windowBg": "#f2f3f6",  # 바 면과 같은 창 배경, 푸른 회색 · #f3f3f3 밝기 — 오너 결정(2026-11-17, #611 176p)
+        "windowBg": "#f9fafd",  # 바 면에서 반 단계 밝은 창 배경, 푸른 회색 — 오너 결정(2026-11-17, #611 176v)
         "surface": "#ffffff",
         "surfaceAlt": "#eceef1",
         "barBg": "#f2f3f6",  # 바 면 (A)안, 푸른 회색 — 오너 결정(2026-11-16 · 11-17, #611 176i · 176p)
@@ -402,10 +402,10 @@ def test_info_meets_the_bubble_conditions(scheme: str) -> None:
 
 # 라이트 바탕 넷 — border(#d5d8de)의 색상각 · 절반 채도를 준 푸른 회색, #f3f3f3 밝기 안(오너 결정 2026-11-17, #611 176p)
 LIGHT_TINTED = {
-    "windowBg": "#f2f3f6",
+    "windowBg": "#f9fafd",  # 바 면에서 OKLab 밝기만 반 단계 밝혔다(#611 176v)
     "barBg": "#f2f3f6",
     "cardSelectedBg": "#e4e4e7",  # 176p까지의 호버 면 값이 고른 카드 면이 됐다(#611 176q)
-    "rowHoverBg": "#e4e4e7",
+    "rowHoverBg": "#eaeaed",  # 창 바탕을 밝힌 만큼 같이 밝혔다 — 창 바탕에서 한 단계(#611 176v)
 }
 # 바 버튼 면 셋 — 고른 면은 176k ~ 176u의 호버 면 값, 호버 · 눌림은 그 값에서 파생한 값(오너 결정 2026-11-17, #611 176v)
 BAR_FACES = {
@@ -418,7 +418,7 @@ BAR_FACES = {
 def test_light_ground_is_the_blue_grey(token: str) -> None:
     """라이트 바탕 넷은 지시 값이고 파랑 채널이 빨강보다 커야 한다(무채색이 아님).
 
-    windowBg · barBg = #f2f3f6, cardSelectedBg · rowHoverBg = #e4e4e7, blue − red > 0
+    windowBg #f9fafd · barBg #f2f3f6 · cardSelectedBg #e4e4e7 · rowHoverBg #eaeaed, blue − red > 0
     """
     value = theme.LIGHT[token].lower()
     assert value == LIGHT_TINTED[token]
