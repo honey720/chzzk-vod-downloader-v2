@@ -1778,3 +1778,46 @@ class TestBarHoverFaces:
         face = _pixel(win.grab().toImage(), rect.left() + 3, rect.center().y())
         assert _is(face, "surfaceHover"), f"{scheme}: {face.name()}"
         assert not _is(face, "barHover"), f"{scheme}: {face.name()}"
+
+
+class TestLightLayers:
+    """라이트 층 순서 — 바디 = 바 면, 그 위 흰 카드, 호버 · 고른 카드는 바 면보다 한 단계 어둡게(#611 176m)."""
+
+    @pytest.mark.parametrize("scheme", ["light"], indirect=True)
+    def test_body_is_the_bar_face_and_the_card_is_white(self, window, scheme: str) -> None:
+        """라이트 목록의 빈 자리는 바 면, 카드 면은 흰색이어야 한다.
+
+        대기 카드 하나, 창 폭 900 · 높이 600 -> 목록 아래 빈 자리 가운데 ≈ 헤더바 빈 자리 화소 · barBg,
+        카드 왼쪽 안쪽 2px · 세로 가운데 ≈ 흰색
+        """
+        win = window(DownloadState.WAITING)
+        image = win.grab().toImage()
+        listing = _rect(win, win.listView)
+        card = _rect(win, _card(win, 0))
+        bar = _rect(win, win.headerFrame)
+        assert card.bottom() < listing.bottom() - 20, "전제: 카드 아래 빈 자리가 있다"
+        body = _pixel(image, listing.center().x(), listing.bottom() - 10)
+        bar_face = _pixel(image, bar.left() + 2, bar.center().y())
+        assert _is(bar_face, "barBg"), f"전제: 바 면 {bar_face.name()}"
+        assert body == bar_face, f"바디 {body.name()} · 바 {bar_face.name()}"
+        face = _pixel(image, card.left() + 2, card.center().y())
+        assert face == QColor(Qt.GlobalColor.white), face.name()
+
+    @pytest.mark.parametrize("scheme", ["light"], indirect=True)
+    def test_hovered_card_is_one_step_darker_than_the_bar(self, window, scheme: str) -> None:
+        """라이트 호버 카드 면은 cardHoverBg이고 바 면과 ΔE00 3 이상 떨어져야 한다.
+
+        대기 카드 하나, 합성 포인터 이동(카드 가운데) -> 카드 왼쪽 안쪽 2px · 세로 가운데 ≈ cardHoverBg,
+        ΔE00(그 화소, 헤더바 빈 자리 화소) >= 3, 그 화소가 바 화소보다 어둡다
+        """
+        win = window(DownloadState.WAITING)
+        card = _card(win, 0)
+        rect = _hover(win, card)
+        image = win.grab().toImage()
+        bar = _rect(win, win.headerFrame)
+        bar_face = _pixel(image, bar.left() + 2, bar.center().y())
+        face = _pixel(image, rect.left() + 2, rect.center().y())
+        assert _is(face, "cardHoverBg"), face.name()
+        step = theme.delta_e00(face.name(), bar_face.name())
+        assert step >= 3.0, f"호버 {face.name()} · 바 {bar_face.name()} = {step:.2f}"
+        assert face.lightnessF() < bar_face.lightnessF()

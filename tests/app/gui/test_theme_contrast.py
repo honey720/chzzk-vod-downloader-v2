@@ -71,7 +71,7 @@ SURFACES = {
         "scrollHandleHover": "#5e646f",
     },
     "light": {
-        "windowBg": "#f2f3f5",
+        "windowBg": "#f0f0f0",  # 바 면과 같은 창 배경 — 오너 결정(2026-11-17, #611 176m)
         "surface": "#ffffff",
         "surfaceAlt": "#eceef1",
         "barBg": "#f0f0f0",  # 바 면 (A)안 — 오너 결정(2026-11-16, #611 176i)
