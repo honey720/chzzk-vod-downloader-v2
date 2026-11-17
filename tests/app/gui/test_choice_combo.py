@@ -10,7 +10,7 @@ from collections.abc import Iterator
 import pytest
 from pytestqt.qtbot import QtBot
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
-from PySide6.QtGui import QAction, QColor, QWheelEvent
+from PySide6.QtGui import QAction, QColor, QImage, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -534,6 +534,12 @@ def _edit_rect(combo: ChoiceCombo) -> QRect:
     )
 
 
+def _at(image: QImage, x: int, y: int) -> QColor:
+    """논리 좌표 (x, y)의 화소 — `grab()` 이미지는 장치 화소라 배율을 곱해 읽는다."""
+    ratio = image.devicePixelRatio()
+    return image.pixelColor(int(x * ratio), int(y * ratio))
+
+
 def _not_face(combo: ChoiceCombo) -> list[tuple[int, int, str]]:
     """글 칸 오른쪽 끝부터 오른쪽 둥근 모서리 앞까지(꺾쇠 칸 제외)에서 칸 면(fieldBg)이 아닌 화소."""
     image = combo.grab().toImage()
@@ -546,7 +552,7 @@ def _not_face(combo: ChoiceCombo) -> list[tuple[int, int, str]]:
         for y in range(edge, combo.height() - edge):
             if caret.contains(x, y):
                 continue
-            colour = image.pixelColor(x, y)
+            colour = _at(image, x, y)
             if colour.rgb() != face:
                 found.append((x, y, colour.name()))
     return found
@@ -559,7 +565,7 @@ def _inked(widget: QWidget, rect: QRect, token: str) -> int:
     count = 0
     for x in range(rect.left(), rect.right() + 1):
         for y in range(rect.top(), rect.bottom() + 1):
-            got = image.pixelColor(x, y)
+            got = _at(image, x, y)
             if (
                 abs(got.red() - want.red()) <= 24
                 and abs(got.green() - want.green()) <= 24
@@ -572,7 +578,7 @@ def _inked(widget: QWidget, rect: QRect, token: str) -> int:
 def _caret_pixels(widget: QWidget, rect: QRect) -> list[str]:
     image = widget.grab().toImage()
     return [
-        image.pixelColor(x, y).name()
+        _at(image, x, y).name()
         for y in range(rect.top(), rect.bottom() + 1)
         for x in range(rect.left(), rect.right() + 1)
     ]
