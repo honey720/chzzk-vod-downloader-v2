@@ -741,7 +741,7 @@ QComboBox {
     color: @text;
     border: 1px solid @fieldEdge;
     border-radius: @radius;
-    padding: @fieldPadY 8px;
+    padding: @fieldPadY @fieldPadX;
     selection-background-color: @accent;
     selection-color: @onAccent;
 }
@@ -762,40 +762,24 @@ QComboBox:disabled {
     border: 1px solid @border;
 }
 
-/* 닫힌 화살표 버튼(#240 감사 항목 1) — 여기를 비워두면 Fusion 기본 버튼
- * 렌더링(팔레트 Button 색)이 그대로 남아 다크에서는 옅은 회색, 라이트에서는
- * 흰 사각형으로 도드라진다(실측 확인). 이미지 리소스 없이 border만으로
- * 화살표를 그린다 — 동봉물이 안 늘어난다. */
+/* 꺾쇠 자리 — 헤더 드롭다운(DropButton)처럼 칸 오른쪽 안쪽 끝에 둔다(#622). 안쪽 여백 안(content)의 오른쪽
+ * 16px = 글 ↔ 꺾쇠 간격 6 + 꺾쇠 10(app/widgets/header_controls.py CARET_GAP · CARET_WIDTH). 구분선 · 호버 면은
+ * 없다 — 칸 면을 그대로 칠한다. 여기를 비워두면 Fusion 기본 버튼 렌더링(팔레트 Button 색)이 남는다(#240).
+ * 꺾쇠는 app/widgets/choice_combo.py::ChoiceCombo.paintEvent가 그린다(헤더와 같은 chevron_down). */
 QComboBox::drop-down {
-    subcontrol-origin: padding;
-    subcontrol-position: top right;
-    width: 20px;
-    border-left: 1px solid @border;
+    subcontrol-origin: content;
+    subcontrol-position: center right;
+    width: 16px;
+    border: none;
     background-color: @fieldBg;
 }
 
-QComboBox::drop-down:hover {
-    background-color: @surfaceHover;
-}
-
-/* border-triangle 트릭 — width/height를 0으로 두고 위쪽 변만 색을 주면
- * 삼각형이 된다. ⚠️ 실측: 좌우 변에 CSS처럼 `transparent` 키워드를 쓰면
- * Qt가 모서리를 안 마이터링해 그냥 사각형이 찍힌다(빨간 네모로 실측
- * 확인) — `transparent` 대신 드롭다운 배경과 같은 실제 색을 줘야 삼각형이
- * 제대로 나온다(배경과 같은 색이라 시각적으로는 안 보이면서 도형만
- * 만든다). 그래서 `:hover`에서 배경이 바뀌면 좌우 변 색도 같이 바꿔야
- * 이음매가 안 보인다. 이미지·새 리소스 없이 순수 QSS만으로 화살표를 낸다. */
+/* 스타일의 화살표는 지운다 — 그릴 것(면)이 없으면 Qt가 네이티브 화살표로 돌아가므로 면을 주고 크기를 0으로 둔다 */
 QComboBox::down-arrow {
     width: 0px;
     height: 0px;
-    border-left: 4px solid @fieldBg;
-    border-right: 4px solid @fieldBg;
-    border-top: 5px solid @textMuted;
-}
-
-QComboBox::down-arrow:hover {
-    border-left-color: @surfaceHover;
-    border-right-color: @surfaceHover;
+    border: none;
+    background-color: @fieldBg;
 }
 
 /* 팝업은 별도 최상위 윈도우다 — border-radius를 주면 위젯 페인팅만 둥글고

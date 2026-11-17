@@ -758,16 +758,19 @@ class TestComboBoxSubcontrols:
         block = _rule_block(_raw_qss(), "QComboBox::down-arrow")
         assert "transparent" not in block
 
-    def test_down_arrow_border_colours_track_the_drop_down_background(self) -> None:
-        """정지 상태 화살표의 좌우 border 색이 `::drop-down`의 배경 토큰과
-        같아야 이음매가 안 보인다."""
+    def test_down_arrow_is_an_empty_face_of_the_drop_down_colour(self) -> None:
+        """스타일 화살표는 크기 0이고 면이 `::drop-down` 배경 토큰과 같아야 한다 — 꺾쇠는 위젯이 그린다(#622).
+
+        `::down-arrow` 규칙 -> width · height 0px, background-color == `::drop-down` background-color
+        """
         raw = _raw_qss()
         arrow_block = _rule_block(raw, "QComboBox::down-arrow")
         drop_down_block = _rule_block(raw, "QComboBox::drop-down")
         face = re.search(r"background-color: (@\w+);", drop_down_block)
         assert face is not None
-        assert f"border-left: 4px solid {face.group(1)};" in arrow_block
-        assert f"border-right: 4px solid {face.group(1)};" in arrow_block
+        assert f"background-color: {face.group(1)};" in arrow_block
+        assert "width: 0px;" in arrow_block
+        assert "height: 0px;" in arrow_block
 
     def test_selection_colours_are_declared_on_combobox_itself(self) -> None:
         """`selection-background-color`/`selection-color`는 QComboBox 자신에 둬야
