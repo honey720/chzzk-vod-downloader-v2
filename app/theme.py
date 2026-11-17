@@ -674,15 +674,15 @@ DARK["fieldEdgeHover"] = _field_hover(DARK["fieldEdge"], DARK["fieldBg"])
 LIGHT["fieldEdgeHover"] = _field_hover(LIGHT["fieldEdge"], LIGHT["fieldBg"])
 _bar_faces(DARK)
 _bar_faces(LIGHT)
-# 대화상자 보조 버튼(Windows 11 표준, #622) 평소 · 호버 · 눌림 면. 다크는 입력 칸 면(fieldBg)에서 기본 버튼 단계
-# (surfaceHover · surfacePressed)로 간다 — 위층일수록 밝다. 라이트는 창 바탕이 거의 흰색이라 버튼을 바탕보다 밝게 둘
-# 여유가 없다 — 흰 면은 바탕과 구분되지 않아(188b 실기) 바탕보다 어두운 회색 단계(기본 버튼 값)를 쓴다(188c)
+# 대화상자 보조 버튼(Windows 11 표준, #622) 평소 · 호버 · 눌림 면. 두 테마 모두 평소 면이 입력 칸 면(fieldBg)이라
+# 버튼이 창 바탕보다 밝다(위층일수록 밝게) — 라이트는 흰 면 위에서 테두리 border가 경계를 맡는다(188d). 호버 · 눌림은
+# 다크가 기본 버튼 단계(surfaceHover · surfacePressed), 라이트가 흰 면에서 회색 단계 하나씩(surfaceAlt · surfaceHover)
 DARK["dialogButton"] = DARK["fieldBg"]
 DARK["dialogButtonHover"] = DARK["surfaceHover"]
 DARK["dialogButtonPressed"] = DARK["surfacePressed"]
-LIGHT["dialogButton"] = LIGHT["surfaceAlt"]
-LIGHT["dialogButtonHover"] = LIGHT["surfaceHover"]
-LIGHT["dialogButtonPressed"] = LIGHT["surfacePressed"]
+LIGHT["dialogButton"] = LIGHT["fieldBg"]
+LIGHT["dialogButtonHover"] = LIGHT["surfaceAlt"]
+LIGHT["dialogButtonPressed"] = LIGHT["surfaceHover"]
 
 #: 카드 상태 이름 — 파이썬(`setProperty`)과 QSS(`[state="..."]`)가 공유하는 어휘.
 #: 상태 아이콘·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서

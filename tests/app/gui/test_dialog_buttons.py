@@ -29,7 +29,6 @@ from app.views.section_dialog import SectionDeleteButton
 from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import hold_style
-from tests.app.gui.test_card_c3 import _de00
 from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 이름으로 쓴다
     _destroy_windows,
     _make_item,
@@ -42,10 +41,10 @@ from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 �
 SLACK = 24  # 색이 같다고 보는 한도 — 세 채널 차의 합(테두리 안티앨리어싱)
 ACTIVE_WAIT_MS = 3000  # 창 활성 · 호버를 기다리는 한도(ms) — X11 · xvfb는 활성이 비동기로 온다
 FACE_INSET = 3  # 면을 읽는 자리 — 왼쪽 테두리에서 안쪽으로(px), 글자에 닿지 않는다
-# 테마마다 기대하는 평소 · 호버 · 눌림 면 값(#622 오너 결정 — 다크 188b, 라이트 188c 회색 단계)
+# 테마마다 기대하는 평소 · 호버 · 눌림 면 값(#622 오너 결정 — 다크 188b, 라이트 188d 흰 면)
 FACES = {
     "dark": ("#2f3239", "#383c44", "#282b31"),
-    "light": ("#eceef1", "#e1e4e9", "#d5d9df"),
+    "light": ("#ffffff", "#eceef1", "#e1e4e9"),
 }
 WINDOWS = ("setting", "edit", "section")  # 버튼 상자가 있는 창 — 확인 창은 따로 잰다
 
@@ -213,29 +212,28 @@ def opened(
 
 
 class TestTokens:
-    """대화상자 보조 버튼 평소 · 호버 · 눌림 토큰은 고른 값이다(#622 B · 188c)."""
+    """대화상자 보조 버튼 평소 · 호버 · 눌림 토큰은 고른 값이다(#622 B · 188d)."""
 
     @pytest.mark.parametrize("name", ["dark", "light"])
     def test_face_tokens_are_the_chosen_values(self, name: str) -> None:
         """두 테마의 dialogButton · dialogButtonHover · dialogButtonPressed가 고른 값이어야 한다.
 
-        다크 -> #2f3239 · #383c44 · #282b31, 라이트 -> #eceef1 · #e1e4e9 · #d5d9df
+        다크 -> #2f3239 · #383c44 · #282b31, 라이트 -> #ffffff · #eceef1 · #e1e4e9
         """
         table = {"dark": theme.DARK, "light": theme.LIGHT}[name]
         faces = (table["dialogButton"], table["dialogButtonHover"], table["dialogButtonPressed"])
         assert faces == FACES[name]
 
-    def test_light_idle_face_is_darker_than_the_window_and_apart_from_it(self) -> None:
-        """라이트 보조 버튼 평소 면은 창 바탕보다 어둡고 ΔE00가 창 바탕과 2.5 이상 · 그룹 상자 면과 3.5 이상이어야 한다.
+    @pytest.mark.parametrize("name", ["dark", "light"])
+    def test_idle_face_is_not_darker_than_the_window(self, name: str) -> None:
+        """보조 버튼 평소 면의 밝기가 창 바탕의 밝기보다 크거나 같아야 한다.
 
-        라이트 dialogButton ↔ windowBg · surface -> ΔE00 >= 2.5 · >= 3.5, 밝기 < windowBg
+        dialogButton · windowBg의 HSL 밝기 -> dialogButton >= windowBg(다크 · 라이트 각각)
         """
-        face = QColor(theme.LIGHT["dialogButton"])
-        window = QColor(theme.LIGHT["windowBg"])
-        group = QColor(theme.LIGHT["surface"])
-        assert _de00(face, window) >= 2.5, f"창 바탕과 {_de00(face, window):.2f}"
-        assert _de00(face, group) >= 3.5, f"그룹 상자 면과 {_de00(face, group):.2f}"
-        assert face.lightnessF() < window.lightnessF()
+        table = {"dark": theme.DARK, "light": theme.LIGHT}[name]
+        face = QColor(table["dialogButton"])
+        window = QColor(table["windowBg"])
+        assert face.lightnessF() >= window.lightnessF(), f"{face.name()} < {window.name()}"
 
 
 @pytest.mark.parametrize("name", WINDOWS)
