@@ -1754,9 +1754,9 @@ class TestBarHoverFaces:
     ) -> None:
         """실패 칩 글은 호버 · 눌림 동안 text, 포인터를 뗀 뒤 stateFailed여야 한다.
 
-        실패 카드 하나(칩 alert), 창 폭 = 최소폭 + 900(칩 모양), 합성 포인터 이동 · 누름 · 뗌 · 칩 밖으로 이동 ->
-        칩 안에서 면과 가장 먼 화소가 호버 · 눌림 때 stateFailed보다 text에 가깝고, 칩 밖으로 옮긴 뒤 text보다
-        stateFailed에 가깝다
+        실패 카드 하나(칩 alert), 창 폭 = 최소폭 + 900(칩 모양), 합성 포인터 이동 · 누름 · 칩 밖으로 이동 · 뗌
+        (칩 밖에서 떼어 눌림이 click이 되지 않는다 — 고른 실패 칩 글은 text다, 176u) -> 칩 안에서 면과 가장 먼
+        화소가 호버 · 눌림 때 stateFailed보다 text에 가깝고, 칩 밖에서 뗀 뒤 text보다 stateFailed에 가깝다
         """
         from PySide6.QtTest import QTest
 
@@ -1778,15 +1778,16 @@ class TestBarHoverFaces:
             _pump()
             assert chip.isDown(), "전제: 눌린 채다"
             assert _ink_is(win, rect, "text"), f"{scheme} 눌림"
+            QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
             QTest.mouseRelease(
                 win.windowHandle(),
                 Qt.MouseButton.LeftButton,
                 Qt.KeyboardModifier.NoModifier,
-                rect.center(),
+                QPoint(1, 1),
             )
-            QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
             _pump()
             assert not chip.underMouse(), "전제: 포인터가 칩 밖이다"
+            assert not chip.isDown() and not chip.isChecked(), "전제: 뗐고 고르지 않았다"
             assert _ink_is(win, rect, "stateFailed"), f"{scheme} 뗀 뒤"
         finally:
             chip.blockSignals(False)
@@ -2097,3 +2098,44 @@ class TestFieldHoverStep:
         assert _is(hover, "fieldEdgeHover"), f"{scheme} {name}: {hover.name()}"
         step = _de00(rest.name(), hover.name())
         assert step >= 12.0, f"{scheme} {name}: {rest.name()} -> {hover.name()} = {step:.2f}"
+
+
+class TestChosenFailedChipText:
+    """고른 실패 칩 글은 text, 안 고른 실패 칩 글은 stateFailed다(#611 176u)."""
+
+    def test_chosen_failed_chip_text_is_text(self, window, scheme: str) -> None:
+        """실패 칩을 고르면 글이 stateFailed보다 text에 가까워야 한다.
+
+        실패 카드 하나(칩 alert), 창 폭 = 최소폭 + 900(칩 모양), 실패 칩 click() -> 칩 안에서 면과 가장 먼 화소가
+        stateFailed보다 text에 가깝다
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(DownloadState.FAILED)
+        win.resize(win.minimumWidth() + 900, 600)
+        QTest.mouseMove(win.windowHandle(), QPoint(1, 1))  # 칩 위 포인터면 호버 글 text
+        _pump()
+        chip = win.filterChips["failed"]
+        chip.click()
+        _pump()
+        assert chip.isVisible() and chip.property("alert") is True, "전제: 칩 모양 · 실패 칩 강조"
+        assert chip.isChecked() and not chip.underMouse(), "전제: 고른 칩 · 포인터는 칩 밖"
+        assert _ink_is(win, _rect(win, chip), "text"), scheme
+
+    def test_unchosen_failed_chip_text_is_state_failed(self, window, scheme: str) -> None:
+        """실패 칩을 고르지 않았으면 글이 text보다 stateFailed에 가까워야 한다.
+
+        실패 카드 하나(칩 alert), 창 폭 = 최소폭 + 900(칩 모양), 고른 칩 「전체」 -> 실패 칩 안에서 면과 가장 먼
+        화소가 text보다 stateFailed에 가깝다
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(DownloadState.FAILED)
+        win.resize(win.minimumWidth() + 900, 600)
+        QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
+        _pump()
+        chip = win.filterChips["failed"]
+        assert chip.isVisible() and chip.property("alert") is True, "전제: 칩 모양 · 실패 칩 강조"
+        assert not chip.isChecked() and not chip.underMouse(), "전제: 안 고른 칩 · 포인터는 칩 밖"
+        assert _ink_is(win, _rect(win, chip), "stateFailed"), scheme
+

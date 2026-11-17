@@ -505,8 +505,8 @@ QFrame#appMenuBar QPushButton[role="menu"]:focus {
 }
 
 /* 상태 필터 칩(#536 · #611 — 설계 §13): 고른 칩 = 면 barSelected만(테두리 없음, 강조색 채움 아님 — 채운 강조 버튼은
- * 다운로드 하나 · 바 면에서 두 단계라 호버보다 진하고 포인터를 올려도 그대로 — 176t), 나머지 = 면 · 테두리 없는 글(투명 테두리 1px로 자리만). 실패 칩 글은 실패 색 — 고른 칩에서도
- * (아래 [alert] 규칙을 상태 규칙 뒤에 둔다). 호버 · 눌림 동안만 text(176l) */
+ * 다운로드 하나 · 바 면에서 두 단계라 호버보다 진하고 포인터를 올려도 그대로 — 176t), 나머지 = 면 · 테두리 없는 글(투명 테두리 1px로 자리만). 실패 칩 글은 실패 색
+ * (아래 [alert] 규칙을 상태 규칙 뒤에 둔다). 호버 · 눌림 동안(176l)과 고른 동안(176u)은 text */
 QFrame#headerFrame QPushButton[role="filter"] {
     background-color: transparent;
     border: 1px solid transparent;
@@ -540,6 +540,11 @@ QFrame#headerFrame QPushButton[role="filter"]:focus {
 
 QFrame#headerFrame QPushButton[role="filter"][alert="true"] {
     color: @stateFailed;
+}
+
+/* 고른 실패 칩 글도 text — stateFailed는 barSelected 위에서 4.5에 못 미친다(176u) */
+QFrame#headerFrame QPushButton[role="filter"][alert="true"]:checked {
+    color: @text;
 }
 
 /* 실패 칩도 호버 · 눌림 동안은 다른 칩과 같은 text — stateFailed는 barHover · barPressed 위에서 4.5에 못 미친다
