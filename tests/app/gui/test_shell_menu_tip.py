@@ -54,6 +54,23 @@ def _pump() -> None:
         QApplication.processEvents()
 
 
+ACTIVE_WAIT_MS = 3000  # 창 활성을 기다리는 한도(ms) — X11 · xvfb는 활성이 비동기로 온다
+ACTIVE_STEP_MS = 10  # 창 활성을 다시 보는 간격(ms)
+
+
+def _activate(window: QWidget) -> None:
+    """창을 활성으로 만들고 활성이 될 때까지 기다린다.
+
+    활성 전에 준 초점은 창이 활성이 될 때 창 활성 까닭으로 다시 들어와 키보드 초점 종류를 잃는다.
+    """
+    window.activateWindow()
+    for _ in range(ACTIVE_WAIT_MS // ACTIVE_STEP_MS):
+        if window.isActiveWindow():
+            break
+        QTest.qWait(ACTIVE_STEP_MS)
+    assert window.isActiveWindow(), "전제: 창이 활성이다"
+
+
 def _open(button: QWidget) -> ChoiceMenu:
     """펼침 버튼의 메뉴를 실제로 열고 한 번 그린다(열 때 채운다 — aboutToShow)."""
     menu = button.menuWidget
@@ -609,7 +626,7 @@ def test_a_menu_closing_keeps_the_focus_kind(window: VodDownloader, keyboard: bo
     """
     from PySide6.QtGui import QFocusEvent
 
-    window.activateWindow()
+    _activate(window)
     widget = window.sortButton
     reason = Qt.FocusReason.TabFocusReason if keyboard else Qt.FocusReason.MouseFocusReason
     widget.setFocus(reason)
@@ -645,7 +662,7 @@ def test_keyboard_focus_draws_an_accent_border(window: VodDownloader, name: str)
     assert not _close(_top_border(widget), tokens["accent"]), (
         "전제: 초점 전에는 강조색 테두리가 아니다"
     )
-    window.activateWindow()
+    _activate(window)
     widget.setFocus(Qt.FocusReason.TabFocusReason)
     _pump()
     assert widget.hasFocus(), "전제: 초점을 받았다"
@@ -666,7 +683,7 @@ def test_keyboard_focus_draws_an_accent_bottom_on_a_drop_field(window: VodDownlo
         return image.pixelColor(int(widget.width() / 2 * ratio), int((widget.height() - 1) * ratio))
 
     assert not _close(bottom(), tokens["accent"]), "전제: 초점 전에는 강조색 테두리가 아니다"
-    window.activateWindow()
+    _activate(window)
     widget.setFocus(Qt.FocusReason.TabFocusReason)
     _pump()
     assert widget.hasFocus(), "전제: 초점을 받았다"
