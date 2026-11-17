@@ -106,6 +106,7 @@ def _answer_yes(how: str) -> None:
     테스트는 exec() 밖으로 나와 뒤의 전제 단언(다운로드가 멈췄다 · 카드가 지워졌다)에서 실패한다.
     """
     tries = [0]
+    found: list[QMessageBox | None] = [None]  # tick이 찾은 확인 대화상자 — watchdog은 이것만 닫는다
 
     def tick() -> None:
         box = QApplication.activeModalWidget()
@@ -114,6 +115,8 @@ def _answer_yes(how: str) -> None:
             if tries[0] < ANSWER_TRIES:
                 QTimer.singleShot(ANSWER_STEP_MS, tick)
             return
+        found[0] = box
+        box.finished.connect(watch.deleteLater)  # 대화상자가 닫히면 watchdog을 거둔다
         yes_roles = (QMessageBox.ButtonRole.YesRole, QMessageBox.ButtonRole.DestructiveRole)
         target = next((b for b in box.buttons() if box.buttonRole(b) in yes_roles), None)
         if not isinstance(target, QPushButton):
@@ -129,13 +132,18 @@ def _answer_yes(how: str) -> None:
             QTest.keyClick(box.windowHandle(), Qt.Key.Key_Return)
 
     def watchdog() -> None:
-        # 답을 보냈어도 대화상자가 남아 있으면 닫는다 — Yes가 대화상자를 닫지 못하면 exec()가 돌아오지 않는다
-        box = QApplication.activeModalWidget()
+        # 답을 보냈어도 그 대화상자가 남아 있으면 닫는다 — Yes가 대화상자를 닫지 못하면 exec()가 돌아오지 않는다.
+        # 찾은 대화상자가 있으면 그것만 닫는다(뒤 테스트의 대화상자를 닫지 않는다)
+        box = found[0] or QApplication.activeModalWidget()
         if isinstance(box, QMessageBox) and box.isVisible():
             box.reject()
+        watch.deleteLater()
 
+    watch = QTimer(QApplication.instance())  # 대화상자가 닫히면 거둘 수 있게 객체로 둔다
+    watch.setSingleShot(True)
+    watch.timeout.connect(watchdog)
     QTimer.singleShot(ANSWER_STEP_MS, tick)
-    QTimer.singleShot(ANSWER_WATCHDOG_MS, watchdog)
+    watch.start(ANSWER_WATCHDOG_MS)
 
 
 @pytest.fixture

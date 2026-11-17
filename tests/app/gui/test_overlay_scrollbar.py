@@ -339,6 +339,24 @@ class TestDrive:
         assert value > 0
         assert value % CELL == 0 or value == scroll.maximum()
 
+    def test_range_vanishing_while_dragging_releases_the_slider(
+        self, build: Callable[..., VodDownloader], animations: Callable[[bool], None]
+    ) -> None:
+        """손잡이를 끄는 동안 스크롤 범위가 사라지면 원래 스크롤바의 눌림이 풀려야 한다.
+
+        대기 카드 40장, 손잡이 가운데 누름 -> 눌림, 「실패」 칩 고름(보이는 카드 0) -> 막대 숨음 · 눌림 아님
+        """
+        animations(False)
+        win = build(cards=MANY)
+        bar = _overlay(win)
+        scroll = win.listView.verticalScrollBar()
+        _mouse(bar, QEvent.Type.MouseButtonPress, bar.handleRect().center().y())
+        assert scroll.isSliderDown(), "전제: 끄는 중"
+        win.filterChips["failed"].click()
+        _pump()
+        assert bar.isHidden(), "전제: 범위가 없어 막대가 숨었다"
+        assert not scroll.isSliderDown()
+
     def test_pressing_below_the_handle_steps_to_a_cell(
         self, build: Callable[..., VodDownloader], animations: Callable[[bool], None]
     ) -> None:

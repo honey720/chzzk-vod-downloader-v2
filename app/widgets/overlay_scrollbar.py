@@ -198,6 +198,9 @@ class OverlayScrollBar(QWidget):
         self._fade = _drop(self._fade)
         self._grow = _drop(self._grow)
         self._hovered = False
+        if self._dragOffset is not None:
+            # 끄는 중에 범위가 사라지면 놓기가 오지 않는다 — 원래 스크롤바의 눌림도 여기서 푼다
+            self._area.verticalScrollBar().setSliderDown(False)
         self._dragOffset = None
         self._thickness = float(self._thin)
         # 새로 생긴 막대는 흐린 채로 시작한다(굴리거나 포인터가 들어와야 나타난다) — 애니메이션이 꺼져 있으면

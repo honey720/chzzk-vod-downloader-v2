@@ -519,6 +519,8 @@ class VodDownloader(QMainWindow):
         self.settingsButton.setToolTip(
             shortcut_tip(self.tr("Settings"), settings_shortcut().toString(QKeySequence.NativeText))
         )
+        # 글 없는 아이콘 버튼 — 툴팁은 접근성 설명일 뿐이라 이름을 따로 준다
+        self.settingsButton.setAccessibleName(self.tr("Settings"))
         self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL · Enter to add"))
         # 등록은 「+」 아이콘 버튼 — 이름 · 단축키는 툴팁(#536 — 설계 §12.1, 프로토 「등록 · Enter」)
         self.fetchButton.setToolTip(shortcut_tip(self.tr("Add"), "Enter"))

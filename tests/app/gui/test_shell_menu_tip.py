@@ -850,6 +850,17 @@ def test_the_chosen_chip_has_the_bar_face_and_a_border_and_no_accent_fill(
     assert _inked(bar, bar.rect(), tokens["accent"]) == 0
 
 
+def test_the_settings_button_has_an_accessible_name(window: VodDownloader) -> None:
+    """글 없는 톱니바퀴 버튼은 접근성 이름이 「Settings」여야 한다(툴팁은 이름 · 단축키).
+
+    번역 없는 창 -> settingsButton.text() == "", accessibleName() == "Settings", 툴팁이 "Settings"로 시작
+    """
+    button = window.settingsButton
+    assert button.text() == ""
+    assert button.accessibleName() == "Settings"
+    assert button.toolTip().startswith("Settings")
+
+
 def test_the_add_button_is_a_square_plus_with_a_shortcut_tip(window: VodDownloader) -> None:
     """등록은 글 없는 정사각(바 컨트롤 높이) 버튼이고, 들어가면 말풍선에 「Add · Enter」가 떠야 한다.
 
