@@ -92,6 +92,7 @@ PAIRS = [
     ("text", "barPressed", 4.5, "바 버튼 · 칩 글 ↔ 바 버튼 눌림 면(#611 176k)"),
     ("textMuted", "barHover", 3.0, "바 아이콘(흐린 색) ↔ 바 버튼 호버 면 — 그림(#611 176k)"),
     ("textMuted", "barPressed", 3.0, "바 아이콘(흐린 색) ↔ 바 버튼 눌림 면 — 그림(#611 176k)"),
+    ("text", "barSelected", 4.5, "고른 칩 · 켠 선택 버튼 글 ↔ 고른 면(#611 176t)"),
     ("text", "menuHover", 4.5, "메뉴 항목 이름 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "menuHover", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "surface", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 면(#536)"),
@@ -669,6 +670,7 @@ def test_field_edge_hover_differs_from_the_focus_edge(scheme: str) -> None:
     assert gap >= FOCUS_GAP_MIN, f"{scheme}: {gap:.2f}"
 
 
+BAR_SELECTED_MIN = 6.7  # 고른 칩 면 ↔ 바 호버 면 ΔE00 하한 — 한 단계(지시문 176t)
 DARK_THUMB_MIN = 3.0  # 다크 썸네일 자리표시 ↔ 카드 평소 면 ΔE00 하한 — 지시문 176s
 
 
@@ -681,3 +683,26 @@ def test_dark_thumbnail_placeholder_stands_apart_from_the_card_face() -> None:
     gap = _de00(table["thumbBg"], table["cardBg"])
     assert gap >= DARK_THUMB_MIN, f"{gap:.2f}"
     assert _lab(table["thumbBg"])[0] < _lab(table["cardBg"])[0]
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+def test_bar_selected_is_one_step_beyond_the_hover_face(scheme: str) -> None:
+    """고른 칩 면은 바 호버 면과 ΔE00 6.7 이상이고 바 면과는 호버 면보다 멀어야 한다(#611 176t).
+
+    ΔE00(barHover, barSelected) >= 6.7, ΔE00(barBg, barSelected) > ΔE00(barBg, barHover)
+    """
+    table = SCHEMES[scheme]
+    step = _de00(table["barHover"], table["barSelected"])
+    assert step >= BAR_SELECTED_MIN, f"{scheme}: {step:.2f}"
+    assert _de00(table["barBg"], table["barSelected"]) > _de00(table["barBg"], table["barHover"])
+
+
+@pytest.mark.parametrize(("scheme", "lighter"), [("dark", True), ("light", False)])
+def test_bar_selected_moves_away_from_the_bar(scheme: str, lighter: bool) -> None:
+    """고른 칩 면은 다크에서 바 호버 면보다 밝고 라이트에서 어두워야 한다(#611 176t).
+
+    다크: L*(barSelected) > L*(barHover), 라이트: L*(barSelected) < L*(barHover)
+    """
+    table = SCHEMES[scheme]
+    hover, chosen = _lab(table["barHover"])[0], _lab(table["barSelected"])[0]
+    assert (chosen > hover) is lighter, f"{scheme}: {hover:.1f} -> {chosen:.1f}"

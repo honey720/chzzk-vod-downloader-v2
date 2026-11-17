@@ -375,6 +375,9 @@ FIELD_STEP_DE00 = 6.7
 # 입력 칸 호버 테두리 ↔ 평소 테두리 ΔE00 — 두 단계. 한 단계로는 호버가 잘 안 보였다(오너 재실기 2026-11-17,
 # #611 176s)
 FIELD_HOVER_DE00 = 2 * FIELD_STEP_DE00
+# 고른 칩 · 켠 선택 버튼 면(barSelected) ↔ 바 호버 면(barHover) ΔE00 — 호버에서 한 단계 더 가 바 면에서 두 단계가
+# 된다. 카드처럼 「평소 < 호버 < 선택」이다(오너 재실기 2026-11-17, #611 176t)
+BAR_SELECTED_DE00 = FIELD_STEP_DE00
 
 # ---- 선택 모드의 체크 원(#561) ----
 # 정수 px가 아닌 값이라 METRICS(QSS에 "Npx"로 들어간다)에 두지 않는다
@@ -575,6 +578,24 @@ def _field_hover(edge: str, face: str) -> str:
     return moved
 
 
+def _bar_selected(table: dict) -> None:
+    """고른 칩 · 켠 선택 버튼 면(`barSelected`)을 표에 더한다 — 바 호버 면에서 바 면과 멀어지는 쪽으로 한 단계.
+
+    밝기는 OKLab에서 `barHover`부터 ΔE00 `BAR_SELECTED_DE00`만큼 옮긴다(다크 밝게 · 라이트 어둡게). 색상각 ·
+    채도는 `border`의 것을 쓴다. 바 면 · 호버 면이 바뀌면 따라온다(#611 176t).
+    """
+    bar_l = _oklab(table["barBg"])[0]
+    hover_l = _oklab(table["barHover"])[0]
+    _, a, b = _oklab(table["border"])
+    direction = 1.0 if hover_l > bar_l else -1.0
+    step = 0.0
+    moved = table["barHover"]
+    while step < 1.0 and delta_e00(table["barHover"], moved) < BAR_SELECTED_DE00:
+        step += 0.001
+        moved = _from_oklab((hover_l + direction * step, a, b))
+    table["barSelected"] = moved
+
+
 def _card_hover(table: dict, scheme: str) -> None:
     """카드 호버 면(`cardHoverBg`)을 표에 더한다 — 평소 면 → 선택 면 OKLab 직선 위의 한 지점.
 
@@ -642,6 +663,8 @@ _card_tints(DARK, "dark")
 _card_tints(LIGHT, "light")
 DARK["fieldEdgeHover"] = _field_hover(DARK["fieldEdge"], DARK["fieldBg"])
 LIGHT["fieldEdgeHover"] = _field_hover(LIGHT["fieldEdge"], LIGHT["fieldBg"])
+_bar_selected(DARK)
+_bar_selected(LIGHT)
 
 #: 카드 상태 이름 — 파이썬(`setProperty`)과 QSS(`[state="..."]`)가 공유하는 어휘.
 #: 상태 아이콘·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서

@@ -1543,7 +1543,7 @@ BAR_FRAMES = ["appMenuBar", "headerFrame", "infoFrame"]  # 메뉴바 · 헤더�
 
 
 class TestBarFaces:
-    """바 면은 카드 면과 한 단계 다른 barBg, 입력 칸 면은 fieldBg(라이트 흰색)다(#611 176i)."""
+    """바 면은 카드 면과 한 단계 다른 barBg, 입력 칸 면은 fieldBg(라이트 흰색), 고른 칩 면은 barSelected다(#611 176i · 176t)."""
 
     @pytest.mark.parametrize("name", BAR_FRAMES)
     def test_bar_face_is_bar_bg_and_not_the_card_face(self, window, scheme: str, name: str) -> None:
@@ -1579,11 +1579,11 @@ class TestBarFaces:
             assert not _is(face, "surfaceAlt"), face.name()
             assert not _is(face, "barBg"), face.name()
 
-    def test_chosen_chip_face_is_field_bg(self, window, scheme: str) -> None:
-        """고른 칩(「전체」)의 면은 fieldBg여야 한다 — 라이트는 흰색이라 바 면과 다르다.
+    def test_chosen_chip_face_is_bar_selected(self, window, scheme: str) -> None:
+        """고른 칩(「전체」)의 면은 barSelected이고 바 면에서 호버 면보다 멀어야 한다.
 
-        창 폭 = 최소폭 + 900(칩 모양) -> 고른 칩 왼쪽 안쪽 3px · 세로 가운데 ≈ fieldBg, 라이트에서는 barBg ·
-        surfaceAlt가 아니다 (176j)
+        창 폭 = 최소폭 + 900(칩 모양) -> 고른 칩 왼쪽 안쪽 3px · 세로 가운데 ≈ barSelected,
+        그 화소 ↔ barBg 채널 차 합 > barHover ↔ barBg 채널 차 합 (176t)
         """
         win = window(DownloadState.WAITING)
         win.resize(win.minimumWidth() + 900, 600)
@@ -1593,16 +1593,31 @@ class TestBarFaces:
         image = win.grab().toImage()
         rect = _rect(win, chip)
         face = _pixel(image, rect.left() + 3, rect.center().y())
-        assert _is(face, "fieldBg"), f"{scheme}: {face.name()}"
-        if scheme == "light":
-            assert not _is(face, "barBg"), face.name()
-            assert not _is(face, "surfaceAlt"), face.name()
+        assert _is(face, "barSelected"), f"{scheme}: {face.name()}"
+        assert _farther_from_bar_than_hover(face), f"{scheme}: {face.name()}"
 
-    def test_select_button_on_face_is_field_bg(self, window, scheme: str) -> None:
-        """선택 모드에서 켠 선택 버튼의 면은 fieldBg여야 한다 — 라이트는 흰색이라 바 면과 다르다.
+    def test_chosen_chip_keeps_its_face_under_the_pointer(self, window, scheme: str) -> None:
+        """고른 칩에 포인터를 올려도 면은 barHover가 아니라 barSelected여야 한다.
 
-        대기 카드 하나, 선택 버튼 누름 -> 버튼 왼쪽 안쪽 3px · 세로 가운데 ≈ fieldBg, 라이트에서는 barBg ·
-        surfaceAlt가 아니다 (176j)
+        창 폭 = 최소폭 + 900(칩 모양), 「전체」 칩 가운데로 합성 포인터 이동 -> 왼쪽 안쪽 3px · 세로 가운데
+        ≈ barSelected (176t)
+        """
+        win = window(DownloadState.WAITING)
+        win.resize(win.minimumWidth() + 900, 600)
+        _pump()
+        chip = win.filterChips["all"]
+        assert chip.isVisible() and chip.isChecked(), "전제: 칩 모양 · 고른 칩"
+        rect = _hover(win, chip)
+        image = win.grab().toImage()
+        face = _pixel(image, rect.left() + 3, rect.center().y())
+        assert _is(face, "barSelected"), f"{scheme}: {face.name()}"
+        assert not _is(face, "barHover"), f"{scheme}: {face.name()}"
+
+    def test_select_button_on_face_is_bar_selected(self, window, scheme: str) -> None:
+        """선택 모드에서 켠 선택 버튼의 면은 barSelected이고 바 면에서 호버 면보다 멀어야 한다.
+
+        대기 카드 하나, 선택 버튼 누름 -> 버튼 왼쪽 안쪽 3px · 세로 가운데 ≈ barSelected,
+        그 화소 ↔ barBg 채널 차 합 > barHover ↔ barBg 채널 차 합 (176t)
         """
         win = window(DownloadState.WAITING)
         win.selectButton.click()
@@ -1612,10 +1627,19 @@ class TestBarFaces:
         image = win.grab().toImage()
         rect = _rect(win, button)
         face = _pixel(image, rect.left() + 3, rect.center().y())
-        assert _is(face, "fieldBg"), f"{scheme}: {face.name()}"
-        if scheme == "light":
-            assert not _is(face, "barBg"), face.name()
-            assert not _is(face, "surfaceAlt"), face.name()
+        assert _is(face, "barSelected"), f"{scheme}: {face.name()}"
+        assert _farther_from_bar_than_hover(face), f"{scheme}: {face.name()}"
+
+
+def _farther_from_bar_than_hover(face: QColor) -> bool:
+    """화소가 바 면(barBg)에서 바 호버 면(barHover)보다 멀리 있는지 채널 차 합으로 본다."""
+    tokens = theme.current_tokens()
+    bar, hover = QColor(tokens["barBg"]), QColor(tokens["barHover"])
+
+    def gap(a: QColor, b: QColor) -> int:
+        return abs(a.red() - b.red()) + abs(a.green() - b.green()) + abs(a.blue() - b.blue())
+
+    return gap(face, bar) > gap(hover, bar)
 
 
 def _hover(win: VodDownloader, widget: QWidget, fresh: bool = True) -> QRect:

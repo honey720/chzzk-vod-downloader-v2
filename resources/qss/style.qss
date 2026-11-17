@@ -348,7 +348,7 @@ QPushButton[role="subtle"]:disabled {
  * 메뉴바 · 헤더바 · 하단바 안의 컨트롤만 — 설정 창 · 편집 창은 설정 메뉴 단계에서 맞춘다.
  * 높이(@barControl)는 코드가 건다(mainWindow._applyBarControls). 모서리는 컨트롤 반경, 칩도 같다.
  * 누르면 바로 일이 일어나는 버튼(동작 버튼)은 한 규칙(설계 §13, #611): 평소 면 · 테두리 없음, 호버 = 면 barHover,
- * 눌림 = 면 barPressed(바 전용 — 카드 호버 면보다 한 단계 더, 176k), 고른 칩 · 켠 선택 버튼 = 면 fieldBg(라이트는 회색 바 위 흰 면 — 176j), 고른 메뉴 = 면 surfaceAlt
+ * 눌림 = 면 barPressed(바 전용 — 카드 호버 면보다 한 단계 더, 176k), 고른 칩 · 켠 선택 버튼 = 면 barSelected(바 면에서 두 단계 — 호버보다 한 단계 더, 176t), 고른 메뉴 = 면 surfaceAlt
  * (테두리 없음), 키보드 초점 = 테두리 강조색.
  * 테두리가 늘 보이는 것은 입력 칸 — URL 입력창과 값을 고르는 펼침 버튼(입력 칸 절)뿐이다. 주 동작(▶ · ‖ — 다운로드
  * 버튼)은 강조색 채움 그대로다.
@@ -411,13 +411,13 @@ QFrame#infoFrame QPushButton#downloadButton:disabled {
     border-color: transparent;
 }
 
-/* 선택 버튼(#561) — 선택 모드 안에서는 켠 모양(면 fieldBg, 테두리 없음 — #611 · 176j). 도형은 IconButton이 그린다 */
+/* 선택 버튼(#561) — 선택 모드 안에서는 켠 모양(면 barSelected, 테두리 없음 — #611 · 176t). 도형은 IconButton이 그린다 */
 QFrame#headerFrame QPushButton#selectButton {
     padding: 0px;
 }
 
 QFrame#headerFrame QPushButton#selectButton[on="true"] {
-    background-color: @fieldBg;
+    background-color: @barSelected;
     border-color: transparent;
 }
 
@@ -504,8 +504,8 @@ QFrame#appMenuBar QPushButton[role="menu"]:focus {
     border-color: transparent;
 }
 
-/* 상태 필터 칩(#536 · #611 — 설계 §13): 고른 칩 = 면 fieldBg만(테두리 없음, 강조색 채움 아님 — 채운 강조 버튼은
- * 다운로드 하나 · 라이트 surfaceAlt는 바 면과 1.02라 fieldBg — 176j), 나머지 = 면 · 테두리 없는 글(투명 테두리 1px로 자리만). 실패 칩 글은 실패 색 — 고른 칩에서도
+/* 상태 필터 칩(#536 · #611 — 설계 §13): 고른 칩 = 면 barSelected만(테두리 없음, 강조색 채움 아님 — 채운 강조 버튼은
+ * 다운로드 하나 · 바 면에서 두 단계라 호버보다 진하고 포인터를 올려도 그대로 — 176t), 나머지 = 면 · 테두리 없는 글(투명 테두리 1px로 자리만). 실패 칩 글은 실패 색 — 고른 칩에서도
  * (아래 [alert] 규칙을 상태 규칙 뒤에 둔다). 호버 · 눌림 동안만 text(176l) */
 QFrame#headerFrame QPushButton[role="filter"] {
     background-color: transparent;
@@ -513,7 +513,7 @@ QFrame#headerFrame QPushButton[role="filter"] {
 }
 
 QFrame#headerFrame QPushButton[role="filter"]:checked {
-    background-color: @fieldBg;
+    background-color: @barSelected;
     border-color: transparent;
     color: @text;
 }
@@ -527,6 +527,11 @@ QFrame#headerFrame QPushButton[role="filter"]:hover {
 QFrame#headerFrame QPushButton[role="filter"]:pressed {
     background-color: @barPressed;
     border-color: transparent;
+}
+
+/* 고른 칩은 포인터를 올려도 고른 면 그대로다 — 호버 규칙 뒤에 둔다(176t) */
+QFrame#headerFrame QPushButton[role="filter"]:checked:hover {
+    background-color: @barSelected;
 }
 
 QFrame#headerFrame QPushButton[role="filter"]:focus {
