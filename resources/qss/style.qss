@@ -586,8 +586,8 @@ QFrame#headerFrame QToolButton[role="drop"][keyFocus="false"]:focus:open {
  * 모양이다: 면 surfaceAlt · 테두리 네 변 같은 1px · 모서리 radius(바 안에서는 controlRadius — 셸 바 절). 펼침
  * 버튼은 바탕 · 테두리만 여기서 칠하고 도형 · 글 · ⌄는 app/widgets/header_controls.py::DropButton.paintEvent가
  * 그린다. 설정 단계의 공용 선택 칸도 이 규칙을 쓴다.
- * 상태(#611 176h — 176g의 「아래 변만 진하게 · 초점 아래 2px」를 바꿈): 평소 = 네 변 fieldEdge, 호버 = 네 변 한 단계
- * 진하게(fieldEdgeHover), 초점 · 펼친 동안 · 눌림 = 네 변 강조색 1px(호버보다 뒤에 두어 초점이 앞선다 — 굵기가
+ * 상태(#611 176h — 176g의 「아래 변만 진하게 · 초점 아래 2px」를 바꿈): 평소 = 네 변 fieldEdge, 호버 = 네 변 두 단계
+ * 진하게(fieldEdgeHover, #611 176s), 초점 · 펼친 동안 · 눌림 = 네 변 강조색 1px(호버보다 뒤에 두어 초점이 앞선다 — 굵기가
  * 같아 칸 높이 · 글 자리가 그대로다), 꺼짐 = 네 변 옅은 border · 글 textDisabled(면 그대로 — 꺼진 칸은 대비 3:1
  * 대상이 아니다). 테두리를 그리는 것은 이 입력 칸뿐이다 — 버튼은 면으로 모양을 낸다(꺼짐 포함). */
 QLineEdit,

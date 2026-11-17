@@ -630,3 +630,40 @@ def test_card_faces_take_no_accent(scheme: str, rest: str, hover: str, selected:
 
     for face in (hover, selected):
         assert lean(table[face]) - lean(table[rest]) <= 3, f"{scheme} {face}: {table[face]}"
+
+
+FIELD_HOVER_MIN = 12.0  # 입력 칸 호버 ↔ 평소 테두리 ΔE00 하한 — 두 단계(약 13.4), 지시문 176s
+FOCUS_GAP_MIN = 12.0  # 호버 테두리 ↔ 초점 테두리(accent) ΔE00 하한 — 지시문 176s
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+def test_field_edge_hover_is_two_steps_from_the_rest_edge(scheme: str) -> None:
+    """입력 칸 호버 테두리는 평소 테두리와 ΔE00 12 이상 떨어져야 한다(#611 176s).
+
+    ΔE00(fieldEdge, fieldEdgeHover) >= 12
+    """
+    table = SCHEMES[scheme]
+    step = _de00(table["fieldEdge"], table["fieldEdgeHover"])
+    assert step >= FIELD_HOVER_MIN, f"{scheme}: {step:.2f}"
+
+
+@pytest.mark.parametrize(("scheme", "lighter"), [("dark", True), ("light", False)])
+def test_field_edge_hover_moves_toward_the_text(scheme: str, lighter: bool) -> None:
+    """입력 칸 호버 테두리는 다크에서 평소 테두리보다 밝고 라이트에서 어두워야 한다(#611 176s).
+
+    다크: L*(fieldEdgeHover) > L*(fieldEdge), 라이트: L*(fieldEdgeHover) < L*(fieldEdge)
+    """
+    table = SCHEMES[scheme]
+    rest, hover = _lab(table["fieldEdge"])[0], _lab(table["fieldEdgeHover"])[0]
+    assert (hover > rest) is lighter, f"{scheme}: {rest:.1f} -> {hover:.1f}"
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+def test_field_edge_hover_differs_from_the_focus_edge(scheme: str) -> None:
+    """입력 칸 호버 테두리는 초점 테두리(accent)와 ΔE00 12 이상 떨어져야 한다(#611 176s).
+
+    ΔE00(fieldEdgeHover, accent) >= 12
+    """
+    table = SCHEMES[scheme]
+    gap = _de00(table["fieldEdgeHover"], table["accent"])
+    assert gap >= FOCUS_GAP_MIN, f"{scheme}: {gap:.2f}"

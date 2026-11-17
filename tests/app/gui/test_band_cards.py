@@ -2042,3 +2042,34 @@ class TestPickedFace:
         seen = f"{state.name}: {rest.name()} {hovered.name()} {selected.name()}"
         for colour, want in zip((rest, hovered, selected), DARK_FACES[state], strict=True):
             assert _near(colour, want), f"{want} {seen}"
+
+
+class TestFieldHoverStep:
+    """입력 칸 · 드롭다운 · 콤보 호버 테두리는 평소 테두리에서 두 단계(ΔE00 약 13.4) 떨어진 fieldEdgeHover다(#611 176s)."""
+
+    @pytest.mark.parametrize("name", FIELDS)
+    def test_hover_edge_is_two_steps_from_the_rest_edge(
+        self, scheme: str, field: Callable[[str], tuple[QWidget, QWidget]], name: str
+    ) -> None:
+        """포인터가 칸 위에 오면 위 가장자리가 fieldEdgeHover이고 평소 위 가장자리와 ΔE00 12 이상이어야 한다.
+
+        URL 칸 · 정렬 칸 · 콤보, 다크 · 라이트, 합성 포인터 (1, 1) -> 위 가장자리 가운데(평소), 칸 가운데로 이동
+        -> 위 가장자리 가운데(호버) ≈ fieldEdgeHover, ΔE00(평소, 호버) >= 12
+        """
+        from PySide6.QtTest import QTest
+
+        from tests.app.gui.test_theme_contrast import _de00
+
+        host, widget = field(name)
+        rect = _rect(host, widget)
+        QTest.mouseMove(host.windowHandle(), QPoint(1, 1))
+        _pump()
+        assert not widget.underMouse(), "전제: 포인터가 칸 밖이다"
+        rest = _pixel(host.grab().toImage(), rect.center().x(), rect.top())
+        QTest.mouseMove(host.windowHandle(), rect.center())
+        _pump()
+        assert widget.underMouse() and not widget.hasFocus(), "전제: 포인터만 칸 위다"
+        hover = _pixel(host.grab().toImage(), rect.center().x(), rect.top())
+        assert _is(hover, "fieldEdgeHover"), f"{scheme} {name}: {hover.name()}"
+        step = _de00(rest.name(), hover.name())
+        assert step >= 12.0, f"{scheme} {name}: {rest.name()} -> {hover.name()} = {step:.2f}"

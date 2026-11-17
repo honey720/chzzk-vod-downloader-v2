@@ -202,7 +202,7 @@ DARK = {
     "surfaceHover": "#383c44",
     "surfacePressed": "#282b31",
     # 바(메뉴바 · 헤더바 · 하단바 · 선택 줄) 위 동작 버튼의 호버 · 눌림 면 — surfaceHover · surfacePressed에서 바 면
-    # 반대쪽(다크 밝게)으로 ΔE00 한 단계(FIELD_HOVER_DE00) 더. 바 면이 카드 면보다 어두워 카드 호버 면으로는
+    # 반대쪽(다크 밝게)으로 ΔE00 한 단계(FIELD_STEP_DE00) 더. 바 면이 카드 면보다 어두워 카드 호버 면으로는
     # 안 보였다(대비 1.42, #611 176k). 색상 · 채도는 원래 토큰 그대로(OKLab 밝기만)
     "barHover": "#4c5159",
     "barPressed": "#3d4147",
@@ -368,8 +368,11 @@ CARD_HOVER_MIDPOINT = {"dark": True, "light": False}
 # 색조 채도를 셈하는 기준 면 — 176r에서 다크 평소 면만 내리고 색조 선택 면을 그대로 두려고, 채도는 176q 평소
 # 면에서 셈하고 밝기만 옮긴다. None이면 지금 평소 면(cardBg)에서 셈한다
 TINT_CHROMA_BASE = {"dark": "#2b2d33", "light": None}
-# 입력 칸 호버 테두리 ↔ 평소 테두리 ΔE00 — border → borderStrong 한 단계와 같은 크기(#611 176g · 176h)
-FIELD_HOVER_DE00 = 6.7
+# 입력 칸 테두리 한 단계 ΔE00 — border → borderStrong 한 단계와 같은 크기(#611 176g · 176h)
+FIELD_STEP_DE00 = 6.7
+# 입력 칸 호버 테두리 ↔ 평소 테두리 ΔE00 — 두 단계. 한 단계로는 호버가 잘 안 보였다(오너 재실기 2026-11-17,
+# #611 176s)
+FIELD_HOVER_DE00 = 2 * FIELD_STEP_DE00
 
 # ---- 선택 모드의 체크 원(#561) ----
 # 정수 px가 아닌 값이라 METRICS(QSS에 "Npx"로 들어간다)에 두지 않는다
@@ -555,9 +558,10 @@ def _readable_on(color: str, grounds: tuple[str, ...]) -> str:
 
 
 def _field_hover(edge: str, face: str) -> str:
-    """입력 칸 호버 테두리 — 평소 테두리에서 칸 면과 멀어지는 쪽으로 밝기만 한 단계(ΔE00 `FIELD_HOVER_DE00`) 옮긴 색.
+    """입력 칸 호버 테두리 — 평소 테두리에서 칸 면과 멀어지는 쪽으로 밝기만 ΔE00 `FIELD_HOVER_DE00` 옮긴 색.
 
-    평소 색(`fieldEdge`) 하나만 바꾸면 호버가 따라오게 파생한다(#611 176h).
+    평소 색(`fieldEdge`) 하나만 바꾸면 호버가 따라오게 파생한다(#611 176h). 옮기는 거리는 두 단계다 — 다크는
+    밝게, 라이트는 어둡게(글 색 쪽) 간다(#611 176s).
     """
     big_l, a, b = _oklab(edge)
     direction = 1.0 if _oklab(face)[0] < 0.6 else -1.0
