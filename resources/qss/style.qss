@@ -771,21 +771,13 @@ QFrame#sectionDropLine {
     border: none;
 }
 
-/* `selection-background-color`/`selection-color`를 여기(QComboBox 자신)에
- * 둔다 — 아래 팝업(`QAbstractItemView`)에 놓으면 안 먹는다. `::item:selected`
- * 서브컨트롤도 시도했지만 안 먹었다(둘 다 실측 확인). QComboBox 자체가 QSS로
- * 스타일되는 순간 그 내부 팝업 델리게이트가 QPalette::Highlight를 더는 안
- * 쓰게 바뀌는데(고장 주입으로 확정 — QComboBox 규칙만 빼면 파레트 강조가
- * 다시 산다), 그 대체 경로가 정확히 이 프로퍼티들이다. Qt 공식 스타일시트
- * 레퍼런스가 QComboBox 프로퍼티로 문서화해 둔 경로와 일치한다. */
+/* 닫힌 선택 칸(ChoiceCombo) — 입력 칸 규칙과 같다. 펼치면 Qt 목록 대신 메뉴가 뜬다(#620) */
 QComboBox {
     background-color: @fieldBg;
     color: @text;
     border: 1px solid @fieldEdge;
     border-radius: @radius;
     padding: @fieldPadY @fieldPadX;
-    selection-background-color: @accent;
-    selection-color: @onAccent;
 }
 
 QComboBox:hover {
@@ -822,20 +814,6 @@ QComboBox::down-arrow {
     height: 0px;
     border: none;
     background-color: @fieldBg;
-}
-
-/* 팝업은 별도 최상위 윈도우다 — border-radius를 주면 위젯 페인팅만 둥글고
- * 창 자체는 사각형이라 귀퉁이가 어긋난다(#240 감사 항목 3과 같은 원인).
- * 그래서 각지게 둔다 — QToolTip과 같은 이유. */
-QComboBox QAbstractItemView {
-    background-color: @surface;
-    color: @text;
-    border: 1px solid @border;
-    outline: none;
-}
-
-QComboBox QAbstractItemView::item {
-    padding: 4px 8px;
 }
 
 /* ---------- 설정 창 ---------- */

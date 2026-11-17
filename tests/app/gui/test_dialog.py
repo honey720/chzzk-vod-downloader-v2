@@ -51,14 +51,10 @@ SAVED = {
 
 
 @pytest.fixture
-def _app_style(qapp: QApplication, request: pytest.FixtureRequest) -> Iterator[None]:
-    """앱 스타일(`build_style`) · 실제 QSS(다크). 끝에 Fusion 기본 · 빈 QSS로 되돌린다.
-
-    `deferred_popup_hide`는 매개변수로 받는다(없으면 끔) — macOS 기본값(켬)에서도 재기 위해서다.
-    """
-    deferred = getattr(request, "param", False)
+def _app_style(qapp: QApplication) -> Iterator[None]:
+    """앱 스타일(`build_style`) · 실제 QSS(다크). 끝에 Fusion 기본 · 빈 QSS로 되돌린다."""
     theme.set_color_scheme("dark")
-    qapp.setStyle(hold_style(theme.build_style(deferred_popup_hide=deferred)))
+    qapp.setStyle(hold_style(theme.build_style()))
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
     yield
@@ -198,13 +194,12 @@ class TestSettingCombosUseTheChoiceMenu:
         assert menu.markedKeys() == [0]
         assert _active_row(menu) == 0
 
-    @pytest.mark.parametrize("_app_style", [False, True], ids=["now", "deferred"], indirect=True)
     def test_enter_delivered_the_macos_way_keeps_the_dialog_open(
         self, qtbot: QtBot, name: str
     ) -> None:
         """macOS 배달 순서로 Enter를 보내면 강조한 줄만 고르고 설정 창은 열려 있어야 한다(#246).
 
-        지연 닫기 힌트 끔 · 켬 각각, 펼침 → 맨 위 줄로 강조 → 대화상자 창에 Shortcut · KeyPress · KeyRelease(Return)
+        펼침 → 맨 위 줄로 강조 → 대화상자 창에 Shortcut · KeyPress · KeyRelease(Return)
         -> currentIndex 0, 창 보임, finished 없음
         """
         dialog = _shown_dialog(qtbot)

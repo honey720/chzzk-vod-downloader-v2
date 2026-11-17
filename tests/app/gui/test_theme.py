@@ -19,13 +19,10 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPalette
-from PySide6.QtWidgets import QApplication
-from pytestqt.qtbot import QtBot
 
 import CVDv2 as main
 import app.theme as theme
 from app.widgets.contentItemWidget import Ui_ContentItemWidget
-from tests.app.gui.card_helpers import hold_style
 from tests.support.layers import is_theme
 
 ROOT_DIR = Path(main.__file__).resolve().parent
@@ -279,217 +276,6 @@ class TestPalette:
         assert palette.color(QPalette.ColorRole.Highlight) == QColor(theme.DARK["accent"])
 
 
-def _style_hint_for_real_combo(style, combo, hint) -> int:
-    """`QComboBox.initStyleOption()`으로 실제 옵션을 채워 질의한다.
-
-    `option=None`으로 질의하면 `SH_ComboBox_Popup`는 스타일과 무관하게
-    항상 0을 낸다(실측 확인 — Fusion 자체도 0으로 나옴) — Qt가 내부적으로
-    팝업 배치를 결정할 때는 항상 채워진 `QStyleOptionComboBox`를 넘기고,
-    그 경우에만 Fusion이 실제로 1(겹침)을 낸다. 옵션 없이 질의하는 테스트는
-    아무 스타일에 대해서나 통과해버리는 무의미한 검증이 된다(#241 후속
-    개발 중 고장 주입으로 직접 확인한 함정) — 항상 이 헬퍼를 거칠 것.
-    """
-    from PySide6.QtWidgets import QStyleOptionComboBox
-
-    opt = QStyleOptionComboBox()
-    combo.initStyleOption(opt)
-    return style.styleHint(hint, opt, combo)
-
-
-class TestComboBoxDropDownStyle:
-    """#241 후속(오너 실기 확인) — Fusion의 콤보 팝업 겹침 배치를 끄고
-    v2.9.6(네이티브 스타일)의 드롭다운 배치를 되살린다.
-
-    `SH_ComboBox_Popup`가 켜져 있으면 팝업이 currentIndex 항목을 콤보
-    라벨에 맞춰 겹쳐 뜬다 — v2.9.6은 스타일을 지정하지 않아 네이티브
-    스타일(드롭다운, 이 힌트 꺼짐)을 썼다(main.py에 `app.setStyle()`
-    호출 자체가 없었음, `git show v2.9.6:main.py`로 확인).
-    """
-
-    def test_plain_fusion_uses_the_overlay_popup(self, qapp) -> None:
-        """되돌릴 회귀가 실제로 존재한다는 것부터 고정한다 — Fusion 자체는
-        이 힌트를 켠 채로 둔다(#227이 조용히 들여온 배치 변경의 근거)."""
-        from PySide6.QtWidgets import QComboBox, QStyle, QStyleFactory
-
-        fusion = QStyleFactory.create("Fusion")
-        combo = QComboBox()
-        combo.setStyle(fusion)
-        assert _style_hint_for_real_combo(fusion, combo, QStyle.StyleHint.SH_ComboBox_Popup) == 1
-
-    def test_style_hint_disables_combobox_overlay_popup(self, qapp) -> None:
-        from PySide6.QtWidgets import QComboBox, QStyle
-
-        style = theme.build_style()
-        combo = QComboBox()
-        combo.setStyle(style)
-        assert _style_hint_for_real_combo(style, combo, QStyle.StyleHint.SH_ComboBox_Popup) == 0
-
-    def test_other_style_hints_still_delegate_to_fusion(self, qapp) -> None:
-        """오버라이드 안 한 힌트는 그대로 Fusion 값을 내야 한다 — 프록시가
-        SH_ComboBox_Popup 하나만 가로채고 나머지는 안 건드리는지 확인."""
-        from PySide6.QtWidgets import QStyle, QStyleFactory
-
-        style = theme.build_style()
-        fusion = QStyleFactory.create("Fusion")
-        hint = QStyle.StyleHint.SH_EtchDisabledText
-        assert style.styleHint(hint) == fusion.styleHint(hint)
-
-    def test_deferred_popup_hide_turns_on_flash_hint_for_comboboxes_only(self, qapp) -> None:
-        """`SH_Menu_FlashTriggeredItem`을 QComboBox에 한해 켠다 —
-        v2.9.6의 QMacStyle이 이 힌트로 `hidePopup()`을 한 턴 뒤로 미뤘고,
-        그것이 Enter의 `KeyPress`가 다이얼로그로 새는 것을 막고 있었다
-        (`_DropDownComboBoxStyle` docstring). QMenu(컨텍스트 메뉴)까지
-        깜빡이게 만들지는 않는다."""
-        from PySide6.QtWidgets import QComboBox, QMenu, QStyle
-
-        hint = QStyle.StyleHint.SH_Menu_FlashTriggeredItem
-        combo = QComboBox()
-        menu = QMenu()
-
-        style = theme.build_style(deferred_popup_hide=True)
-        assert style.styleHint(hint, None, combo) == 1
-        assert style.styleHint(hint, None, menu) == 0
-        combo.setStyle(style)
-        assert _style_hint_for_real_combo(style, combo, QStyle.StyleHint.SH_ComboBox_Popup) == 0
-
-        plain = theme.build_style(deferred_popup_hide=False)
-        assert plain.styleHint(hint, None, combo) == 0
-
-    @pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
-    @pytest.mark.parametrize("override", [None, True, False])
-    def test_deferred_popup_hide_default_is_macos_only(
-        self, qapp, monkeypatch, platform, override
-    ) -> None:
-        """플랫폼 분기를 명시적으로 잰다 — 이것이 이 수정의 계약이다. 생략(None)이면
-        macOS에서만 힌트가 켜지고, 명시(True/False)는 플랫폼과 무관하게 그대로다.
-        Windows 실기 계측에서 이 힌트가 v2.9.6 Windows에 없던 깜빡임을
-        만들었으므로(선택 행 픽셀 강조색→바탕색→강조색, 팝업 ~80ms 잔류) 다른
-        플랫폼에서는 기본으로 꺼져 있어야 한다. `build_style()`이 호출 시점의
-        `sys.platform`을 읽기 때문에 여기서 바꿔 가며 잴 수 있다."""
-        import sys
-
-        from PySide6.QtWidgets import QComboBox, QStyle
-
-        hint = QStyle.StyleHint.SH_Menu_FlashTriggeredItem
-        combo = QComboBox()
-        monkeypatch.setattr(sys, "platform", platform)
-
-        style = theme.build_style(deferred_popup_hide=override)
-        expected = 1 if (override is True or (override is None and platform == "darwin")) else 0
-        assert style.styleHint(hint, None, combo) == expected
-
-    def test_list_mouse_tracking_hint_is_intentionally_left_untouched(self, qapp) -> None:
-        """`SH_ComboBox_ListMouseTracking`을 같이 끄면 호버 오염(선택이 마우스를
-        따라가는 것)도 같이 사라질 것 같지만, 실측해보니 Fusion은 이 힌트
-        하나에 "마우스 추적 켜짐"과 "호버 페인트"를 함께 묶어놔서 끄면 호버
-        시각 피드백 자체가 통째로 사라지고 `viewport().setMouseTracking(True)`로
-        되살릴 수도 없다(native Windows는 이 힌트와 무관한 별도 경로로 호버를
-        그려서 안 겪는 문제) — 그래서 이 힌트는 일부러 안 건드린다.
-        `config.dialog._ComboBoxPopupHighlightResync`가 오염을 막는 대신
-        사후 복원하는 이유가 이것이다. 여기서는 우리 스타일이 실제로 이
-        힌트를 안 건드린다는 것만 고정한다(Fusion 원래 값 그대로 나와야 함)."""
-        from PySide6.QtWidgets import QComboBox, QStyle, QStyleFactory
-
-        style = theme.build_style()
-        fusion = QStyleFactory.create("Fusion")
-        combo = QComboBox()
-        combo.setStyle(style)
-        combo_fusion_ref = QComboBox()
-        combo_fusion_ref.setStyle(fusion)
-
-        hint = QStyle.StyleHint.SH_ComboBox_ListMouseTracking
-        ours = _style_hint_for_real_combo(style, combo, hint)
-        plain = _style_hint_for_real_combo(fusion, combo_fusion_ref, hint)
-        assert ours == plain == 1
-
-    def test_popup_drops_below_the_combo_regardless_of_current_index(self, qapp) -> None:
-        """실제 QComboBox로 배치 자체를 확인 — 겹침 배치였다면 팝업 top이
-        콤보 bottom보다 위(작은 y)에 온다. 드롭다운이면 정확히 콤보 bottom."""
-        from PySide6.QtWidgets import QComboBox
-        from PySide6.QtTest import QTest
-
-        qapp.setStyle(
-            hold_style(theme.build_style())
-        )  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
-        combo = QComboBox()
-        combo.addItems(["Alpha", "Beta", "Gamma", "Delta", "Epsilon"])
-        combo.setCurrentIndex(3)  # 콤보 라벨과 안 겹치면 티가 나는 임의의 값
-        combo.move(50, 300)
-        combo.show()
-        QTest.qWaitForWindowExposed(combo)
-
-        combo_bottom = combo.mapToGlobal(combo.rect().bottomLeft())
-        combo.showPopup()
-        popup_pos = combo.view().window().pos()
-        combo.hidePopup()
-
-        assert popup_pos == combo_bottom
-
-    @pytest.mark.parametrize("roll", (False, True), ids=["roll-off", "roll-on"])
-    def test_popup_placement_is_stable_across_a_stray_hover_and_reopen(
-        self, qapp: QApplication, qtbot: QtBot, roll: bool
-    ) -> None:
-        """드롭다운으로 고정하면 배치가 currentIndex를 아예 안 보므로,
-        호버로 뷰의 currentIndex가 옮겨가도 팝업 위치 자체는 안 흔들려야
-        한다 — 강조 복원(_ComboBoxPopupHighlightResync)과 별개로, 배치
-        문제 자체가 currentIndex 오염에 애초에 영향을 안 받는지 확인.
-
-        팝업 롤 효과(`UI_AnimateCombo`)는 OS 설정을 따른다 — Windows 실제 화면은 켜져 있으면 `showPopup()`
-        직후 팝업이 아직 안 보여 그때 보낸 호버가 닿지 않는다. 두 경우를 세 플랫폼에서 같게 재려고 효과를
-        테스트가 정하고, 팝업이 보일 때까지 기다린 뒤 호버를 보낸다 (#587)
-        """
-        qapp.setStyle(
-            hold_style(theme.build_style())
-        )  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
-        # 개별 효과는 전체 효과(UI_General)가 꺼져 있으면 늘 꺼짐으로 읽혀, 전체를 잠시 켜고 읽는다
-        general = QApplication.isEffectEnabled(Qt.UIEffect.UI_General)
-        QApplication.setEffectEnabled(Qt.UIEffect.UI_General, True)
-        combo_roll = QApplication.isEffectEnabled(Qt.UIEffect.UI_AnimateCombo)
-        QApplication.setEffectEnabled(Qt.UIEffect.UI_General, roll)
-        QApplication.setEffectEnabled(Qt.UIEffect.UI_AnimateCombo, roll)
-        try:
-            self._hover_and_reopen(qapp, qtbot, roll)
-        finally:
-            QApplication.setEffectEnabled(Qt.UIEffect.UI_AnimateCombo, combo_roll)
-            QApplication.setEffectEnabled(Qt.UIEffect.UI_General, general)
-
-    @staticmethod
-    def _hover_and_reopen(qapp: QApplication, qtbot: QtBot, roll: bool) -> None:
-        from PySide6.QtWidgets import QComboBox
-        from PySide6.QtTest import QTest
-
-        assert QApplication.isEffectEnabled(Qt.UIEffect.UI_AnimateCombo) is roll, "전제: 롤 효과"
-        combo = QComboBox()
-        combo.addItems(["Alpha", "Beta", "Gamma", "Delta", "Epsilon"])
-        combo.setCurrentIndex(3)
-        combo.move(50, 300)
-        combo.show()
-        QTest.qWaitForWindowExposed(combo)
-        combo_bottom = combo.mapToGlobal(combo.rect().bottomLeft())
-
-        combo.showPopup()
-        view = combo.view()
-        # 롤 효과가 끝나야 팝업이 보인다 — 효과가 없으면 바로 빠진다
-        qtbot.waitUntil(view.isVisible)
-        viewport = view.viewport()
-        # 팝업 창(QWindow)에 합성 이벤트로 옮긴다 — QTest.mouseMove(QWidget)는 실제 포인터를 옮겨, xvfb에서는
-        # 같은 X 서버를 쓰는 다른 워커의 창 밑에 포인터가 남는다(#574 · .claude/rules/safety.md)
-        popup = viewport.window()
-        rect0 = view.visualRect(view.model().index(0, 0))
-        for spot in (viewport.rect().topLeft(), rect0.center()):
-            QTest.mouseMove(popup.windowHandle(), viewport.mapTo(popup, spot))
-        assert view.currentIndex().row() == 0, "전제: 호버가 currentIndex를 row0로 옮겼다"
-        combo.hidePopup()
-        qtbot.waitUntil(lambda: not view.isVisible())
-
-        combo.showPopup()
-        qtbot.waitUntil(view.isVisible)
-        popup_pos = combo.view().window().pos()
-        combo.hidePopup()
-
-        assert popup_pos == combo_bottom
-
-
 class TestLightTokenTable:
     """LIGHT이 DARK와 나란히 존재하되 실제로 다른 값을 낸다는 것을 고정한다 (#227 회귀 수정).
 
@@ -691,34 +477,6 @@ class TestApplyThemeWiring:
         assert qapp.palette().color(QPalette.ColorRole.Window) == QColor(theme.LIGHT["windowBg"])
         assert qapp.styleSheet() == stylesheet_before
 
-    def test_apply_theme_disables_the_combobox_overlay_popup(self, qapp, monkeypatch) -> None:
-        """#241 후속 — 순정 `"Fusion"` 문자열이 아니라 `theme.build_style()`로
-        감싼 스타일을 실제로 앱에 건다는 것까지 확인한다(간극을 닫는다,
-        위 클래스 docstring과 같은 이유).
-
-        `option=None`으로 질의하면 이 힌트는 스타일과 무관하게 항상 0이라
-        (`TestComboBoxDropDownStyle` 참고) 아무 배선 없이도 통과해버리는
-        가짜 통과였다 — 실제 `QComboBox`로 배치 자체를 재는 쪽으로 바꿨다."""
-        from PySide6.QtWidgets import QComboBox
-        from PySide6.QtTest import QTest
-
-        monkeypatch.setattr(theme, "detect_color_scheme", lambda app: "dark")
-        main.apply_theme(qapp)
-
-        combo = QComboBox()
-        combo.addItems(["Alpha", "Beta", "Gamma", "Delta", "Epsilon"])
-        combo.setCurrentIndex(3)
-        combo.move(50, 300)
-        combo.show()
-        QTest.qWaitForWindowExposed(combo)
-        combo_bottom = combo.mapToGlobal(combo.rect().bottomLeft())
-
-        combo.showPopup()
-        popup_pos = combo.view().window().pos()
-        combo.hidePopup()
-
-        assert popup_pos == combo_bottom
-
 
 def _raw_qss() -> str:
     return Path(main.resource_path(theme.QSS_RELATIVE_PATH)).read_text(encoding="utf-8")
@@ -728,7 +486,7 @@ def _rule_block(text: str, selector: str) -> str:
     """선택자와 정확히 일치하는(바로 뒤에 공백만 두고 `{`가 오는) 규칙 블록 하나를 뽑는다.
 
     `re.escape(selector) + r"\\s*\\{"`로 앵커를 걸어 `QComboBox`가 `QComboBox::drop-down`·
-    `QComboBox QAbstractItemView`처럼 더 긴 선택자의 접두사로 걸리는 걸 막는다 —
+    `QComboBox:hover`처럼 더 긴 선택자의 접두사로 걸리는 걸 막는다 —
     셋 다 문자열로는 "QComboBox"를 포함하지만 그 뒤에 바로 `{`가 오는 건 순정
     `QComboBox { ... }` 블록 하나뿐이다.
     """
@@ -738,7 +496,7 @@ def _rule_block(text: str, selector: str) -> str:
 
 
 class TestComboBoxSubcontrols:
-    """#240 감사 항목 1·2 — QComboBox 서브컨트롤(닫힌 화살표·팝업 선택 강조).
+    """#240 감사 항목 1 — QComboBox 서브컨트롤(닫힌 칸의 화살표 자리).
 
     QComboBox 자체를 QSS로 스타일하는 순간 Fusion 기본 서브컨트롤 렌더링이
     전부 꺼진다(주석·실측 확인) — `::drop-down`/`::down-arrow`를 명시적으로
@@ -772,23 +530,9 @@ class TestComboBoxSubcontrols:
         assert "width: 0px;" in arrow_block
         assert "height: 0px;" in arrow_block
 
-    def test_selection_colours_are_declared_on_combobox_itself(self) -> None:
-        """`selection-background-color`/`selection-color`는 QComboBox 자신에 둬야
-        팝업에 실제로 먹는다 — `QAbstractItemView`·`::item:selected`에 두면 안
-        먹는 걸 실측으로 확인했다(고장 주입으로도 재확인, 아래 완료 보고 참고)."""
-        block = _rule_block(_raw_qss(), "QComboBox")
-        assert "selection-background-color: @accent" in block
-        assert "selection-color: @onAccent" in block
-
-    def test_selection_colours_resolve_to_accent_tokens(self) -> None:
-        loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH))
-        block = _rule_block(loaded, "QComboBox")
-        assert theme.DARK["accent"] in block
-        assert theme.DARK["onAccent"] in block
-
 
 class TestPopupWindowsAreSquareCornered:
-    """#240 감사 항목 3 — 최상위 윈도우(툴팁·콤보 팝업)는 `border-radius`를 빼야 한다.
+    """#240 감사 항목 3 — 최상위 윈도우(툴팁)는 `border-radius`를 빼야 한다.
 
     위젯 페인팅만 둥글고 윈도우 합성 경계 자체는 사각형이라 `border-radius`를
     주면 귀퉁이가 어긋난다(오너 실기 확인). `WA_TranslucentBackground` 우회는
@@ -798,8 +542,4 @@ class TestPopupWindowsAreSquareCornered:
 
     def test_tooltip_has_no_border_radius(self) -> None:
         block = _rule_block(_raw_qss(), "QToolTip")
-        assert "border-radius" not in block
-
-    def test_combobox_popup_has_no_border_radius(self) -> None:
-        block = _rule_block(_raw_qss(), "QComboBox QAbstractItemView")
         assert "border-radius" not in block

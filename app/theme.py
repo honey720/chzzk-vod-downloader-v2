@@ -37,12 +37,11 @@ QSS 양쪽을 같이 손봐야 동작한다(파이썬에서 속성만 바꾸면 
 import logging
 import math
 import re
-import sys
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QComboBox, QProxyStyle, QStyle, QStyleFactory
+from PySide6.QtWidgets import QProxyStyle, QStyleFactory
 
 logger = logging.getLogger(__name__)
 
@@ -824,99 +823,21 @@ def build_palette(tokens: dict | None = None) -> QPalette:
 
 
 class _DropDownComboBoxStyle(QProxyStyle):
-    """Fusion의 콤보 팝업 겹침 배치를 끄고 v2.9.6(네이티브 스타일)의 드롭다운
-    배치를 되살린다 (#241 후속 — 오너 실기 확인).
+    """앱 전체 스타일 — Fusion을 감싼 `QProxyStyle`이다 (`build_style`).
 
-    `QStyle.SH_ComboBox_Popup` 힌트가 켜져 있으면 팝업이 열릴 때 콤보의
-    현재 선택 항목이 콤보 라벨 위치에 오도록 콤보 위로 겹쳐 뜬다 — Fusion은
-    이 힌트가 켜져 있고, 네이티브 Windows 스타일(windowsvista·windows11)은
-    꺼져 있어 항상 콤보 아래로 떨어진다(실측 대조로 확인). v2.9.6은
-    `app.setStyle()`을 아예 안 불러 네이티브 스타일을 썼으므로 드롭다운
-    배치가 원래 동작이었다 — `#227`이 Fusion을 고정하며 조용히 바뀐
-    회귀다. 판단이 갈리는 지점이라 기존(v2.9.6) 동작에 맞춘다.
-
-    이 힌트를 끄면 팝업 위치 계산 자체가 currentIndex를 안 본다 — 그래서
-    "마지막 호버로 옮겨간 currentIndex가 배치 기준으로 쓰인다"는 문제도
-    같이 없어진다. `config.dialog._ComboBoxPopupHighlightResync`(팝업 안에서
-    어떤 항목이 강조되는지)와는 역할이 겹치지 않는다 — 저건 팝업이 뜬
-    *다음* 내용을, 이건 팝업 창 자체가 뜨는 *위치*를 다룬다.
-
-    **`deferred_popup_hide` — 콤보 팝업 닫기를 한 턴 뒤로 미룬다 (macOS 전용,
-    #240 실기 후속).** macOS에서 팝업을 열고 Enter로 고르면 설정 창까지 닫히던
-    회귀의 경로(Qt 6.11.1 소스 추적 + Windows에서 같은 배달 순서를 재현해 확인,
-    오너 macOS 실기로 수정 확인):
-
-    1. Enter의 `ShortcutOverride`가 팝업 뷰에 닿으면 Qt의
-       `QComboBoxPrivateContainer::eventFilter`가 `hidePopup()`을 부르고
-       항목을 선택한 뒤 이벤트를 accept한다. 그러면 Qt는 이어서 같은 키의
-       `KeyPress`를 **창 단위로** 배달한다.
-    2. 그 `KeyPress`가 어느 창으로 가는지가 OS마다 다르다. Windows QPA는
-       팝업이 키보드를 grab하므로(`QWindowsKeyMapper::m_keyGrabber`) 팝업
-       창으로 간다 → 이미 닫힌 팝업의 뷰에서 무시되고 끝. macOS QPA는
-       키보드 grab이 없고(`QCocoaWindow::setKeyboardGrabEnabled`는
-       QTBUG-106597로 항상 false) 팝업 NSPanel은 key window가 될 수 없어
-       (`QNSPanel canBecomeKeyWindow`) **다이얼로그 창**으로 간다 →
-       `QComboBox::keyPressEvent`는 Enter를 ignore → `QDialog::keyPressEvent`
-       가 기본 버튼(OK)을 누른다.
-    3. v2.9.6(QMacStyle)에서 안 그랬던 이유: QMacStyle은
-       `SH_Menu_FlashTriggeredItem`이 켜져 있어 `hidePopup()`이 실제 숨김을
-       `QTimer::singleShot(0→60→20ms)`로 미룬다. 그래서 2의 `KeyPress`가
-       도착할 때 팝업이 아직 활성 팝업이라 뷰로 배달되고 거기서 끝났다.
-       Fusion은 이 힌트가 꺼져 있어(`QCommonStyle` 기본값) 숨김이 즉시
-       일어난다 — 이것이 v2.9.6과 유일하게 다른 지점이다.
-
-    수정은 3의 힌트를 QComboBox에 한해(QMenu는 건드리지 않음) 되살려
-    v2.9.6 macOS와 같은 지연 숨김을 만드는 것이다. 대가도 v2.9.6 macOS와 같다 —
-    닫힐 때 선택 항목이 약 80ms 깜빡이고(deselect→reselect) 그동안 팝업이 떠
-    있는데, 오너 macOS 실기에서 지각되지 않았다. **macOS에서만 켠다**
-    (`_deferred_popup_hide_default()`): Windows 실기에서 켜 보니 v2.9.6
-    Windows(네이티브 스타일, 이 힌트 0)에는 없던 깜빡임이 그대로 생겼다(선택 행
-    픽셀이 강조색→바탕색→강조색으로 바뀌는 것을 시간축으로 계측). Windows는
-    2의 키보드 grab 덕에 회귀 자체가 없으므로 켤 이유도 없다. 새어 들어온
-    `KeyPress`를 위젯 쪽에서 삼키는 방식은 쓸 수 없다 — macOS에서 그 `KeyPress`는
-    콤보를 거치지 않고 다이얼로그 창에 직행한다(오너 macOS 실기로 확인).
+    예전에는 Qt 콤보 목록의 두 동작(`SH_ComboBox_Popup` 0 — 목록을 칸 아래로 · macOS
+    `SH_Menu_FlashTriggeredItem` — 목록 닫기 지연)을 바꿨다(#241 · #246). 콤보박스가 모두
+    `ChoiceCombo`(펼치면 Qt 목록 대신 메뉴)로 바뀌어 두 동작이 걸릴 Qt 목록이 앱에 없으므로 걷어냈다(#620 · #622).
+    지금은 오버라이드가 없다 — 앱 스타일을 한 곳에서 만드는 자리로 남긴다.
     """
 
-    def __init__(self, base_style, *, deferred_popup_hide: bool = False) -> None:
-        super().__init__(base_style)
-        self._deferred_popup_hide = deferred_popup_hide
 
-    def styleHint(self, hint, option=None, widget=None, returnData=None) -> int:
-        if hint == QStyle.StyleHint.SH_ComboBox_Popup:
-            return 0
-        if (
-            hint == QStyle.StyleHint.SH_Menu_FlashTriggeredItem
-            and self._deferred_popup_hide
-            and isinstance(widget, QComboBox)
-        ):
-            return 1
-        return super().styleHint(hint, option, widget, returnData)
+def build_style() -> QProxyStyle:
+    """Fusion을 감싼 앱 전체 스타일 객체를 만든다.
 
-
-def _deferred_popup_hide_default() -> bool:
-    """콤보 팝업의 지연 닫기(`_DropDownComboBoxStyle`)를 기본으로 켤 플랫폼인지 — macOS만.
-
-    플랫폼 분기는 "어느 플랫폼에서도 같은 코드가 돈다"는 성질을 잃게 하므로
-    조건을 한 곳에 모으고, `tests/app/gui/test_theme.py`가 플랫폼 값을 바꿔 가며
-    이 분기를 명시적으로 잰다(호출 시점의 `sys.platform`을 읽는 이유).
+    `QProxyStyle`은 오버라이드 안 한 모든 호출을 감싼 베이스 스타일로 넘긴다 — 그리기는 전부 Fusion 그대로다.
     """
-    return sys.platform == "darwin"
-
-
-def build_style(*, deferred_popup_hide: bool | None = None) -> QProxyStyle:
-    """Fusion을 감싸 콤보 팝업 배치만 v2.9.6(드롭다운)으로 되돌린 스타일 객체.
-
-    나머지 그리기는 전부 Fusion 그대로다 — `QProxyStyle`은 오버라이드
-    안 한 모든 호출을 감싼 베이스 스타일로 넘긴다.
-
-    `deferred_popup_hide`를 생략하면 `_deferred_popup_hide_default()`(macOS에서만
-    켬)를 따른다. 메커니즘 테스트는 플랫폼과 무관하게 명시해서 넘긴다.
-    """
-    if deferred_popup_hide is None:
-        deferred_popup_hide = _deferred_popup_hide_default()
-    return _DropDownComboBoxStyle(
-        QStyleFactory.create("Fusion"), deferred_popup_hide=deferred_popup_hide
-    )
+    return _DropDownComboBoxStyle(QStyleFactory.create("Fusion"))
 
 
 def scheme_name(scheme) -> str | None:
