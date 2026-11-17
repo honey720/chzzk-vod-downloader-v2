@@ -44,6 +44,12 @@ def _hover_from_tests_only(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_high_contrast(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OS 고대비 설정을 끈 것으로 고정한다 — 고대비 테스트만 다시 켠다(실행 머신 설정에 기대지 않는다)."""
+    monkeypatch.setattr(overlay_scrollbar, "high_contrast", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def _quick_timing(monkeypatch: pytest.MonkeyPatch) -> None:
     """흐려지기 전 대기 · 나타남 · 흐려짐 · 굵어짐 시간을 줄이고 휠 굴리기는 바로 옮긴다(창을 만들기 전에)."""
     monkeypatch.setattr(overlay_scrollbar, "HIDE_DELAY_MS", HIDE_MS)

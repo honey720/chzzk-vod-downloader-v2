@@ -672,6 +672,7 @@ def test_total_size_is_the_first_thing_to_give_way_when_the_card_narrows(qtbot, 
         window.resize(width, window.height())
         _pump()
         if widget.width() != width:
+            seen.append(widget.fileSizeLabel.text())  # 최소폭에 닿으며 바뀐 글도 잰다
             break  # 최소폭 — 그 아래는 같은 모양을 다시 잰다
     assert len(seen) > 1, "전제: 더 좁힐 자리가 있었다"
     assert set(seen) == {"1080p · 100.00 MB"}

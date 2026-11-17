@@ -106,7 +106,6 @@ def _answer_yes(how: str) -> None:
     테스트는 exec() 밖으로 나와 뒤의 전제 단언(다운로드가 멈췄다 · 카드가 지워졌다)에서 실패한다.
     """
     tries = [0]
-    answered = [False]
 
     def tick() -> None:
         box = QApplication.activeModalWidget()
@@ -120,7 +119,6 @@ def _answer_yes(how: str) -> None:
         if not isinstance(target, QPushButton):
             box.reject()
             return
-        answered[0] = True
         if how == "mouse":
             spot = target.mapTo(box, target.rect().center())
             QTest.mouseClick(
@@ -131,8 +129,9 @@ def _answer_yes(how: str) -> None:
             QTest.keyClick(box.windowHandle(), Qt.Key.Key_Return)
 
     def watchdog() -> None:
+        # 답을 보냈어도 대화상자가 남아 있으면 닫는다 — Yes가 대화상자를 닫지 못하면 exec()가 돌아오지 않는다
         box = QApplication.activeModalWidget()
-        if not answered[0] and isinstance(box, QMessageBox) and box.isVisible():
+        if isinstance(box, QMessageBox) and box.isVisible():
             box.reject()
 
     QTimer.singleShot(ANSWER_STEP_MS, tick)
