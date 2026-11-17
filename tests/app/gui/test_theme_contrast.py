@@ -82,10 +82,10 @@ SURFACES = {
         "scrollHandleHover": "#5e646f",
     },
     "light": {
-        "windowBg": "#eff0f3",  # 바 면과 같은 창 배경, border 색상각 · 절반 채도 — 오너 결정(2026-11-17, #611 176o)
+        "windowBg": "#f2f3f6",  # 바 면과 같은 창 배경, 푸른 회색 · #f3f3f3 밝기 — 오너 결정(2026-11-17, #611 176p)
         "surface": "#ffffff",
         "surfaceAlt": "#eceef1",
-        "barBg": "#eff0f3",  # 바 면 (A)안, 푸른 회색 — 오너 결정(2026-11-16 · 11-17, #611 176i · 176o)
+        "barBg": "#f2f3f6",  # 바 면 (A)안, 푸른 회색 — 오너 결정(2026-11-16 · 11-17, #611 176i · 176p)
         "fieldBg": "#ffffff",  # 회색 바 위 흰 입력 칸 — 오너 결정(2026-11-16, #611 176i)
         "surfaceHover": "#e1e4e9",
         "surfacePressed": "#d5d9df",
@@ -360,12 +360,12 @@ def test_info_meets_the_bubble_conditions(scheme: str) -> None:
     assert min(_contrast(table["stateInfo"], g) for g in grounds) >= 3.0
 
 
-# 라이트 바탕 넷 — border(#d5d8de)의 색상각 · 절반 채도를 준 푸른 회색(오너 결정 2026-11-17, #611 176o)
+# 라이트 바탕 넷 — border(#d5d8de)의 색상각 · 절반 채도를 준 푸른 회색, #f3f3f3 밝기 안(오너 결정 2026-11-17, #611 176p)
 LIGHT_TINTED = {
-    "windowBg": "#eff0f3",
-    "barBg": "#eff0f3",
-    "cardHoverBg": "#e1e2e5",
-    "rowHoverBg": "#e1e2e5",
+    "windowBg": "#f2f3f6",
+    "barBg": "#f2f3f6",
+    "cardHoverBg": "#e4e4e7",
+    "rowHoverBg": "#e4e4e7",
 }
 LIGHT_KEPT = {
     "barHover": "#c2c5c9",
@@ -377,7 +377,7 @@ LIGHT_KEPT = {
 def test_light_ground_is_the_blue_grey(token: str) -> None:
     """라이트 바탕 넷은 지시 값이고 파랑 채널이 빨강보다 커야 한다(무채색이 아님).
 
-    windowBg · barBg = #eff0f3, cardHoverBg · rowHoverBg = #e1e2e5, blue − red > 0
+    windowBg · barBg = #f2f3f6, cardHoverBg · rowHoverBg = #e4e4e7, blue − red > 0
     """
     value = theme.LIGHT[token].lower()
     assert value == LIGHT_TINTED[token]

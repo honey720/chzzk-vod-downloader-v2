@@ -1824,8 +1824,10 @@ class TestLightLayers:
         assert face.lightnessF() < bar_face.lightnessF()
 
 
-LIGHT_BODY = "#eff0f3"  # 라이트 바디 · 바 면 — border 색상각 · 절반 채도(#611 176o 지시 값)
-LIGHT_HOVER = "#e1e2e5"  # 라이트 호버 카드 면 — 같은 규칙(#611 176o 지시 값)
+LIGHT_BODY = (
+    "#f2f3f6"  # 라이트 바디 · 바 면 — border 색상각 · 절반 채도, #f3f3f3 밝기 안(#611 176p 지시 값)
+)
+LIGHT_HOVER = "#e4e4e7"  # 라이트 호버 카드 면 — 같은 규칙(#611 176p 지시 값)
 TINT_SLACK = 1  # 색조 화소를 지시 값과 같다고 보는 한 채널 차 — 16진 반올림
 BLUE_OVER_RED = 3  # 푸른 회색이라고 보는 파랑 − 빨강 채널 차 하한 — 무채색이면 0
 
@@ -1847,9 +1849,9 @@ class TestLightTint:
 
     @pytest.mark.parametrize("scheme", ["light"], indirect=True)
     def test_body_and_bar_are_the_blue_grey(self, window, scheme: str) -> None:
-        """라이트 목록 빈 자리 · 헤더바 빈 자리 화소가 #eff0f3이고 파랑이 빨강보다 3 이상 커야 한다.
+        """라이트 목록 빈 자리 · 헤더바 빈 자리 화소가 #f2f3f6이고 파랑이 빨강보다 3 이상 커야 한다.
 
-        대기 카드 하나, 창 폭 900 · 높이 600 -> 목록 아래 빈 자리 가운데 · 헤더바 왼쪽 안쪽 2px ≈ #eff0f3
+        대기 카드 하나, 창 폭 900 · 높이 600 -> 목록 아래 빈 자리 가운데 · 헤더바 왼쪽 안쪽 2px ≈ #f2f3f6
         (채널마다 1 이내), 두 화소 모두 blue − red >= 3
         """
         win = window(DownloadState.WAITING)
@@ -1864,9 +1866,9 @@ class TestLightTint:
 
     @pytest.mark.parametrize("scheme", ["light"], indirect=True)
     def test_hovered_card_is_the_blue_grey(self, window, scheme: str) -> None:
-        """라이트 호버 카드 면 화소가 #e1e2e5이고 파랑이 빨강보다 3 이상 커야 한다.
+        """라이트 호버 카드 면 화소가 #e4e4e7이고 파랑이 빨강보다 3 이상 커야 한다.
 
-        대기 카드 하나, 합성 포인터 이동(카드 가운데) -> 카드 왼쪽 안쪽 2px · 세로 가운데 ≈ #e1e2e5
+        대기 카드 하나, 합성 포인터 이동(카드 가운데) -> 카드 왼쪽 안쪽 2px · 세로 가운데 ≈ #e4e4e7
         (채널마다 1 이내), blue − red >= 3
         """
         win = window(DownloadState.WAITING)
