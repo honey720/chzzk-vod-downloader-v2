@@ -1821,3 +1821,55 @@ class TestLightLayers:
         step = theme.delta_e00(face.name(), bar_face.name())
         assert step >= 3.0, f"호버 {face.name()} · 바 {bar_face.name()} = {step:.2f}"
         assert face.lightnessF() < bar_face.lightnessF()
+
+
+LIGHT_BODY = "#eff0f3"  # 라이트 바디 · 바 면 — border 색상각 · 절반 채도(#611 176o 지시 값)
+LIGHT_HOVER = "#e1e2e5"  # 라이트 호버 카드 면 — 같은 규칙(#611 176o 지시 값)
+TINT_SLACK = 1  # 색조 화소를 지시 값과 같다고 보는 한 채널 차 — 16진 반올림
+BLUE_OVER_RED = 3  # 푸른 회색이라고 보는 파랑 − 빨강 채널 차 하한 — 무채색이면 0
+
+
+def _near(colour: QColor, value: str) -> bool:
+    want = QColor(value)
+    return all(
+        abs(a - b) <= TINT_SLACK
+        for a, b in (
+            (colour.red(), want.red()),
+            (colour.green(), want.green()),
+            (colour.blue(), want.blue()),
+        )
+    )
+
+
+class TestLightTint:
+    """라이트 바디 · 바 · 호버 카드 면은 무채색이 아니라 border 색상각의 푸른 회색이다(#611 176o)."""
+
+    @pytest.mark.parametrize("scheme", ["light"], indirect=True)
+    def test_body_and_bar_are_the_blue_grey(self, window, scheme: str) -> None:
+        """라이트 목록 빈 자리 · 헤더바 빈 자리 화소가 #eff0f3이고 파랑이 빨강보다 3 이상 커야 한다.
+
+        대기 카드 하나, 창 폭 900 · 높이 600 -> 목록 아래 빈 자리 가운데 · 헤더바 왼쪽 안쪽 2px ≈ #eff0f3
+        (채널마다 1 이내), 두 화소 모두 blue − red >= 3
+        """
+        win = window(DownloadState.WAITING)
+        image = win.grab().toImage()
+        listing = _rect(win, win.listView)
+        bar = _rect(win, win.headerFrame)
+        body = _pixel(image, listing.center().x(), listing.bottom() - 10)
+        bar_face = _pixel(image, bar.left() + 2, bar.center().y())
+        for name, colour in (("바디", body), ("바", bar_face)):
+            assert _near(colour, LIGHT_BODY), f"{name} {colour.name()}"
+            assert colour.blue() - colour.red() >= BLUE_OVER_RED, f"{name} {colour.name()}"
+
+    @pytest.mark.parametrize("scheme", ["light"], indirect=True)
+    def test_hovered_card_is_the_blue_grey(self, window, scheme: str) -> None:
+        """라이트 호버 카드 면 화소가 #e1e2e5이고 파랑이 빨강보다 3 이상 커야 한다.
+
+        대기 카드 하나, 합성 포인터 이동(카드 가운데) -> 카드 왼쪽 안쪽 2px · 세로 가운데 ≈ #e1e2e5
+        (채널마다 1 이내), blue − red >= 3
+        """
+        win = window(DownloadState.WAITING)
+        rect = _hover(win, _card(win, 0))
+        face = _pixel(win.grab().toImage(), rect.left() + 2, rect.center().y())
+        assert _near(face, LIGHT_HOVER), face.name()
+        assert face.blue() - face.red() >= BLUE_OVER_RED, face.name()

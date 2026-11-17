@@ -82,10 +82,10 @@ SURFACES = {
         "scrollHandleHover": "#5e646f",
     },
     "light": {
-        "windowBg": "#f0f0f0",  # 바 면과 같은 창 배경 — 오너 결정(2026-11-17, #611 176m)
+        "windowBg": "#eff0f3",  # 바 면과 같은 창 배경, border 색상각 · 절반 채도 — 오너 결정(2026-11-17, #611 176o)
         "surface": "#ffffff",
         "surfaceAlt": "#eceef1",
-        "barBg": "#f0f0f0",  # 바 면 (A)안 — 오너 결정(2026-11-16, #611 176i)
+        "barBg": "#eff0f3",  # 바 면 (A)안, 푸른 회색 — 오너 결정(2026-11-16 · 11-17, #611 176i · 176o)
         "fieldBg": "#ffffff",  # 회색 바 위 흰 입력 칸 — 오너 결정(2026-11-16, #611 176i)
         "surfaceHover": "#e1e4e9",
         "surfacePressed": "#d5d9df",
@@ -358,3 +358,33 @@ def test_info_meets_the_bubble_conditions(scheme: str) -> None:
     grounds = [table[name] for name in BUBBLE_GROUNDS] + [OS_NOTICE_GROUND[scheme]]
     assert _contrast(table["onAccent"], table["stateInfo"]) >= 4.5
     assert min(_contrast(table["stateInfo"], g) for g in grounds) >= 3.0
+
+
+# 라이트 바탕 넷 — border(#d5d8de)의 색상각 · 절반 채도를 준 푸른 회색(오너 결정 2026-11-17, #611 176o)
+LIGHT_TINTED = {
+    "windowBg": "#eff0f3",
+    "barBg": "#eff0f3",
+    "cardHoverBg": "#e1e2e5",
+    "rowHoverBg": "#e1e2e5",
+}
+LIGHT_KEPT = {
+    "barHover": "#c2c5c9",
+    "barPressed": "#b8bbc1",
+}  # 이미 푸른 회색이라 그대로 둔 바 버튼 면
+
+
+@pytest.mark.parametrize("token", LIGHT_TINTED)
+def test_light_ground_is_the_blue_grey(token: str) -> None:
+    """라이트 바탕 넷은 지시 값이고 파랑 채널이 빨강보다 커야 한다(무채색이 아님).
+
+    windowBg · barBg = #eff0f3, cardHoverBg · rowHoverBg = #e1e2e5, blue − red > 0
+    """
+    value = theme.LIGHT[token].lower()
+    assert value == LIGHT_TINTED[token]
+    assert int(value[5:7], 16) > int(value[1:3], 16), value
+
+
+@pytest.mark.parametrize("token", LIGHT_KEPT)
+def test_light_bar_button_faces_are_kept(token: str) -> None:
+    """라이트 barHover · barPressed는 바뀌지 않아야 한다 — #c2c5c9 · #b8bbc1."""
+    assert theme.LIGHT[token].lower() == LIGHT_KEPT[token]
