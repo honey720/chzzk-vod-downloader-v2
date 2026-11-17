@@ -72,9 +72,14 @@ METRICS = {
     "sectionDeletePadY": 5,  # 구간 행 ✕ 상자 위아래 안쪽 여백(px) — 상자 높이 = 글 한 줄 + 2 × 이 값 + 테두리(#586)
     "sectionDeletePadX": 10,  # 구간 행 ✕ 상자 좌우 안쪽 여백(px) — 상자 폭 = 도형 한 변 + 2 × 이 값 + 테두리(#586)
     # ---- 카드 ----
-    "cardPadding": 8,  # 카드 안쪽 여백 — 썸네일·글이 테두리에서 떨어지는 거리
+    # 카드 행 안쪽 좌우 여백(px) — 창 바깥 좌우 여백(outerMargin)과 같아 썸네일 왼쪽 끝이 헤더 URL 칸 왼쪽 끝과 같은
+    # x다(설계 §13, #611). 오른쪽은 스크롤바가 보이면 그 폭만큼 줄어 글 끝이 바 안 내용 끝과 같은 x다(view.py)
+    "cardPadding": 12,
+    # 카드 행 안쪽 위아래 여백(px) — 행 80 = 9 + 세 줄(62) + 9, 그 밑 구분선 1(설계 §13, #611)
+    "cardPadY": 9,
+    "cardSeparator": 1,  # 카드 행 사이 구분선 두께(px) — 행 아래끝(카드 면의 아래 테두리, 설계 §13)
     "cardRowSpacing": 4,  # 카드 안 행 간격(4의 배수 권장) — 줄이면 카드가 낮아져 밀도↑
-    "cardRadius": 8,  # 카드 모서리 둥글기 — 카드 · 메뉴 창 8(설계 §11.7, #550)
+    "cardRadius": 0,  # 카드 모서리 둥글기 — 띠 목록이라 0(설계 §13, #611 — §11.7의 카드 8을 대체)
     "cardThumbWidth": 110,  # 카드 썸네일 폭(px) — 글 묶음 높이(62)에 맞춘 16:9(설계 §11.1, #550)
     "cardThumbHeight": 62,  # 카드 썸네일 높이(px) — 1줄 위끝 ~ 3줄 아래끝
     "cardThumbCompactWidth": 68,  # 썸네일 줄이기의 폭(px) — 위 두 줄 높이(38)에 맞춘 16:9(설계 §12.1, #554)
@@ -83,21 +88,22 @@ METRICS = {
     "cardRow1Height": 16,  # 카드 1줄(채널 그림 · 채널명 · 날짜) 높이(px)
     "cardRow2Height": 18,  # 카드 2줄(제목) 높이(px)
     "cardRow3Height": 20,  # 카드 3줄(상태 · 정보) 높이(px) — 설계 §11.3 「3줄 20」
-    # 카드 사이(px) — 창 바깥 좌우 여백(outerMargin 12)과 같다. 좌우 여백과 같게 두면 카드끼리 구분이 더
-    # 또렷하다(오너 2026-11-15, #599). 카드 목록 위아래 여백도 이 값이다(app/widgets/view.py)
-    "cardGap": 12,
-    "cardButton": 20,  # 카드 버튼 한 변(px) — 지금 앱과 같은 20×20(설계 §12.1 카드 배치)
+    # 카드 사이(px) — 띠 목록이라 0이다. 행은 구분선(cardSeparator) 하나로 나눈다(설계 §13, #611). 카드 목록
+    # 위아래 여백도 이 값이다(app/widgets/view.py)
+    "cardGap": 0,
+    # 카드 버튼 한 변(px) — 그림 칸 16(actionGlyph) 둘레 4씩. 1줄(16)보다 커서 상자 세로 가운데를 1줄 가운데에
+    # 맞춰 위아래로 4씩 넘친다 — 2줄 제목을 덮지 않는다(widget.py::_placeCardButtons, 176j)
+    "cardButton": 24,
     "cardStatusIcon": 16,  # 3줄 상태 원 아이콘 지름(px) — 메뉴 버블과 같은 그림
-    # 고른 카드 테두리 두께(px) — 테두리 1px 자리를 강조색으로 덮고 안쪽으로 1px 더(프로토 SELECT_BORDER, #561).
-    # 카드 면이 그린다 — QSS 테두리 폭을 바꾸면 안쪽 자리가 줄어 줄 배치가 1px 움직인다
-    "cardSelectBorder": 2,
+    # 고른 행 왼쪽 끝 강조색 세로 띠 폭(px) — 체크 원과 함께 고름을 알린다(바탕은 그대로, #611 176p). 카드 면과
+    # progress bar가 그린다(띠가 진행 막대 위) — 줄 배치는 그대로다. 3 · 4 · 5 비교 뒤 4(오너 2026-11-15)
+    "cardSelectBar": 4,
     # 선택 모드의 체크 원(#561) — 썸네일 왼쪽 위에 얹는다. 썸네일 위라 카드 폭 · 줄 배치는 그대로다
-    "cardPickMark": 20,  # 체크 원 지름(px) — 카드 버튼(cardButton)과 같은 크기
+    "cardPickMark": 20,  # 체크 원 지름(px) — 카드 버튼(24)이 커질 때 그대로 뒀다(176j — 20 · 24 비교 그림)
     "cardPickMarkCompact": 16,  # 썸네일 줄이기의 체크 원 지름(px) — 썸네일 높이 38에서 그림을 덜 가린다
     "cardPickMarkInset": 4,  # 썸네일 왼쪽 · 위 끝 ↔ 체크 원(px)
-    # 카드의 키보드 focus ring(#561) — 목록이 초점 카드 바깥에 하나만 그린다(app/widgets/focus_ring.py).
-    # 띄움 + 굵기 = 4 — 카드 사이(cardGap 12) 안에 든다
-    "focusRingGap": 2,  # 카드 테두리 바깥 끝 ↔ focus ring(px)
+    # 카드의 키보드 focus ring(#561) — 목록이 초점 행 안쪽 가장자리에 하나만 그린다(app/widgets/focus_ring.py,
+    # 설계 §13 · #611). 행끼리 붙어 바깥에 띄울 자리가 없다
     "focusRingWidth": 2,  # focus ring 굵기(px)
     # ---- 선택 줄(#561 — 설계 §12.1 「선택 모드」, 프로토 shell.py SELECT_*) ----
     "selectBarGap": 4,  # 헤더바 아래끝 ↔ 선택 줄 위끝 — 말풍선 ↔ 대상(tipGap)과 같은 떠 있는 것 간격
@@ -107,30 +113,42 @@ METRICS = {
     "selectSepHeight": 16,  # 선택 줄의 글 ↔ 버튼 묶음 구분선 높이 — 버튼 안 도형(16)과 같은 높이
     "thumbRadius": 8,  # 썸네일 모서리 — 카드보다 작아야 안쪽이 자연스럽다
     "barHeight": 4,  # 하단 진행바 두께(진행분이 있을 때 — 진행·일시정지 — 보임)
-    "actionGlyph": 12,  # 조작 아이콘(일시정지·재개·재시도·폴더·삭제) 도형 한 변 — cardButton 버튼 안에 그려진다
-    "barGlyph": 14,  # 하단바 아이콘 버튼(▶ ‖ ■) 도형 한 변 — 버튼은 글 버튼 높이의 정사각이다(#504)
+    # 카드 조작 아이콘(편집 · 구간 · 일시정지 · 재개 · 재시도 · 폴더 · 삭제)과 구간 창 ✕ 도형 한 변 — cardButton 상자
+    # 안에 그려진다. 바 안 드롭다운의 📁는 글 옆이면 menuIcon · 아이콘만이면 narrowIcon을 쓴다(176k)
+    "actionGlyph": 16,
+    "barGlyph": 20,  # 바 아이콘 칸(하단바 ▶ ‖ ■ 등) 도형 한 변 — 상자 32 안, narrowIcon과 같다(176j)
     # ---- 메뉴바 상태 버블(#523, 설계 §2) — 메뉴 버튼 오른쪽 안쪽 여백에 늘 잡아 두는 자리 ----
     # 수치는 프로토(shell.py BADGE_SIDE 16 · 버블 자리 여백 29 · 버튼 오른끝 ↔ 버블 7)를 따른다(오너 실기 2026-11-07)
     "menuBubble": 16,  # 버블(원) 지름 — 기호는 16 격자에 그려 이 크기에서 프로토와 같다
     "menuBubbleGap": 7,  # 메뉴 이름 글 ↔ 버블 사이
     "menuBubbleInset": 7,  # 버튼 오른쪽 바깥 끝(테두리 포함) ↔ 버블
+    # ---- 메뉴바 탭 — 밑줄 탭(#611, 176d 그림 ③): 면 없이 글, 고른 탭만 아래 강조색 밑줄 ----
+    "menuTabPadX": 5,  # 탭 왼쪽 안쪽 여백 — 투명 테두리 1 + 5 = 탭 왼쪽 끝 ↔ 글 6(176d 그림 ③과 같다)
+    "menuUnderline": 2,  # 고른 탭 밑줄 굵기 — 탭 아래끝에 탭 폭 그대로(왼쪽 끝 = 탭 왼쪽 끝)
+    "menuFocusPadX": 4,  # 키보드 초점 상자 ↔ 글 좌우
+    "menuFocusPadY": 2,  # 탭 위끝 ↔ 초점 상자 · 초점 상자 ↔ 밑줄 자리
     # ---- 상단·하단 바 & 창 ----
     "framePadding": 8,  # 상단·하단 바 안쪽 여백 — cardPadding과 같으면 정렬선이 관통
     "frameRadius": 8,  # 상단·하단 바 모서리
     # 창 가장자리 ↔ 바 안 내용 · 카드 바깥 끝의 좌우 여백 — 메뉴바 · 헤더바 · 하단바의 안쪽 가로
-    # 여백과 카드 목록이 이 값 하나를 읽는다(§11.1). 12: 스크롤바(scrollBarWidth 8)가 보일 때 카드 ↔
-    # 스크롤바가 4라 focus ring(띄움 2 + 굵기 2)이 네 변 모두 같은 모양으로 들어간다. 16은 상단 버튼이
-    # 가운데로 몰려 보였다(오너 실기 2026-11-11, #561 · #580)
+    # 여백과 카드 목록이 이 값 하나를 읽는다(§11.1). 16은 상단 버튼이 가운데로 몰려 보였다(오너 실기
+    # 2026-11-11, #561 · #580). 카드 목록의 겹친 스크롤바는 행 안쪽 오른쪽 여백(cardPadding) 자리에 그려진다
     "outerMargin": 12,
-    # ---- 스크롤바(style.qss QScrollBar — 앱 전체의 세로 · 가로 스크롤바가 함께 쓴다) ----
-    "scrollBarWidth": 8,  # 세로 스크롤바 폭 · 가로 스크롤바 높이 — 카드 목록 오른쪽 여백(outerMargin) 안에 든다
+    # ---- 스크롤바(style.qss QScrollBar — 카드 목록 밖의 세로 · 가로 스크롤바가 함께 쓴다) ----
+    "scrollBarWidth": 8,  # 세로 스크롤바 폭 · 가로 스크롤바 높이
     "scrollHandleRadius": 4,  # 손잡이 모서리 — 폭의 절반이라 손잡이 양끝이 반원이다
+    # 카드 목록의 겹친 스크롤바(app/widgets/overlay_scrollbar.py, #611) — 행 오른쪽 안쪽 여백 12 자리 가운데에
+    # 놓인다. 굵음 8이면 막대 ↔ 행 안 버튼 2 · 막대 ↔ 창 끝 2(굵음 10은 버튼과 1px라 붙어 보였다 — 176c 비교 그림)
+    "overlayBarThin": 6,  # 평소 굵기
+    "overlayBarThick": 8,  # 막대 자리에 포인터를 대거나 끄는 동안의 굵기 — scrollBarWidth와 같다
     "initialWidthMax": 800,  # 첫 실행 초기 창 폭의 상한 — 콘텐츠 최대폭이 아니다(#253, 유저는 얼마든지 넓힐 수 있다)
     # ---- 셸 바 컨트롤(#529, 설계 §11.2 · §11.3 · §11.7) ----
     "barControl": 32,  # 바 컨트롤(메뉴 버튼 등) 높이
     "controlRadius": 6,  # 바 컨트롤 모서리
     "barPadY": 8,  # 메뉴바 안쪽 여백 세로 — 창 위끝 ↔ 메뉴 버튼
-    "narrowIcon": 16,  # 좁은 폭 아이콘 모양(정렬 ⇅ · 저장 위치 📁) 도형 한 변 — 아이콘 한 벌 크기(§11.3)
+    # 바 아이콘 도형 한 변 — 톱니바퀴 · 선택 · 「+」 · 정렬 ⇅ · 저장 위치 📁(아이콘만) · 하단 칸 아이콘. 상자 32 안에서
+    # 둘레 6(176j). 메뉴 팝업 줄 아이콘 · 글 옆 드롭다운 📁(menuIcon)는 16이다(176k)
+    "narrowIcon": 20,
     "sortDot": 3,  # 기본 정렬이 아닐 때 정렬 아이콘 상자 안 점의 반지름(프로토 SORT_DOT)
     "sortDotInset": 7,  # 상자 오른쪽 · 위 끝 ↔ 점 가운데(프로토 SortIconButton)
     # ---- 드롭다운 메뉴 D(#536, 설계 §12.1 「드롭다운 메뉴」 · 프로토 shell.py MENU_*) ----
@@ -157,6 +175,9 @@ METRICS = {
     # ---- 공통 형태 ----
     "radius": 8,  # 버튼·입력창 등 일반 모서리
     "buttonPadX": 14,  # 기본 버튼 좌우 안쪽 여백
+    # URL 입력창 안쪽 좌우 여백 — 펼침 버튼(app/widgets/header_controls.py BUTTON_PADDING)과 같은 값(#611)
+    "fieldPadX": 10,
+    "fieldPadY": 5,  # 입력창 · 콤보 안쪽 위아래 여백 — 테두리가 네 변 1px라 초점 때도 그대로다(#611)
 }
 
 #: 글자 위계 — 위(제목)에서 아래(경로)로 무게가 내려간다. 값은 QSS 문자열.
@@ -170,10 +191,20 @@ FONTS = {
 DARK = {
     # ---- 바탕 ----
     "windowBg": "#1b1c1f",  # 창 배경
-    "surface": "#24262b",  # 헤더·하단 바 같은 패널
-    "surfaceAlt": "#2f3239",  # 기본 버튼·입력창 바탕
+    "surface": "#24262b",  # 떠 있는 패널 — 드롭다운 메뉴 · 콤보 팝업 · 설정 창 그룹 상자
+    # 메뉴바 · 헤더바 · 하단바 면 — 176q 카드 면(#2b2d33)에서 한 단계(ΔE00 약 3.0) 어둡게 정했다. 176r에서 카드 면을
+    # 내린 뒤 거리는 1.65다. 헤더가 목록 첫 행처럼 읽히지 않게 바를 목록과 다른 면으로 둔다(#611 176i — 176h 바 면
+    # (A)안)
+    "barBg": "#222329",
+    "surfaceAlt": "#2f3239",  # 기본 버튼 · 꺼진 ▶ · 고른 메뉴 바탕
+    # 입력 칸(URL 칸 · 펼침 칸 · QComboBox) · 고른 칩 · 켠 선택 버튼 면 — 다크는 surfaceAlt와 같다(#611 176i · 176j)
+    "fieldBg": "#2f3239",
     "surfaceHover": "#383c44",
     "surfacePressed": "#282b31",
+    # 고른 칩 · 켠 선택 버튼 면 — 176k ~ 176u의 바 버튼 호버 면 값이다. 그 위 한 단계 더 간 #60636c는 너무
+    # 밝았다(오너 칩 실기 2026-11-17, #611 176v). 바 버튼 호버 · 눌림 면(barHover · barPressed)은 이 값과
+    # 바 면에서 파생한다(`_bar_faces`)
+    "barSelected": "#4c5159",
     "menuHover": "#2c2f35",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 2.9, #536)
     "rowHoverBg": "#242629",  # 창 바탕 위 목록 행(구간 행) 호버 띠 — 창 바탕에서 밝게 한 단계(ΔE00 약 3.2, #586)
     "shadow": "#000000",  # 말풍선 그림자 — 그릴 때 불투명도를 낮춰 쓴다(#536)
@@ -182,10 +213,15 @@ DARK = {
     # 말풍선(툴팁) 떠 있는 면 — 카드(cardBg)보다 한 단계 밝게(프로토 demoFloat 대비 1.25 규칙, 흐린 글 4.5를 지키게
     # 1.23). 바 면과 1.36 · 글 9.10 · 흐린 글(단축키) 4.56(#536)
     "tipBg": "#393b43",
-    "thumbBg": "#1f2126",  # 썸네일 자리표시 바탕
+    # 썸네일 자리표시 바탕 — 176r에서 카드 평소 면을 내린 만큼(OKLab 밝기, ΔE00 약 1.5) 같이 내려 카드 면과의 거리를
+    # 176q 수준(ΔE00 약 3.85)으로 되돌렸다(#611 176s)
+    "thumbBg": "#1a1c21",
     # ---- 선·글자 ----
-    "border": "#3a3d45",
+    "border": "#3a3d45",  # 구분선 · 툴팁 · 그룹 상자 · 기본 버튼 테두리
     "borderStrong": "#4c515b",
+    # 입력 칸(URL 칸 · 펼침 칸 · QComboBox) 네 변 테두리 — 세 후보 가운데 (나)로 정함: 칸 면과 2.40(#611 176i).
+    # 호버(`fieldEdgeHover`)는 이 값에서 파생한다 — 이 값 하나만 바꾸면 된다
+    "fieldEdge": "#676b72",
     "text": "#e6e8ec",
     "textMuted": "#a0a6b0",
     "textDisabled": "#6b7078",
@@ -204,18 +240,25 @@ DARK = {
     # 안 고른 체크 원의 바탕 — 그릴 때 불투명도(PICK_MARK_SCRIM_ALPHA)를 낮춰 쓴다. 밝은 썸네일 위에서도
     # 흰 테두리가 보인다(#561)
     "pickMarkScrim": "#000000",
-    "cardBg": "#2b2d33",
-    "cardHoverBg": "#35363c",  # 카드 호버 바탕 — 카드 면에서 밝게 한 단계(ΔE00 약 3.0, 설계 §12.1, #550)
+    # 카드 평소 면 — 176q 값(#2b2d33)에서 OKLab 밝기만 ΔE00 약 1.5 내렸다. 평소 · 선택 구분이 약했다(오너 재실기
+    # 2026-11-17, #611 176r). 바 면(barBg)과 1.65 — 바 면보다 밝다
+    "cardBg": "#26282e",
+    # 고른 카드 면 — 강조색을 섞지 않는 중립 면이다(Windows 11 목록 방식, #611 176q). 그 위 글 4.5에 맞춘 값이라
+    # 176r에서 평소 면만 내리고 이 값은 그대로 뒀다(평소 면과 ΔE00 4.57). 호버 면(cardHoverBg)은 평소 면 ·
+    # 이 값 사이에서 파생한다(`_card_hover`)
+    "cardSelectedBg": "#35363c",
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) ----
     # running/failed는 기존 값을 그대로 승계한다 — 실패 빨강(#FF6969)은
     # tests/app/gui/test_failure_display.py가 상태 표시에서 직접 확인한다.
-    # 상태 글은 같은 색상에서 카드 바탕 위 4.5 이상인 가장 가까운 밝기(#512 — 대기 2.76 · 일시정지 4.13이었다)
-    "stateWaiting": "#8f949b",  # 대기 — 회색
+    # 상태 글은 같은 색상에서 카드 바탕 위 4.5 이상인 가장 가까운 밝기(#512 — 대기 2.76 · 일시정지 4.13이었다).
+    # 대기 · 일시정지는 고른 카드 면(cardSelectedBg) 위에서도 4.5가 되게 OKLab 밝기만 더 올렸다(3.94였다,
+    # #611 176m)
+    "stateWaiting": "#9a9fa6",  # 대기 — 회색
     "stateRunning": "#55B5FF",  # 진행 — 파랑
     # 일시정지 — 진행 파랑의 채도를 뺀 강철빛 회색. 진행바가 그대로 남되
     # "돌고 있지 않다"가 색으로 읽혀야 한다(#245). 대기 회색과는 달라야
     # 한다(상태색은 정보를 나른다 — tests/app/gui/test_theme.py 상호 구별 게이트).
-    "statePaused": "#8695a8",
+    "statePaused": "#91a0b3",
     "stateFinished": "#4CC38A",  # 완료 — 초록
     "stateFailed": "#FF6969",  # 실패 — 빨강
     # 경고 · 정보(#523, 설계 §12.1 상태 색) — 원래 색의 OKLCH 색상각 그대로 밝기만 옮긴 값: 기호(onAccent) ↔ 원
@@ -233,19 +276,32 @@ DARK = {
 #: 두 표를 구분 없이 참조한다). 상태색 중 running/finished/failed는 DARK의
 #: 파스텔 톤을 그대로 쓰면 흰 배경 위에서 대비가 낮아 거의 안 보인다(카드
 #: 테두리 1px, 진행바 칸 채우기 둘 다 실측 확인) — 그래서 이 세 값만 더
-#: 짙게 눌렀다. stateWaiting(#6b7078)은 원래도 중간 회색이라 흰 배경에서도
-#: 대비가 충분해 그대로 재사용한다. accent/onAccent도 그대로 재사용한다 —
+#: 짙게 눌렀다. accent/onAccent도 그대로 재사용한다 —
 #: 이 값이 칠하는 곳은 항상 accent 배경 위(버튼 자체) 아니면 accent 배경 위
 #: 흰 글자라 창 바탕 밝기와 무관하다.
 LIGHT = {
     # ---- 바탕 ----
-    "windowBg": "#f2f3f5",
+    # 창 배경 — 바 면(barBg)에서 OKLab 밝기만 반 단계(ΔE00 약 1.43) 밝힌 푸른 회색, 그 위 흰 카드가 떠 있다(Windows 11
+    # 설정 앱 방식, #611 176m). 바와 같은 값이면 상하단 바와 빈 목록이 한 면으로 읽혔다(오너 칩 실기 2026-11-17,
+    # 176v). 대화상자 바탕도 같다.
+    # 라이트 바탕 넷(windowBg · barBg · cardSelectedBg · rowHoverBg)은 border의 OKLCH 색상각에 border 채도의 절반을
+    # 준 푸른 회색이다(#611 176o). 바 면 밝기는 Windows 11 바탕 #f3f3f3에 맞춘 안(오너 2026-11-17, 176p)
+    "windowBg": "#f9fafd",
     "surface": "#ffffff",
+    "barBg": "#f2f3f6",  # 바 면 — 흰 카드 면에서 어둡게(ΔE00 약 2.9, #611 176i · 176o · 176p)
     "surfaceAlt": "#eceef1",
+    # 입력 칸 · 고른 칩 · 켠 선택 버튼 면 — 회색 바 위 흰 면(Fluent 2 · Windows 11). surfaceAlt로 두면 바 면과
+    # 1.02라 면이 안 보인다(#611 176i · 176j)
+    "fieldBg": "#ffffff",
     "surfaceHover": "#e1e4e9",
     "surfacePressed": "#d5d9df",
+    # 고른 칩 · 켠 선택 버튼 면 — 다크와 같은 규칙: 176k ~ 176u의 바 버튼 호버 면 값. 그 위 한 단계 더 간
+    # #aaacb2는 너무 어두웠다(오너 칩 실기 2026-11-17, #611 176v)
+    "barSelected": "#c2c5c9",
     "menuHover": "#f0f1f3",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 3.0, #536)
-    "rowHoverBg": "#e4e5e6",  # 창 바탕 위 목록 행(구간 행) 호버 띠 — 창 바탕에서 어둡게 한 단계(ΔE00 약 3.0, #586)
+    # 창 바탕 위 목록 행(구간 행) 호버 띠 — 창 바탕에서 어둡게 한 단계(ΔE00 약 3.3, #586). 176v에서 창 바탕을 밝힌
+    # 만큼 OKLab 밝기만 올렸다(#e4e4e7이면 4.80)
+    "rowHoverBg": "#eaeaed",
     "shadow": "#000000",  # 말풍선 그림자 — 그릴 때 불투명도를 낮춰 쓴다(#536)
     # 등록 오류 말풍선 면 — 실패 빨강의 색상을 옅게 띤 밝은 면. 글(text) 14.61 · 테두리(stateFailed) 4.59(#536)
     "errorTipBg": "#fdecec",
@@ -254,10 +310,13 @@ LIGHT = {
     "tipBg": "#ffffff",
     "thumbBg": "#e6e8ec",
     # ---- 선·글자 ----
-    "border": "#d5d8de",
+    "border": "#d5d8de",  # 구분선 · 툴팁 · 그룹 상자 · 기본 버튼 테두리
     "borderStrong": "#b9bec7",
+    "fieldEdge": "#989ba0",  # 입력 칸 네 변 테두리 — (나)로 정함(#611 176i)
     "text": "#1c1e22",
-    "textMuted": "#5b6069",
+    # 흐린 글 — 호버한 실패 카드 면(cardTintFailedHover) 위에서도 4.5가 되게 OKLab 밝기만 낮췄다(4.12였다, #611 176m).
+    # 바 · 설정 창 · 메뉴의 흐린 글도 이 값이다
+    "textMuted": "#555a63",
     "textDisabled": "#9a9fa8",
     # ---- 강조(주 동작 버튼) ----
     # 채움 색 규칙(#512): 라이트는 채움이 어두운 톤, 그 안 글자 · 그림은 흰색
@@ -275,40 +334,59 @@ LIGHT = {
     # 흰 테두리가 보인다(#561)
     "pickMarkScrim": "#000000",
     "cardBg": "#ffffff",
-    "cardHoverBg": "#f0f0f0",  # 카드 호버 바탕 — 카드 면에서 어둡게 한 단계(ΔE00 약 3.0, 설계 §12.1, #550)
+    # 고른 카드 면 — 바 면(= 창 배경)에서 어둡게 한 단계(ΔE00 약 3.2, 176p). 카드 면에서 한 단계면 바 면과
+    # 같아져 고른 면이 바탕에 묻힌다(카드 면에서는 ΔE00 약 5.8, #611 176m). 176p까지의 호버 면 값 그대로다 —
+    # 호버 면(cardHoverBg)은 이 값에서 반 단계로 파생한다(#611 176q)
+    "cardSelectedBg": "#e4e4e7",
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) — 흰 배경 대비용으로 짙게 눌렀다 ----
-    "stateWaiting": "#6b7078",
-    "stateRunning": "#1f6fd6",
-    "statePaused": "#6a778b",  # 일시정지 — 흰 배경에서 진행 파랑과 구별되는 무채색 강철빛
+    # 대기 · 받는 중 · 일시정지는 고른 카드 면(cardSelectedBg) 위에서도 4.5가 되게 같은 색상에서 OKLab 밝기만
+    # 낮췄다(3.85 · 3.77 · 3.51이었다, #611 176m)
+    "stateWaiting": "#60656c",
+    "stateRunning": "#0a61c7",
+    "statePaused": "#596679",  # 일시정지 — 흰 배경에서 진행 파랑과 구별되는 무채색 강철빛
     "stateFinished": "#288654",  # #512 — 카드 바탕 위 4.5(3.39였다)
     "stateFailed": "#d02727",  # #512 — 카드 · 헤더바 · 버튼 면(실패 칩) 위 모두 4.5(버튼 면 3.99였다)
     # #523 — 주황 #f0a33c의 색상각 그대로 밝기만 낮춤(흰 기호 4.5 · 바탕 3.0, 화면 색 범위 안으로 채도만 조금 줄어듦)
     "stateWarning": "#a66904",
-    "stateInfo": "#1f6fd6",  # 정보 — 진행 색(설계 §11.5)
+    "stateInfo": "#0a61c7",  # 정보 — 진행 색과 같은 값(설계 §11.5, #611 176n)
     # ---- 진행바 ----
     "barTrack": "#d5d8de",  # = border — 진행 막대 트랙은 카드 테두리 색(설계 §12.1, #512)
     "scrollHandle": "#c3c7cd",
     "scrollHandleHover": "#aeb3bb",
 }
 
-# ---- 카드 색조 · 채움 색(#554 — 설계 §8의 6 · §12.1) ----
-# 완료 · 실패 색조와 배경 채움 색은 리터럴로 적지 않고 카드 면 · 상태 색에서 셈한다. 색상은 상태 색의
+# ---- 카드 색조(#554 — 설계 §8의 6 · §12.1) ----
+# 완료 · 실패 색조는 리터럴로 적지 않고 카드 면 · 상태 색에서 셈한다. 색상은 상태 색의
 # OKLCH 색상각 그대로, 밝기는 카드 면과 같게 두고 채도로 세기(카드 면과의 ΔE00)를 맞춘다 — 투명도로
 # 섞으면 카드 면의 기운 때문에 색상이 상태 색에서 어긋난다. 그 위 글(본문 · 보조 · 상태 글)은 4.5를 지킨다.
 TINT_DE00 = {
     "dark": 12.0,
     "light": 10.0,
-}  # 색조 · 채움 ↔ 카드 면 ΔE00 목표 — 설계 §8의 6(오너 2026-11-02)
-TINT_TEXT_CONTRAST = 4.5  # 색조 · 채움 위 글의 대비 하한 — 설계 §11.5
-# 눌린 카드 바탕 ↔ 호버 바탕 ΔE00 목표 — 카드 면 → 호버와 같은 크기로 한 단계 더(#561)
-PRESS_DE00 = 3.0
-SRGB_EPSILON = 1e-6  # sRGB 범위 판정 허용 오차 — 0 · 1 끝 채널이 셈 오차로 밖이 되지 않게
+}  # 색조 ↔ 카드 면 ΔE00 목표 — 설계 §8의 6(오너 2026-11-02)
+TINT_TEXT_CONTRAST = 4.5  # 색조 위 글의 대비 하한 — 설계 §11.5
+# 카드 호버 면 ↔ 평소 면 ΔE00 — 선택 면(한 단계, 약 3.0)의 반 단계(Windows 11 목록 방식, #611 176q). 라이트만 쓴다
+CARD_HOVER_DE00 = 1.5
+# 호버 면을 평소 면 · 선택 면의 OKLab 가운데로 두는 스킴 — 다크는 평소 면을 내려 선택 면과 4.57이 됐으므로
+# 반 단계 대신 가운데로 둔다(#611 176r)
+CARD_HOVER_MIDPOINT = {"dark": True, "light": False}
+# 색조 채도를 셈하는 기준 면 — 176r에서 다크 평소 면만 내리고 색조 선택 면을 그대로 두려고, 채도는 176q 평소
+# 면에서 셈하고 밝기만 옮긴다. None이면 지금 평소 면(cardBg)에서 셈한다
+TINT_CHROMA_BASE = {"dark": "#2b2d33", "light": None}
+# 입력 칸 테두리 한 단계 ΔE00 — border → borderStrong 한 단계와 같은 크기(#611 176g · 176h)
+FIELD_STEP_DE00 = 6.7
+# 입력 칸 호버 테두리 ↔ 평소 테두리 ΔE00 — 두 단계. 한 단계로는 호버가 잘 안 보였다(오너 재실기 2026-11-17,
+# #611 176s)
+FIELD_HOVER_DE00 = 2 * FIELD_STEP_DE00
+# 바 버튼 호버 면(barHover) ↔ 고른 면(barSelected) ΔE00 — 반 단계. 카드처럼 「평소 < 호버 < 선택」이고, 호버는
+# 고른 면 쪽에 붙는다(오너 칩 실기 2026-11-17, #611 176v — 176t의 한 단계는 고른 면이 너무 진했다)
+BAR_HOVER_DE00 = FIELD_STEP_DE00 / 2
+# 바 버튼 눌림 면(barPressed)의 자리 — 호버 면 → 고른 면 OKLab 직선 위 비율(0.5 = 가운데, #611 176v)
+BAR_PRESSED_SHARE = 0.5
 
 # ---- 선택 모드의 체크 원(#561) ----
 # 정수 px가 아닌 값이라 METRICS(QSS에 "Npx"로 들어간다)에 두지 않는다
 PICK_MARK_RING_WIDTH = 1.5  # 체크 원 테두리 두께(px) — 1은 밝은 썸네일에 묻힌다
 PICK_MARK_SCRIM_ALPHA = 0.5  # 안 고른 원 바탕의 불투명도 — 흰 썸네일 위에서도 테두리와 3.0 이상이다
-PICK_MARK_CHECK_WIDTH = 2.0  # ✓ 선 굵기(px) — 지름 20일 때. 지름에 비례해 줄인다
 
 
 def _linear(value: float) -> float:
@@ -359,11 +437,6 @@ def _oklab_to_linear(lab: tuple[float, float, float]) -> tuple[float, float, flo
         -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
         -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_,
     )
-
-
-def _in_srgb(lab: tuple[float, float, float]) -> bool:
-    """OKLab 색이 sRGB 범위 안인지 — 채널을 자르지 않고 그대로 나타낼 수 있는지."""
-    return all(-SRGB_EPSILON <= value <= 1 + SRGB_EPSILON for value in _oklab_to_linear(lab))
 
 
 def _from_oklab(lab: tuple[float, float, float]) -> str:
@@ -438,33 +511,22 @@ def contrast_ratio(first: str, second: str) -> float:
 
 def _tinted(
     base: str,
-    hue_from: str | None,
+    hue_from: str,
     target: float,
     texts: tuple[str, ...],
-    keep_hue: bool = False,
 ) -> str:
     """`base`에서 `hue_from`의 색상각으로 채도만 올려 ΔE00 `target`이 되는 색 — 글 대비를 지키는 만큼만.
 
-    `hue_from`이 None이면 무채색 그대로 밝기만 옮긴다(일시정지 회색 채움 — 어두운 면이면 밝게, 밝은
-    면이면 어둡게). 밝은 면(흰 카드)은 밝기를 그대로 두고 채도만 올리면 sRGB 밖으로 나가 잘리므로, 채도를
-    올린 만큼의 절반을 밝기에서 뺀다. 이분 탐색으로 정하고, `texts`의 글이 4.5 아래로 내려가면 그 아래
-    세기에서 멈춘다.
-
-    `keep_hue`면 그래도 sRGB 밖으로 나가는 색은 채널을 자르지 않고 채도를 그 색상각에서 들어가는 만큼으로
-    줄인다 — 채널을 자르면 색상각이 밀린다(라이트 받는 중 채움이 하늘색 쪽으로 41° 밀렸다, #582). 지금은
-    받는 중 채움만 쓴다 — 다른 색조에 넣으면 라이트 실패 색조가 ΔE00 1 넘게 바뀐다.
+    밝은 면(흰 카드)은 밝기를 그대로 두고 채도만 올리면 sRGB 밖으로 나가 잘리므로, 채도를 올린 만큼의
+    절반을 밝기에서 뺀다. 이분 탐색으로 정하고, `texts`의 글이 4.5 아래로 내려가면 그 아래 세기에서 멈춘다.
     """
     big_l, _a, _b = _oklab(base)
 
     def color_at(amount: float) -> str:
-        if hue_from is None:
-            step = amount if big_l < 0.6 else -amount
-            return _from_oklab((big_l + step, 0.0, 0.0))
         _l, ha, hb = _oklab(hue_from)
         hue = math.atan2(hb, ha)
         lightness = big_l - amount / 2 if big_l > 0.85 else big_l
-        chroma = _chroma_in_srgb(lightness, hue, amount) if keep_hue else amount
-        return _from_oklab((lightness, chroma * math.cos(hue), chroma * math.sin(hue)))
+        return _from_oklab((lightness, amount * math.cos(hue), amount * math.sin(hue)))
 
     def readable(color: str) -> bool:
         return all(contrast_ratio(text, color) >= TINT_TEXT_CONTRAST for text in texts)
@@ -480,45 +542,10 @@ def _tinted(
     return color_at(low)
 
 
-def _chroma_in_srgb(lightness: float, hue: float, chroma: float) -> float:
-    """그 밝기 · 색상각(라디안)에서 `chroma`를 넘지 않고 sRGB 안에 드는 가장 큰 채도 — 이분 탐색."""
-
-    def fits(value: float) -> bool:
-        return _in_srgb((lightness, value * math.cos(hue), value * math.sin(hue)))
-
-    if fits(chroma):
-        return chroma
-    low, high = 0.0, chroma
-    for _ in range(40):
-        middle = (low + high) / 2
-        if fits(middle):
-            low = middle
-        else:
-            high = middle
-    return low
-
-
 def _hover_of(tint: str, card: str, hover: str) -> str:
-    """색조 면의 호버 — 카드 면 → 호버 바탕과 같은 OKLab 밝기 차를 색조에 옮긴다(설계 §12.1 카드 호버)."""
+    """색조 면의 호버 · 선택 면 — 카드 면 → `hover`와 같은 OKLab 밝기 차를 색조에 옮긴다(설계 §12.1 카드 호버)."""
     big_l, a, b = _oklab(tint)
     return _from_oklab((big_l + _oklab(hover)[0] - _oklab(card)[0], a, b))
-
-
-def _pressed_of(card: str, hover: str) -> str:
-    """눌린 카드 바탕 — 호버 바탕에서 카드 면 → 호버와 같은 쪽으로 밝기만 더 옮겨 ΔE00 `PRESS_DE00`이 되는 색.
-
-    다크는 더 밝게, 라이트는 더 어둡게 간다(#561). 색상 · 채도는 호버 바탕 그대로다.
-    """
-    big_l, a, b = _oklab(hover)
-    direction = 1.0 if big_l >= _oklab(card)[0] else -1.0
-    low, high = 0.0, 0.2
-    for _ in range(40):
-        middle = (low + high) / 2
-        if delta_e00(hover, _from_oklab((big_l + direction * middle, a, b))) < PRESS_DE00:
-            low = middle
-        else:
-            high = middle
-    return _from_oklab((big_l + direction * low, a, b))
 
 
 def _readable_on(color: str, grounds: tuple[str, ...]) -> str:
@@ -539,37 +566,97 @@ def _readable_on(color: str, grounds: tuple[str, ...]) -> str:
     return color
 
 
+def _field_hover(edge: str, face: str) -> str:
+    """입력 칸 호버 테두리 — 평소 테두리에서 칸 면과 멀어지는 쪽으로 밝기만 ΔE00 `FIELD_HOVER_DE00` 옮긴 색.
+
+    평소 색(`fieldEdge`) 하나만 바꾸면 호버가 따라오게 파생한다(#611 176h). 옮기는 거리는 두 단계다 — 다크는
+    밝게, 라이트는 어둡게(글 색 쪽) 간다(#611 176s).
+    """
+    big_l, a, b = _oklab(edge)
+    direction = 1.0 if _oklab(face)[0] < 0.6 else -1.0
+    step = 0.0
+    moved = edge
+    while step < 1.0 and delta_e00(edge, moved) < FIELD_HOVER_DE00:
+        step += 0.001
+        moved = _from_oklab((big_l + direction * step, a, b))
+    return moved
+
+
+def _bar_faces(table: dict) -> None:
+    """바 버튼 호버 · 눌림 면(`barHover` · `barPressed`)을 바 면 · 고른 면에서 셈해 표에 더한다.
+
+    호버 면은 바 면 → 고른 면 OKLab 직선 위에서 고른 면과 ΔE00 `BAR_HOVER_DE00`(반 단계) 떨어진 첫 지점이다
+    — 고른 면에서 바 면 쪽으로 걸어 처음 닿는 자리. 눌림 면은 호버 면 → 고른 면 직선의 `BAR_PRESSED_SHARE`
+    지점이다. 바 면 · 고른 면이 바뀌면 따라온다(#611 176v).
+    """
+    bar, chosen = _oklab(table["barBg"]), _oklab(table["barSelected"])
+
+    def along(share: float) -> str:
+        return _from_oklab(tuple(b + (c - b) * share for b, c in zip(bar, chosen, strict=True)))
+
+    share = 1.0
+    hover = table["barSelected"]
+    while share > 0.0 and delta_e00(table["barSelected"], hover) < BAR_HOVER_DE00:
+        share -= 0.0005
+        hover = along(share)
+    table["barHover"] = hover
+    near = _oklab(hover)
+    table["barPressed"] = _from_oklab(
+        tuple(h + (c - h) * BAR_PRESSED_SHARE for h, c in zip(near, chosen, strict=True))
+    )
+
+
+def _card_hover(table: dict, scheme: str) -> None:
+    """카드 호버 면(`cardHoverBg`)을 표에 더한다 — 평소 면 → 선택 면 OKLab 직선 위의 한 지점.
+
+    라이트는 ΔE00 `CARD_HOVER_DE00` 지점, 다크는 가운데(`CARD_HOVER_MIDPOINT`, #611 176r)다. 선택 면 쪽으로
+    가므로 라이트의 푸른 회색 기운도 선택 면과 같은 쪽이다. 선택 면보다 옅어 호버 ≠ 선택이고 그 위 글 대비는
+    평소 면 · 선택 면 사이에 든다(#611 176q).
+    """
+    rest, goal = _oklab(table["cardBg"]), _oklab(table["cardSelectedBg"])
+    if CARD_HOVER_MIDPOINT[scheme]:
+        table["cardHoverBg"] = _from_oklab(
+            tuple((r + g) / 2 for r, g in zip(rest, goal, strict=True))
+        )
+        return
+    moved = table["cardBg"]
+    for step in range(1, 1001):
+        share = step / 1000
+        moved = _from_oklab(tuple(r + (g - r) * share for r, g in zip(rest, goal, strict=True)))
+        if delta_e00(table["cardBg"], moved) >= CARD_HOVER_DE00:
+            break
+    table["cardHoverBg"] = moved
+
+
 def _card_tints(table: dict, scheme: str) -> None:
-    """완료 · 실패 색조(+ 호버 · 그 위 상태 글 색)와 받는 중 · 일시정지 채움 색을 표에 더한다.
+    """완료 · 실패 색조(+ 호버 · 선택 면 · 그 위 상태 글 색)를 표에 더한다.
 
     색조 세기는 목표(ΔE00)를 먼저 정한다(설계 §8의 6). 본문 · 보조 글은 그 세기에서 4.5를 지키는지
-    본다. 상태 글(완료 초록 · 실패 빨강)은 색조 위에서 4.5가 되게 같은 색상의 밝기만 옮긴 색을 따로 둔다
-    (`state…OnTint`) — 라이트의 완료 초록은 흰 카드에서 이미 4.5라 색조가 조금만 생겨도 4.5 아래로 내려간다.
+    본다. 호버 · 선택 면은 중립 카드의 평소 → 호버 · 선택 밝기 차를 색조에 옮긴다(#611 176q). 상태 글(완료
+    초록 · 실패 빨강)은 색조 세 면 위에서 4.5가 되게 같은 색상의 밝기만 옮긴 색을 따로 둔다(`state…OnTint`) —
+    라이트의 완료 초록은 흰 카드에서 이미 4.5라 색조가 조금만 생겨도 4.5 아래로 내려간다.
 
-    눌린 바탕(`…Pressed`, #561)은 호버에서 한 단계 더 간 색이다 — 색조는 카드 면 → 눌린 바탕의 밝기 차를,
-    채움은 호버 → 눌린 바탕의 밝기 차를 옮긴다(채움은 호버에서 바뀌지 않아 한 단계만 간다). 누르는 동안만
-    보이는 면이라 세기(`PRESS_DE00`)를 먼저 지킨다 — 본문 글은 4.5를 지키고 보조 글은 그 아래로 내려간다
-    (tests/app/gui/test_theme_contrast.py가 하한을 잰다).
+    채도는 `TINT_CHROMA_BASE` 면에서 셈하고, 평소 · 호버 · 선택 면은 그 면 → 각 중립 면의 밝기 차만 옮긴다 —
+    다크는 평소 면을 내려도 색조 선택 면이 그대로다(#611 176r).
     """
-    card, hover, target = table["cardBg"], table["cardHoverBg"], TINT_DE00[scheme]
-    pressed = _pressed_of(card, hover)
-    table["cardPressedBg"] = pressed
+    card, target = table["cardBg"], TINT_DE00[scheme]
+    base = TINT_CHROMA_BASE[scheme] or card
     texts = (table["text"], table["textMuted"])
     for name, state in (("Finished", "stateFinished"), ("Failed", "stateFailed")):
-        tint = _tinted(card, table[state], target, texts)
+        tint_at_base = _tinted(base, table[state], target, texts)
+        tint = _hover_of(tint_at_base, base, card) if base != card else tint_at_base
         table[f"cardTint{name}"] = tint
-        table[f"cardTint{name}Hover"] = _hover_of(tint, card, hover)
-        table[f"cardTint{name}Pressed"] = _hover_of(tint, card, pressed)
-        table[f"{state}OnTint"] = _readable_on(table[state], (tint, table[f"cardTint{name}Hover"]))
-    # 배경 채움 위의 상태 색(상태 원 · 상태 글)은 대비 조건 밖이다 — 설정에서 고르는 선택의 예외(설계 §12.1
-    # 상태 색). 본문 · 보조 글만 4.5를 지킨다
-    # 받는 중 채움은 강조색의 색상각이다 — 상태 글 · 막대(stateRunning)의 색상각이면 다크가 청록 쪽으로
-    # 보였다. 라이트는 sRGB 밖으로 나가므로 채널을 자르지 않고 채도를 줄여 색상각을 지킨다(오너 2026-11-12, #582)
-    table["cardFillRunning"] = _tinted(card, table["accent"], target, texts, keep_hue=True)
-    table["cardFillPaused"] = _tinted(card, None, target, texts)
-    for name in ("Running", "Paused"):
-        table[f"cardFill{name}Pressed"] = _hover_of(table[f"cardFill{name}"], hover, pressed)
+        table[f"cardTint{name}Hover"] = _hover_of(tint_at_base, base, table["cardHoverBg"])
+        table[f"cardTint{name}Selected"] = _hover_of(tint_at_base, base, table["cardSelectedBg"])
+        grounds = (tint, table[f"cardTint{name}Hover"], table[f"cardTint{name}Selected"])
+        table[f"{state}OnTint"] = _readable_on(table[state], grounds)
 
+
+# 메뉴 버튼 오른쪽 안쪽 여백(px) = 바깥 끝 ↔ 버블 + 버블 + 글 ↔ 버블 − 테두리 1px(style.qss 메뉴바 절)
+# — 버블이 숨어도 자리를 둔다(#523, 설계 §2). 초점 상자 자리(app/widgets/menu_button.py)도 이 값을 읽는다
+MENU_BUTTON_PAD_RIGHT = (
+    METRICS["menuBubbleInset"] + METRICS["menuBubble"] + METRICS["menuBubbleGap"] - 1
+)
 
 # METRICS(정수)와 FONTS(문자열)를 두 색 표에 자동 주입한다 — .qss는
 # @cardPadding·@fontSizeTitle 같은 이름으로 참조하고, 파이썬 코드는
@@ -579,13 +666,15 @@ for _table in (DARK, LIGHT):
     _table.update({_name: f"{_value}px" for _name, _value in METRICS.items()})
     _table.update(FONTS)
     _table["barRadius"] = f"{METRICS['barHeight'] // 2}px"
-    # 메뉴 버튼 오른쪽 안쪽 여백 = 바깥 끝 ↔ 버블 + 버블 + 글 ↔ 버블 − 테두리 1px(style.qss QPushButton)
-    # — 버블이 숨어도 자리를 둔다(#523, 설계 §2)
-    _table["menuButtonPadRight"] = (
-        f"{METRICS['menuBubbleInset'] + METRICS['menuBubble'] + METRICS['menuBubbleGap'] - 1}px"
-    )
+    _table["menuButtonPadRight"] = f"{MENU_BUTTON_PAD_RIGHT}px"
+_card_hover(DARK, "dark")
+_card_hover(LIGHT, "light")
 _card_tints(DARK, "dark")
 _card_tints(LIGHT, "light")
+DARK["fieldEdgeHover"] = _field_hover(DARK["fieldEdge"], DARK["fieldBg"])
+LIGHT["fieldEdgeHover"] = _field_hover(LIGHT["fieldEdge"], LIGHT["fieldBg"])
+_bar_faces(DARK)
+_bar_faces(LIGHT)
 
 #: 카드 상태 이름 — 파이썬(`setProperty`)과 QSS(`[state="..."]`)가 공유하는 어휘.
 #: 상태 아이콘·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서

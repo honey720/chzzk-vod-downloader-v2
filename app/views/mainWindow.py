@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -24,6 +23,7 @@ from PySide6.QtCore import (
     QEvent,
     QMargins,
     QMetaObject,
+    QObject,
     QPoint,
     QRect,
     QSize,
@@ -31,7 +31,7 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
 )
-from PySide6.QtGui import QKeyEvent, QKeySequence, QResizeEvent
+from PySide6.QtGui import QKeyEvent, QKeySequence, QResizeEvent, QShortcut
 
 from app.system.free_space import FreeSpaceProbe
 from app.system.process_memory import log_process_memory, resident_bytes
@@ -54,6 +54,7 @@ from app.widgets.icons import IconButton
 from app.widgets.menu_button import MenuButton
 from app.widgets.narrow_steps import step_level
 from app.widgets.select_bar import SelectBar
+from app.widgets.focus_ring import KeyFocusMarker
 from app.widgets.tip_bubble import ErrorTip, close_floats_if_left, install_tips, shortcut_tip
 from app.widgets.os_notice import DownloadEndNotice
 from app.widgets.view import ContentListView
@@ -66,12 +67,15 @@ logger = logging.getLogger(__name__)
 FRAME_RETRY_MS = 50  # 표시 뒤 프레임 여백을 다시 보는 간격(ms) — X11 창 관리자는 테두리를 표시 뒤 비동기로 붙인다 (#487)
 FRAME_RETRIES = 10  # 그만큼(약 0.5초) 기다려도 여백이 없으면 그만둔다 — 창 관리자가 없는 X 서버 등
 MONITOR_INTERVAL_MS = 1000  # 하단바 모니터링을 고치는 간격(ms) — 설계 §2 「1초마다」 (#504)
+# 설정 창 단축키 — Ctrl+,(macOS는 Qt가 Cmd+,로 읽고 그린다, #611). 툴팁도 이 값을 그 OS의 표기로 적는다
+SETTINGS_KEYS = "Ctrl+,"
 URL_MIN_WIDTH = (
     160  # URL 칸 최소폭(px) — 이보다 좁아지기 전에 저장 위치 버튼을 아이콘으로(프로토 11v, #529)
 )
 # 창 제목의 앱 이름 — 번역하지 않는다. 앱 데이터 폴더 이름(app/system/settings.py APP_NAME)과 따로 둔다:
 # 표시 이름을 바꿔도 데이터 폴더가 그대로라 설정을 잃지 않는다 (#492)
 APP_DISPLAY_NAME = "Chzzk VOD Downloader"
+
 # 창 최소 높이를 셀 때 쓰는 견본 카드(완료 상태 — _referenceCardHeight)의 글 — 실제 목록 카드와 무관한
 # 고정값이라 카드를 넣고 빼도 최소 높이가 바뀌지 않는다 (#492). 썸네일 · 채널 그림 주소는 비워 네트워크를 타지 않는다
 REFERENCE_CARD_METADATA = {
@@ -90,6 +94,15 @@ WORST_PROGRESS = 99.9
 WORST_RECEIVED = (
     1023 * 1024 * 1024 + 1000 * 1024
 )  # 견본 카드의 받은 바이트 — 「1023.98 MB」(MB 표기의 끝)
+
+
+def settings_shortcut() -> QKeySequence:
+    """설정 창 단축키(`SETTINGS_KEYS`)를 만든다.
+
+    모듈 수준에서 만들지 않는다 — 진입점이 `QApplication`보다 먼저 이 모듈을 import한다. 키 이름 해석은
+    앱 객체가 생긴 뒤에 한다(메인 창을 만들 때, #611).
+    """
+    return QKeySequence(SETTINGS_KEYS)
 
 
 def _worst_card_items() -> list[ContentItem]:
@@ -343,14 +356,16 @@ class VodDownloader(QMainWindow):
         self.menuDownloadButton.setProperty("on", True)
         self.menuDownloadButton.toggled.connect(self._onMenuToggled)
         self.appMenuLayout.addWidget(self.menuDownloadButton)
-        self.menuSettingsButton = QPushButton(self.appMenuBar)
-        self.menuSettingsButton.setObjectName("menuSettingsButton")
-        self.menuSettingsButton.setProperty("role", "menu")
-        self.menuSettingsButton.setProperty("on", False)
-        self.appMenuLayout.addWidget(self.menuSettingsButton)
         self.appMenuLayout.addStretch(1)
-        # 고른 화면 메뉴는 하나 — 그룹이 배타라 눌린 「VOD 다운」을 다시 눌러도 풀리지 않는다.
-        # 「설정」은 화면이 아니라 창을 여는 메뉴라 그룹에 넣지 않는다(설정 화면 개편 전까지)
+        # 설정 — 메뉴바 오른쪽 끝 톱니바퀴 버튼이 설정 창(모달)을 연다. 메뉴바 탭은 작업 화면만 둔다(설계 §4 ·
+        # §13, #611). 이름은 툴팁 「설정 · Ctrl+,」, 단축키는 setupSignals가 건다
+        self.settingsButton = IconButton(self.appMenuBar)
+        self.settingsButton.setObjectName("settingsButton")
+        self.settingsButton.setIconName("gear")
+        self.settingsButton.setGlyphMetric("narrowIcon")
+        self.settingsButton.setIdleToken("text")
+        self.appMenuLayout.addWidget(self.settingsButton)
+        # 고른 화면 메뉴는 하나 — 그룹이 배타라 눌린 「VOD 다운」을 다시 눌러도 풀리지 않는다
         self.appMenuGroup = QButtonGroup(window)
         self.appMenuGroup.setExclusive(True)
         self.appMenuGroup.addButton(self.menuDownloadButton)
@@ -475,8 +490,8 @@ class VodDownloader(QMainWindow):
         self.windowScrollArea.setWidget(self.contentColumn)
         window.setCentralWidget(self.windowScrollArea)
         # 탭 순서 = 화면 순서(위 → 아래, 왼쪽 → 오른쪽): 메뉴 · 헤더 1줄 · 목록 · 하단
-        QWidget.setTabOrder(self.menuDownloadButton, self.menuSettingsButton)
-        QWidget.setTabOrder(self.menuSettingsButton, self.urlInput)
+        QWidget.setTabOrder(self.menuDownloadButton, self.settingsButton)
+        QWidget.setTabOrder(self.settingsButton, self.urlInput)
         QWidget.setTabOrder(self.urlInput, self.saveLocationButton)
         QWidget.setTabOrder(self.saveLocationButton, self.fetchButton)
         # 좁은 폭 상태 드롭다운은 칩 앞 — 보이는 모양의 것만 Tab이 들른다(숨은 위젯은 건너뛴다)
@@ -501,7 +516,11 @@ class VodDownloader(QMainWindow):
         """
         window.setWindowTitle(window_title(config.get_app_version()))
         self.menuDownloadButton.setText(self.tr("VOD Download"))
-        self.menuSettingsButton.setText(self.tr("Settings"))
+        self.settingsButton.setToolTip(
+            shortcut_tip(self.tr("Settings"), settings_shortcut().toString(QKeySequence.NativeText))
+        )
+        # 글 없는 아이콘 버튼 — 툴팁은 접근성 설명일 뿐이라 이름을 따로 준다
+        self.settingsButton.setAccessibleName(self.tr("Settings"))
         self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL · Enter to add"))
         # 등록은 「+」 아이콘 버튼 — 이름 · 단축키는 툴팁(#536 — 설계 §12.1, 프로토 「등록 · Enter」)
         self.fetchButton.setToolTip(shortcut_tip(self.tr("Add"), "Enter"))
@@ -528,6 +547,34 @@ class VodDownloader(QMainWindow):
         self.selectBar = SelectBar(self.contentColumn)
         for bar in (self.appMenuBar, self.headerFrame, self.infoFrame, self.selectBar):
             install_tips(bar)
+        # 세 바의 빈 곳(초점을 받지 않는 자리)을 누르면 초점이 목록으로 간다(#611 176g). 누름을 받지 않는 글 ·
+        # 아이콘의 누름은 바까지 올라오고, 버튼 · 입력 칸처럼 누름을 받는 위젯의 누름은 올라오지 않는다
+        self._focusBars = (self.appMenuBar, self.headerFrame, self.infoFrame)
+        for bar in self._focusBars:
+            bar.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """바의 빈 곳을 왼쪽 버튼으로 누르면 초점을 목록으로 옮긴다 — 누름은 그대로 흘려보낸다(#611)."""
+        # 종류부터 본다 — 창이 지워지는 동안 오는 이벤트에서 바 튜플을 건드리지 않는다
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and event.button() == Qt.MouseButton.LeftButton
+            and watched in self._focusBars
+        ):
+            self._focusListFromBar()
+        return super().eventFilter(watched, event)
+
+    def _focusListFromBar(self) -> None:
+        """입력 칸 등에 있던 초점을 풀고 목록이 받게 한다 — 시작 초점과 같은 대상 · 같은 까닭(초점 테두리 없음).
+
+        초점이 이미 목록(목록 · 카드) 안이면 그대로 둔다 — 초점 카드 · 고름을 바꾸지 않는다.
+        """
+        focused = QApplication.focusWidget()
+        if focused is not None and (
+            focused is self.listView or self.listView.isAncestorOf(focused)
+        ):
+            return
+        self.listView.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _applyLayoutMetrics(self) -> None:
         """메뉴바 · 헤더바 · 목록 · 하단바의 여백을 theme.METRICS 토큰으로 건다 (#244 · #536).
@@ -561,7 +608,7 @@ class VodDownloader(QMainWindow):
         """메뉴바 · 헤더바 · 하단바에서 누르거나 쓰는 컨트롤 — 높이 · 커서 · 초점 · 말풍선 규칙이 같다 (#536)."""
         return [
             self.menuDownloadButton,
-            self.menuSettingsButton,
+            self.settingsButton,
             self.urlInput,
             self.saveLocationButton,
             self.fetchButton,
@@ -576,16 +623,20 @@ class VodDownloader(QMainWindow):
     def _applyBarControls(self) -> None:
         """바 컨트롤의 높이 · 커서 · 초점 정책을 건다 (#536 — 설계 §11.3 · §11.7 · §2 「말풍선」).
 
-        높이는 바 컨트롤 높이(`barControl`). 누르는 컨트롤은 손 모양 커서이고, 초점은 키보드(Tab)로만 받는다 —
-        마우스로 누른 뒤 초점 테두리(강조색)가 남지 않는다. 입력칸은 눌러서 쓰는 곳이라 초점 정책을 그대로 둔다.
+        높이는 바 컨트롤 높이(`barControl`). 누르는 컨트롤은 손 모양 커서다. 바 컨트롤(메뉴바 탭 · 톱니바퀴 ·
+        드롭다운 · 버튼)은 마우스로 누르면 초점을 받는다(Windows 콤보박스와 같음 — 누르는 순간 URL 칸 초점이 풀린다,
+        #611 176h · 176i 오너 결정). 강조색 focus ring은 키보드로 받은 초점에만 그린다(`KeyFocusMarker`).
+        입력칸은 눌러서 쓰는 곳이라 초점 정책을 그대로 둔다.
         """
         control = theme.METRICS["barControl"]
+        self._keyFocus = KeyFocusMarker(self)
         for widget in self.barControls():
             widget.setFixedHeight(control)
             if widget is self.urlInput:
                 continue
             widget.setCursor(Qt.CursorShape.PointingHandCursor)
-            widget.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            self._keyFocus.watch(widget)
 
     def _onMenuToggled(self, on: bool) -> None:
         """「VOD 다운」 고름이 바뀌면 굵은 글 속성을 따라 바꾼다(전역 QSS `[on="true"]`, #536)."""
@@ -754,7 +805,9 @@ class VodDownloader(QMainWindow):
             "헤더바 1줄": self.headerRow1Needs()[-1] + header,
             "헤더바 2줄": self.headerRow2Needs(True)[-1] + header,
             "목록": self.listView.minimumSizeHint().width(),
-            "카드": self._referenceCardWidth() + 2 * theme.METRICS["outerMargin"],
+            # 띠 행은 목록 좌우 끝까지 간다(바깥 여백 0, #611). 스크롤바는 행 위에 겹쳐 그려져 자리를 차지하지
+            # 않으므로 다 접은 카드 폭이 그대로 창 몫이다
+            "카드": self._referenceCardWidth(),
             "하단바": sum(footer_items) + gap * (len(footer_items) - 1) + footer,
         }
 
@@ -978,16 +1031,23 @@ class VodDownloader(QMainWindow):
         self.fetchButton.setFixedWidth(self.fetchButton.reservedWidth())
 
     def _squareFooterButtons(self) -> None:
-        """아이콘 버튼(하단 둘 · 헤더바 선택)을 바 컨트롤 높이의 정사각으로 건다 (#504 · #536 · #561 — 설계 §11.3)."""
+        """아이콘 버튼(하단 둘 · 헤더바 선택 · 메뉴바 설정)을 바 컨트롤 높이의 정사각으로 건다 (#504 · #536 · #561 · #611)."""
         side = theme.METRICS["barControl"]
-        for button in (self.downloadButton, self.stopButton, self.selectButton):
+        for button in (
+            self.downloadButton,
+            self.stopButton,
+            self.selectButton,
+            self.settingsButton,
+        ):
             button.setFixedSize(side, side)
 
     def _showRegisterError(self, text: str) -> None:
         """등록 오류를 URL 칸 아래 오류 말풍선으로 띄우고 URL 칸 테두리를 빨강으로 한다 (#495 · #536 — 설계 §12.1).
 
-        말풍선은 떠 있어 목록이 움직이지 않는다. 입력을 고치면 사라진다(`_clearRegisterError`) — Esc · 다른 곳
-        누름은 말풍선이 스스로 닫는다(`ErrorTip`). 테두리는 전역 QSS의 `QLineEdit[invalid="true"]`가 칠한다.
+        말풍선은 떠 있어 목록이 움직이지 않는다. 입력을 고치면 말풍선 · 빨간 테두리가 함께 사라진다
+        (`_clearRegisterError`). Esc · 다른 곳 누름 · 초점이 URL 칸을 떠나면 말풍선만 닫히고 빨간 테두리는 남으며,
+        URL 칸에 초점이 돌아오면 말풍선이 다시 뜬다(`ErrorTip`, #611). 테두리는 전역 QSS의
+        `QLineEdit[invalid="true"]`가 칠한다.
         """
         self.registerError.show(text)
         if self.urlInput.property("invalid") is not True:
@@ -1032,7 +1092,10 @@ class VodDownloader(QMainWindow):
         self.urlInput.textChanged.connect(self._clearRegisterError)
         self.urlInput.textChanged.connect(self._syncFetchButton)
         self._syncFetchButton()
-        self.menuSettingsButton.clicked.connect(self.onSetting)
+        self.settingsButton.clicked.connect(self.onSetting)
+        # 설정 창 단축키 — Ctrl+,(macOS는 Qt가 Cmd+,로 바꾼다, #611)
+        self.settingsShortcut = QShortcut(settings_shortcut(), self)
+        self.settingsShortcut.activated.connect(self.onSetting)
         # 「VOD 다운」을 눌렀다 — 결과를 봤다(#523)
         self.menuDownloadButton.clicked.connect(self.menuDownloadButton.stopBlink)
         self._setupSelection()

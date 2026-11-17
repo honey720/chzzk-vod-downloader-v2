@@ -38,13 +38,13 @@ from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 �
     set_rows,
 )
 
-OUTER_MARGIN = 12  # 창 바깥 좌우 여백(px) — 카드 왼쪽 끝 ↔ 목록 왼쪽 끝(#580)
-CARD_GAP = 12  # 카드 사이(px) — 바깥 좌우 여백과 같다(오너 2026-11-15)
-CARD_HEIGHT = 80  # 카드 높이(px, 설계 §11.3)
-CELL = CARD_HEIGHT + CARD_GAP  # 카드 목록의 한 칸(px) — 92
-LIST_TOP = 12  # 카드 목록 위 여백(px) — 카드 사이와 같다(설계 §11.2)
-LIST_BOTTOM = 12  # 카드 목록 아래 여백(px)
-RING_REACH = 4  # focus ring이 카드 밖으로 나간 px — 띄움 2 + 굵기 2(#561)
+CARD_LEFT = 0  # 카드 행 왼쪽 끝 ↔ 목록 왼쪽 끝(px) — 띠 목록(설계 §13, #611)
+CARD_GAP = 0  # 카드 사이(px) — 띠 목록은 행 사이 구분선 하나(#611)
+CARD_HEIGHT = 81  # 카드 높이(px) — 행 80 + 아래 구분선 1(설계 §13)
+CELL = CARD_HEIGHT + CARD_GAP  # 카드 목록의 한 칸(px) — 81
+LIST_TOP = 0  # 카드 목록 위 여백(px) — 띠 목록은 0(#611)
+LIST_BOTTOM = 0  # 카드 목록 아래 여백(px)
+RING_REACH = 0  # focus ring이 카드 밖으로 나간 px — 행 안쪽에 그린다(#611)
 WHEEL_NOTCH = 120  # 휠 한 칸의 angleDelta(1/8도 단위 — Qt 문서)
 ANIMATION_MS = 120  # 애니메이션 테스트가 쓰는 굴리기 시간(ms)
 
@@ -78,12 +78,12 @@ def _left_in_list(win: VodDownloader, widget: QWidget) -> int:
 
 
 class TestGap:
-    """카드 사이 간격은 창 바깥 좌우 여백과 같다(오너 2026-11-15)."""
+    """카드 목록은 띠다 — 행 사이 0, 행은 목록 왼쪽 끝부터(설계 §13, #611)."""
 
     def test_gap_between_cards_equals_the_outer_side_margin(self, tmp_path: Path) -> None:
-        """이웃한 두 카드 사이 간격이 카드 왼쪽 바깥 여백과 같은 12px이어야 한다.
+        """이웃한 두 카드 행 사이가 0이고 행 왼쪽 끝이 목록 왼쪽 끝이어야 한다(#611).
 
-        카드 3 · 창 폭 1000 -> 카드 왼쪽 끝 x = 12, 둘째 윗선 − 첫째 아래끝 = 12, 셋째도 같다
+        카드 3 · 창 폭 1000 -> 카드 왼쪽 끝 x = 0, 둘째 윗선 − 첫째 아래끝 = 0, 셋째도 같다, 카드 높이 81
         """
         items = _plain_items(tmp_path, 3)
         win = open_window(tmp_path, *items)
@@ -91,9 +91,9 @@ class TestGap:
         assert all(card.isVisible() for card in cards), "전제: 카드 셋이 보인다"
         margin = _left_in_list(win, cards[0])
         gaps = [lower.y() - (upper.y() + upper.height()) for upper, lower in zip(cards, cards[1:])]
-        assert margin == OUTER_MARGIN
+        assert margin == CARD_LEFT
         assert gaps == [CARD_GAP, CARD_GAP]
-        assert gaps[0] == margin
+        assert [card.height() for card in cards] == [CARD_HEIGHT] * 3
 
 
 # ---- 카드 목록 한 칸 스크롤 ----
@@ -112,7 +112,7 @@ def _list_wheel(win: VodDownloader, notches: int) -> None:
 
 
 def _on_grid(win: VodDownloader) -> bool:
-    """카드 목록 위치가 칸 경계(92의 배수)이거나 맨 끝인지."""
+    """카드 목록 위치가 칸 경계(81의 배수)이거나 맨 끝인지."""
     bar = win.listView.verticalScrollBar()
     return bar.value() % CELL == 0 or bar.value() == bar.maximum()
 
@@ -137,15 +137,15 @@ def _focus_card(qtbot: QtBot, win: VodDownloader, card: ContentItemWidget) -> No
 
 
 class TestListScroll:
-    """카드 목록의 휠 · 스크롤바는 카드 한 칸(카드 80 + 카드 사이 12 = 92) 단위다(오너 2026-11-14)."""
+    """카드 목록의 휠 · 스크롤바는 카드 한 칸(행 80 + 구분선 1 = 81) 단위다(오너 2026-11-14)."""
 
     @pytest.mark.parametrize(("notches", "expected"), [(1, CELL), (3, 3 * CELL), (-1, 0)])
     def test_one_wheel_notch_moves_one_card_cell(
         self, tmp_path: Path, notches: int, expected: int
     ) -> None:
-        """카드 목록 위 휠 한 칸은 카드 한 칸(92)만큼 움직여야 한다 — 한 이벤트에 여러 칸이면 그 칸 수만큼.
+        """카드 목록 위 휠 한 칸은 카드 한 칸(81)만큼 움직여야 한다 — 한 이벤트에 여러 칸이면 그 칸 수만큼.
 
-        카드 30 · 아래로 1칸 -> 92, 아래로 3칸(angleDelta −360 한 번) -> 276, 맨 위에서 위로 1칸 -> 0
+        카드 30 · 아래로 1칸 -> 81, 아래로 3칸(angleDelta −360 한 번) -> 243, 맨 위에서 위로 1칸 -> 0
         """
         win = open_window(tmp_path, *_plain_items(tmp_path, 30))
         _list_wheel(win, -notches)
@@ -154,7 +154,7 @@ class TestListScroll:
     def test_ten_quick_notches_move_ten_cells_with_a_card_top_at_the_list_top(
         self, tmp_path: Path
     ) -> None:
-        """휠을 빠르게 열 칸 굴리면 열 칸(920) 움직이고 칸마다 카드 윗선이 목록 위 여백 자리에 와야 한다.
+        """휠을 빠르게 열 칸 굴리면 열 칸(810) 움직이고 칸마다 카드 윗선이 목록 위 여백 자리에 와야 한다.
 
         카드 30 · 아래로 1칸씩 10번 -> k번째 뒤 값 92k, k번째 카드(0부터)의 뷰포트 윗선 = 12
         """
@@ -172,8 +172,8 @@ class TestListScroll:
     ) -> None:
         """맨 끝이 칸 경계가 아니면 맨 끝까지 내려가 마지막 카드가 다 보이고, 올리면 앞 칸 경계로 가야 한다.
 
-        카드 20 · 맨 끝이 92의 배수가 아닌 창 높이 · 아래로 1칸씩 40번 -> 값 = 맨 끝, 마지막 카드 아래 끝 =
-        뷰포트 높이 − 아래 여백 12; 맨 끝에서 아래로 1칸 -> 그대로; 위로 1칸 -> 92 × (맨 끝 // 92);
+        카드 20 · 맨 끝이 81의 배수가 아닌 창 높이 · 아래로 1칸씩 40번 -> 값 = 맨 끝, 마지막 카드 아래 끝 =
+        뷰포트 높이 − 아래 여백 0; 맨 끝에서 아래로 1칸 -> 그대로; 위로 1칸 -> 81 × (맨 끝 // 81);
         아래로 1칸 -> 맨 끝
         """
         items = _plain_items(tmp_path, 20)
@@ -199,8 +199,8 @@ class TestListScroll:
     ) -> None:
         """카드 목록이 굴러가는 중에 온 휠은 앞 목표에 칸을 더해야 한다.
 
-        SCROLL_ANIMATION_MS 120 · 카드 30 · 아래로 1칸 -> 굴리는 중 · 목표 92 · 값 92 미만,
-        굴리는 중 아래로 2칸 -> 목표 276, 끝나면 276 · 목록 아래 애니메이션 0개
+        SCROLL_ANIMATION_MS 120 · 카드 30 · 아래로 1칸 -> 굴리는 중 · 목표 81 · 값 81 미만,
+        굴리는 중 아래로 2칸 -> 목표 276, 끝나면 276 · 목록 바로 아래 애니메이션 0개
         """
         monkeypatch.setattr(step_scroll, "SCROLL_ANIMATION_MS", ANIMATION_MS)
         win = open_window(tmp_path, *_plain_items(tmp_path, 30))
@@ -214,17 +214,21 @@ class TestListScroll:
         qtbot.waitUntil(lambda: not view.isAnimating(), timeout=2000)
         assert bar.value() == 3 * CELL
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-        assert view.findChildren(QVariantAnimation) == []
+        # 굴리기 애니메이션은 목록 바로 아래 자식이다 — 겹친 스크롤바의 나타남은 그 막대의 자식이라 따로 잰다(#611)
+        direct = Qt.FindChildOption.FindDirectChildrenOnly
+        assert view.findChildren(QVariantAnimation, options=direct) == []
 
     def test_wheel_over_the_scroll_bar_moves_one_card_cell(self, tmp_path: Path) -> None:
-        """카드 목록 스크롤바 위의 휠 한 칸도 카드 한 칸(92)만큼 움직여야 한다 (#608 리뷰).
+        """카드 목록 스크롤바 위의 휠 한 칸도 카드 한 칸(81)만큼 움직여야 한다 (#608 리뷰 · #611).
 
-        카드 30 · 스크롤바 위(가운데 x · y=30)에 창 경로로 아래로 1칸 -> 92
+        카드 30 · 겹친 스크롤바 위(가운데 x · y=30)에 창 경로로 아래로 1칸 -> 81
         """
         win = open_window(tmp_path, *_plain_items(tmp_path, 30))
+        overlay = win.listView.overlayScrollBar()
         bar = win.listView.verticalScrollBar()
-        assert bar.isVisible(), "전제: 스크롤바가 보인다"
-        pos = QPointF(bar.mapTo(win, QPoint(bar.width() // 2, 30)))
+        assert overlay.isVisible(), "전제: 스크롤바가 있다"
+        pos = QPointF(overlay.mapTo(win, QPoint(overlay.width() // 2, 30)))
+        assert win.childAt(pos.toPoint()) is overlay, "전제: 그 자리는 겹친 스크롤바다"
         QTest.wheelEvent(win.windowHandle(), pos, QPoint(0, -WHEEL_NOTCH), QPoint(0, 0))
         _pump()
         assert bar.value() == CELL
@@ -260,7 +264,7 @@ class TestListScroll:
         """카드 목록이 굴러가는 중에 손잡이를 누르면 굴리기가 멈춰 끄는 자리를 덮지 않아야 한다.
 
         SCROLL_ANIMATION_MS 120 · 카드 30 · 아래로 3칸 · 굴리는 중 손잡이 누름 · 500으로 끎
-        -> 굴리는 중 아님, 처리 뒤에도 500; 놓음 -> 460(가장 가까운 칸 경계 92 × 5)
+        -> 굴리는 중 아님, 처리 뒤에도 500; 놓음 -> 486(가장 가까운 칸 경계 81 × 6)
         """
         win = open_window(tmp_path, *_plain_items(tmp_path, 30))
         monkeypatch.setattr(step_scroll, "SCROLL_ANIMATION_MS", ANIMATION_MS)
@@ -276,16 +280,16 @@ class TestListScroll:
         monkeypatch.setattr(step_scroll, "SCROLL_ANIMATION_MS", 0)
         bar.setSliderDown(False)
         _pump()
-        assert bar.value() == 5 * CELL
+        assert bar.value() == 6 * CELL
 
-    @pytest.mark.parametrize(("dragged", "expected"), [(130, CELL), (140, 2 * CELL)])
+    @pytest.mark.parametrize(("dragged", "expected"), [(100, CELL), (130, 2 * CELL)])
     def test_releasing_the_dragged_handle_snaps_to_a_cell_boundary(
         self, tmp_path: Path, dragged: int, expected: int
     ) -> None:
         """카드 목록 손잡이를 끌다 놓으면 가장 가까운 칸 경계로 맞춰져야 한다.
 
-        카드 30 · 손잡이 누름 · 130으로 끎 -> 놓음 -> 92(130 − 92 = 38 < 184 − 130 = 54);
-        140으로 끎 -> 184(140 − 92 = 48 > 184 − 140 = 44)
+        카드 30 · 손잡이 누름 · 100으로 끎 -> 놓음 -> 81(100 − 81 = 19 < 162 − 100 = 62);
+        130으로 끎 -> 162(130 − 81 = 49 > 162 − 130 = 32)
         """
         win = open_window(tmp_path, *_plain_items(tmp_path, 30))
         bar = win.listView.verticalScrollBar()
@@ -300,8 +304,8 @@ class TestListScroll:
     def test_arrow_is_one_cell_and_page_drops_the_partial_cell(self, tmp_path: Path) -> None:
         """스크롤바 화살표는 한 칸, 바탕 누름(페이지)은 뷰포트 높이에서 넘친 칸을 버린 칸 경계여야 한다.
 
-        카드 30 · singleStep 92, 화살표 한 걸음 -> 92; 0에서 페이지 한 걸음 -> 92 × (뷰포트 높이 // 92)
-        (92보다 작으면 92), 거기서 페이지 뒤로 -> 0
+        카드 30 · singleStep 81, 화살표 한 걸음 -> 81; 0에서 페이지 한 걸음 -> 81 × (뷰포트 높이 // 81)
+        (81보다 작으면 81), 거기서 페이지 뒤로 -> 0
         """
         win = open_window(tmp_path, *_plain_items(tmp_path, 30))
         bar = win.listView.verticalScrollBar()
@@ -329,7 +333,7 @@ class TestListScroll:
     ) -> None:
         """칸 경계가 아닌 맨 끝에서 스크롤바 화살표를 누르면 칸 경계(위로)나 맨 끝(아래로)에 서야 한다.
 
-        카드 30 · 맨 끝이 92의 배수가 아닌 창 높이 · 맨 끝에서 화살표 위로 한 걸음 -> 92 × (맨 끝 // 92);
+        카드 30 · 맨 끝이 81의 배수가 아닌 창 높이 · 맨 끝에서 화살표 위로 한 걸음 -> 81 × (맨 끝 // 81);
         아래로 한 걸음 -> 맨 끝 그대로
         """
         win = open_window(tmp_path, *_plain_items(tmp_path, 30))
@@ -352,7 +356,7 @@ class TestListScroll:
     ) -> None:
         """↑↓로 초점 카드를 옮기면 목록이 그 카드(· focus ring)를 보이게 따라가되 칸 경계에 서야 한다.
 
-        카드 20 · 첫 카드에 Tab 초점 · ↓ 19번 · ↑ 19번 -> 키마다 위치가 92의 배수이거나 맨 끝, 초점 카드의
+        카드 20 · 첫 카드에 Tab 초점 · ↓ 19번 · ↑ 19번 -> 키마다 위치가 81의 배수이거나 맨 끝, 초점 카드의
         위끝 − 4 ≥ 위치 · 아래끝 + 4 ≤ 위치 + 뷰포트 높이(키보드 초점일 때), 굴리는 중 아님; 끝에 오면 맨 끝 ·
         다시 맨 위에서 0
         """
@@ -389,7 +393,7 @@ class TestListScroll:
         """필터 · 정렬 · 지우기 · 창 크기 바꾸기로 목록 높이가 바뀌어도 위치가 칸 경계여야 한다.
 
         카드 30(짝수 번째 완료) · 위치 276 -> 완료 필터 · 전체로 · 제목 내림차순 · 카드 둘 지움 · 맨 끝으로 간
-        뒤 창 높이 +37 · −53 · +101 각각 뒤 위치가 92의 배수이거나 맨 끝
+        뒤 창 높이 +37 · −53 · +101 각각 뒤 위치가 81의 배수이거나 맨 끝
         """
         items = _plain_items(tmp_path, 30)
         for index in range(0, 30, 2):

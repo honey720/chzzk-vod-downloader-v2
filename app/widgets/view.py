@@ -17,22 +17,23 @@ from PySide6.QtGui import (
 import app.theme as theme
 from app.widgets.focus_ring import FocusRing
 from app.widgets.narrow_steps import RETURN_SLACK
-from app.widgets.scroll_padding import ScrollBarPadding
+from app.widgets.overlay_scrollbar import OverlayScrollBar
 from app.widgets.step_scroll import StepScroller
 from app.widgets.widget import BUSY_STATES, ContentItemWidget
-from app.viewmodels import card_text
+from app.viewmodels import card_display, card_text
 from app.viewmodels.data import ContentItem
 
-CARD_BORDER = 1  # 카드 면 테두리 두께(px) — style.qss `#contentFrame`의 border 1px
-# 카드 높이(px) — 테두리 · 안쪽 여백 위아래 + 세 줄(16 · 18 · 20) + 줄 사이 둘 = 80(설계 §11.3)
+# 카드 높이(px) — 안쪽 여백 위아래 + 세 줄(16 · 18 · 20) + 줄 사이 둘 = 행 80, 그 밑 구분선 1 = 81(설계 §13).
+# 구분선은 카드 면의 아래 테두리다(style.qss `#contentFrame`)
 CARD_HEIGHT = (
-    2 * (CARD_BORDER + theme.METRICS["cardPadding"])
+    theme.METRICS["cardSeparator"]
+    + 2 * theme.METRICS["cardPadY"]
     + theme.METRICS["cardRow1Height"]
     + theme.METRICS["cardRow2Height"]
     + theme.METRICS["cardRow3Height"]
     + 2 * theme.METRICS["cardRowSpacing"]
 )
-# 카드 목록의 한 칸(px) — 카드 하나 + 카드 사이 = 92. 목록의 휠 · 스크롤 위치가 이 단위다(#599)
+# 카드 목록의 한 칸(px) — 행 80 + 구분선 1 = 81(카드 사이 0). 목록의 휠 · 스크롤 위치가 이 단위다(#599 · #611)
 CARD_CELL = CARD_HEIGHT + theme.METRICS["cardGap"]
 
 
@@ -169,36 +170,31 @@ class ContentListView(QScrollArea):
         # 카드는 창 폭에 맞춰야 한다 — 넘치는 제목·경로·상태 문구는 ElidingLabel이
         # 알아서 잘라 보여준다(PR #229 후속). 가로 스크롤은 그 자체가 버그였다.
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # 세로 스크롤바는 필요할 때만(AsNeeded). 다만 스크롤바가 보이는 동안은 카드 컨테이너의
-        # 오른쪽 패딩에서 스크롤바 폭을 빼서(`_fitPaddingAroundScrollBar`) 스크롤바가 카드
-        # 오른쪽 여백(outerMargin) 안에 들어가게 한다 — 카드 폭·위치가 스크롤바 유무와
-        # 무관해진다(v2.10.1). 항상 켜 두는 안(AlwaysOn)은 빈 목록에도 바가 보여 기각(오너).
-        # transient(오버레이) 힌트는 QSS로 스타일된 스크롤바에 Qt가 적용하지 않는다(실측 —
-        # 위젯 기준 styleHint가 0). 카드 높이는 폭과 무관하므로 되먹임 진동은 없다(실측).
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        # 휠 · 스크롤바는 카드 한 칸(카드 + 카드 사이 = 92) 단위다(오너 2026-11-14, #599). 맨 끝에 있던 목록은
+        # 휠 · 스크롤바는 카드 한 칸(행 80 + 구분선 1 = 81 — #611) 단위다(오너 2026-11-14, #599). 맨 끝에 있던 목록은
         # 창 크기 · 카드 수가 바뀌어도 맨 끝에 남는다 — 마지막 카드가 다 보이는 것이 우선(오너 2026-11-14)
         self._scroller = StepScroller(self, CARD_CELL)
+        # 세로 스크롤바는 행 위에 겹쳐 그린다(overlay scrollbar) — 자리를 차지하지 않아 행은 늘 목록 끝까지 가고,
+        # 행 안 버튼 · 글은 스크롤바 유무와 무관하게 행 오른쪽 안쪽 여백(cardPadding) 앞에서 끝난다. 막대는 그
+        # 여백 자리 안에만 그려진다(오너 실기 2026-11-15, #611). Qt의 transient 힌트는 QSS로 스타일된 스크롤바에
+        # 적용되지 않아(실측 — 위젯 기준 styleHint 0) 막대를 따로 그린다. 원래 스크롤바는 숨은 채 값을 맡는다
+        self._overlayBar = OverlayScrollBar(
+            self,
+            theme.METRICS["cardPadding"],
+            theme.METRICS["overlayBarThin"],
+            theme.METRICS["overlayBarThick"],
+            lambda: card_display.current().animations,
+        )
 
         self._container = QWidget()
         self._layout = QVBoxLayout(self._container)
-        # 좌우 여백은 창(contentColumn)이 아니라 여기 카드 컨테이너가 진다(v2.10.1).
-        # 목록 자체는 창 좌우 끝까지 가서 스크롤바가 창 끝에 붙고, 카드 프레임은
-        # 이 패딩만큼 안쪽에 놓여 상단·하단 바와 같은 좌측 정렬선(outerMargin)을
-        # 지킨다 — 값이 바뀐 게 아니라 자리가 옮겨진 것이다(#244 정렬선 유지).
-        # 위 여백: 헤더바와 목록 사이에 간격이 없어(바는 경계선 하나로만 나눈다, #536) 헤더바 ↔ 첫 카드
-        # 사이를 이 여백이 진다 — 카드 사이와 같은 cardGap(설계 §11.2, 프로토 CARD_GAP)
-        outer = theme.METRICS["outerMargin"]
+        # 띠 목록 — 카드 행이 목록 좌우 끝까지 가고(바깥 여백 0), 행 사이 · 위아래 여백도 0이다. 행은 아래
+        # 구분선 하나로 나뉜다(설계 §13, #611). 썸네일 · 글의 정렬선은 행 안쪽 여백이 진다
         gap = theme.METRICS["cardGap"]
-        self._layout.setContentsMargins(outer, gap, outer, gap)
-        # 스크롤바의 Show/Hide에 맞춰 오른쪽 패딩을 고친다 — 편집 창의 구간 목록과 함께 쓴다
-        self._scrollPadding = ScrollBarPadding(self, self._layout, outer)
-        # 카드 사이 — 카드 자체는 바깥 여백이 없다(#550). 카드 폭에는 영향을 주지 않는 값이라
-        # ElidingLabel 폭 계산과 무관하다
+        self._layout.setContentsMargins(0, gap, 0, gap)
         self._layout.setSpacing(gap)
         self._layout.addStretch(1)  # 카드는 항상 이 스트레치 앞에 insertWidget된다
         self.setWidget(self._container)
-        # 키보드 초점 카드의 바깥 고리(#561) — 목록에 하나뿐이다. 컨테이너의 자식이라 카드와 함께 굴러가고
+        # 키보드 초점 행의 안쪽 고리(#561 · #611) — 목록에 하나뿐이다. 컨테이너의 자식이라 카드와 함께 굴러가고
         # 뷰포트에 잘리며, 목록 밖의 선택 줄보다 아래다. 레이아웃에는 넣지 않는다(카드 자리를 따라 스스로 놓인다)
         self._ring = FocusRing(self._container)
 
@@ -224,6 +220,8 @@ class ContentListView(QScrollArea):
         # 선택 모드(#561 — 설계 §12.1 「선택 모드」). 고른 카드는 필터에 가려도 남는다(지울 때 확인 창이 알린다)
         self._selecting = False
         self._selected: dict[ContentItem, None] = {}  # 고른 카드(고른 차례)
+        self._joined = False  # 구분선 자리에서 이은 띠가 하나라도 있는지(#611)
+        self._joinsPending = False  # 띠 잇기 다시 정하기가 다음 턴에 예약됐는지
         # Shift 범위의 기준 카드 — 마지막으로 하나를 고르거나 푼 카드
         self._anchor: ContentItem | None = None
 
@@ -360,18 +358,14 @@ class ContentListView(QScrollArea):
         return None
 
     def _revealCard(self, card: ContentItemWidget) -> None:
-        """초점을 받은 카드를 굴려 보이게 한다 — 키보드 초점이면 카드 바깥의 focus ring까지 보이게 한다 (#561).
-
-        마우스로 온 초점은 고리를 그리지 않으므로 카드만 보이면 된다.
+        """초점을 받은 카드를 굴려 보이게 한다 — focus ring은 행 안쪽이라 행만 보이면 된다 (#561 · #611).
 
         스크롤 위치는 칸 경계로 맞춘다(#599) — 카드가 위로 벗어났으면 그 카드의 칸 경계, 아래로 벗어났으면 카드
-        아래 끝(· 고리)이 들어오는 가장 가까운 칸 경계. 애니메이션 없이 바로 옮긴다 — 초점과 고리가 바로 옮겨
+        아래 끝이 들어오는 가장 가까운 칸 경계. 애니메이션 없이 바로 옮긴다 — 초점과 고리가 바로 옮겨
         가고, 키를 누르고 있으면 다음 카드가 이어 오기 때문이다.
         """
-        ring = theme.METRICS["focusRingGap"] + theme.METRICS["focusRingWidth"]
-        reach = ring if card.hasKeyFocus() else 0
-        top = card.y() - reach
-        bottom = card.y() + card.height() + reach
+        top = card.y()
+        bottom = card.y() + card.height()
         self._scroller.finish()
         place = self._scroller.revealPlace(top, bottom)
         if place != self.verticalScrollBar().value():
@@ -554,27 +548,63 @@ class ContentListView(QScrollArea):
         return 1 if picked else 0
 
     def _setSelected(self, items) -> None:
-        """고른 카드를 `items`로 바꾼다 — 고름이 바뀐 카드만 다시 그린다."""
+        """고른 카드를 `items`로 바꾼다 — 고름이 바뀐 카드만 다시 그린다.
+
+        카드 한 장만 바뀌고 그 카드가 화면에 보이면 왼쪽 띠가 자라고 줄어든다(애니메이션 설정이 켜져 있을 때).
+        여러 장이 한꺼번에 바뀌면(모두 선택 · Shift 범위 · 모두 풀기) 바로 바뀐다(오너 2026-11-15, #611).
+        """
         new = dict.fromkeys(items)
-        for item in self._selected.keys() - new.keys():
-            widget = self._widgets.get(item)
-            if widget is not None:
-                widget.setSelected(False)
-        for item in new.keys() - self._selected.keys():
-            widget = self._widgets.get(item)
-            if widget is not None:
-                widget.setSelected(True)
+        dropped = self._selected.keys() - new.keys()
+        added = new.keys() - self._selected.keys()
+        animate = len(dropped) + len(added) == 1 and card_display.current().animations
+        for picked, changed in ((False, dropped), (True, added)):
+            for item in changed:
+                widget = self._widgets.get(item)
+                if widget is not None:
+                    shown = animate and not widget.visibleRegion().isEmpty()
+                    widget.setSelected(picked, shown)
         self._selected = new
+        self._syncJoins()
         self.selectionChanged.emit()
+
+    def _scheduleJoins(self) -> None:
+        """보이는 차례가 바뀌었다 — 고른 띠 잇기를 다음 턴에 한 번 다시 정한다(고른 카드가 있을 때만).
+
+        카드 삽입마다 목록 전체를 보면 삽입이 O(n)이 된다(#226) — 고른 카드도 이은 띠도 없으면 아무것도 하지
+        않고, 있으면 한 턴의 여러 바뀜을 한 번으로 묶는다.
+        """
+        if (self._selected or self._joined) and not self._joinsPending:
+            self._joinsPending = True
+            QTimer.singleShot(0, self, self._syncJoins)
+
+    def _syncJoins(self) -> None:
+        """보이는 차례에서 고른 카드 바로 아래 카드도 골랐으면 두 띠를 구분선 자리에서 잇는다 (#611)."""
+        self._joinsPending = False
+        if not (self._selected or self._joined):
+            return
+        above: ContentItemWidget | None = None
+        joined = False
+        for index in range(self._layout.count()):
+            widget = self._layout.itemAt(index).widget()
+            if not isinstance(widget, ContentItemWidget) or widget.isHidden():
+                continue
+            if above is not None:
+                join = above.item in self._selected and widget.item in self._selected
+                above.contentFrame.setJoinBelow(join)
+                joined = joined or join
+            above = widget
+        if above is not None:
+            above.contentFrame.setJoinBelow(False)
+        self._joined = joined
 
     def cardPressed(self, widget: ContentItemWidget, modifiers: Qt.KeyboardModifier) -> bool:
         """카드를 눌렀다 — 초점을 목록으로 옮기고, 이 누름이 고르기를 시작하는지 답한다.
 
-        고르지는 않는다 — 고르기는 카드 안에서 뗄 때다(`cardPicked`). 누르면 초점은 목록으로 간다 — URL 칸에
+        고르지는 않는다 — 참이면 카드가 이어서 `cardPicked`를 부른다(누를 때 고름, #611). 누르면 초점은 목록으로 간다 — URL 칸에
         있던 초점이 남지 않게(그 뒤 Ctrl/⌘+A · Delete · Ctrl/⌘+Z가 목록에 듣는다).
 
         Returns:
-            선택 모드이거나 Ctrl/⌘ · Shift와 함께 눌렀으면 참 — 카드가 눌린 바탕을 켜고 뗌을 기다린다.
+            선택 모드이거나 Ctrl/⌘ · Shift와 함께 눌렀으면 참 — 카드가 그 자리에서 고른다.
             평소 클릭은 거짓이다(더블 클릭은 편집 창 · 폴더 열기)
         """
         if self._focusedCard() is not widget:
@@ -585,7 +615,7 @@ class ContentListView(QScrollArea):
     def cardPicked(self, widget: ContentItemWidget, modifiers: Qt.KeyboardModifier) -> None:
         """카드를 골랐다 — 선택 모드면 고르고, 아니면 Ctrl/⌘ · Shift가 선택 모드로 들어가며 고른다.
 
-        카드가 부른다 — 누른 카드 안에서 뗄 때(수정자는 누를 때의 값), 선택 모드의 Space를 누를 때. 선택
+        카드가 부른다 — 왼쪽 버튼을 누를 때, 선택 모드의 Space를 누를 때(#611). 선택
         모드 안에서는 그 카드를 고르거나 풀고, Shift는 기준 카드부터 그 카드까지(보이는 차례)를 더한다.
         """
         item = widget.item
@@ -685,14 +715,9 @@ class ContentListView(QScrollArea):
         if card.item not in self._widgets and after is not None and after.item in self._widgets:
             self._focusCard(after, Qt.FocusReason.TabFocusReason)
 
-    def _fitPaddingAroundScrollBar(self) -> None:
-        """스크롤바가 보이면 컨테이너 오른쪽 패딩에서 그 폭을 빼고, 숨으면 되돌린다 (v2.10.1).
-
-        카드 오른쪽 끝은 스크롤바 유무와 무관하게 항상 목록 오른쪽 끝 − outerMargin이다 —
-        스크롤바는 그 여백 안에 들어간다. 스크롤바가 여백보다 넓으면 패딩은 0에서 멈춘다.
-        하는 일은 ``ScrollBarPadding``에 있다.
-        """
-        self._scrollPadding.fit()
+    def overlayScrollBar(self) -> OverlayScrollBar:
+        """행 위에 겹쳐 그리는 세로 스크롤바(#611)."""
+        return self._overlayBar
 
     def setModel(self, model) -> None:
         """✅ 모델을 설정하고 위젯을 자동으로 연결"""
@@ -758,6 +783,7 @@ class ContentListView(QScrollArea):
                 self._layout.insertWidget(index, widget)
         self._overlay.update()
         self._scheduleRehover()
+        self._scheduleJoins()
 
     def _moveWidget(self, item: ContentItem) -> None:
         """카드 하나를 보이는 차례의 새 자리로 옮긴다."""
@@ -767,6 +793,7 @@ class ContentListView(QScrollArea):
         self._layout.removeWidget(widget)
         self._layout.insertWidget(self._order.indexOf(item), widget)
         self._scheduleRehover()
+        self._scheduleJoins()
 
     def _applyFilter(self) -> None:
         """고른 칩에 맞춰 모든 카드의 보임을 정한다.
@@ -781,6 +808,7 @@ class ContentListView(QScrollArea):
         self._showCards()
         self._overlay.update()
         self._scheduleRehover()
+        self._scheduleJoins()
         self._scheduleDates()  # 다시 보인 카드가 연도를 못 넣을 수 있다 — 칩 조작 한 번에 한 번
         # 고른 카드는 필터를 바꿔도 그대로다(#561). Shift 범위의 기준이 가려졌으면 기준만 놓는다
         if self._anchor is not None and not self._accepts(self._anchor):
@@ -794,6 +822,7 @@ class ContentListView(QScrollArea):
         if widget is not None:
             widget.setVisible(self._accepts(item))
             self._scheduleRehover()
+            self._scheduleJoins()
             if self._selecting:
                 self.selectionChanged.emit()
 
@@ -817,6 +846,7 @@ class ContentListView(QScrollArea):
         widget.setVisible(self._accepts(item))
         self._widgets[item] = widget
         self._overlay.update()  # 빈 리스트 안내를 즉시 감춘다
+        self._scheduleJoins()  # 고른 카드 사이에 끼면 띠가 끊긴다 — 고른 카드가 없으면 아무것도 안 한다
         # 날짜 연도 — 들어온 카드만 다음 턴에 한 번에 본다(배치 뒤라야 폭이 있다)
         if not self._newCards:
             QTimer.singleShot(0, self, self._fitNewDates)
@@ -834,6 +864,7 @@ class ContentListView(QScrollArea):
         self._overlay.update()
         self._scheduleRenumber()  # 되살린 카드 뒤의 번호가 밀린다(#235 — 한 턴에 한 번)
         self._scheduleRehover()
+        self._scheduleJoins()
         if not self._newCards:
             QTimer.singleShot(0, self, self._fitNewDates)
         self._newCards.append(widget)
@@ -877,6 +908,7 @@ class ContentListView(QScrollArea):
         if item in self._selected:
             del self._selected[item]
             self.selectionChanged.emit()
+        self._scheduleJoins()  # 지운 카드 위아래 띠를 다시 잇거나 끊는다
         if self._anchor is item:
             self._anchor = None
         self._overlay.update()  # 마지막 카드가 지워졌으면 빈 리스트 안내를 다시 띄운다

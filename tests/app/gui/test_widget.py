@@ -20,7 +20,7 @@ progress·fileSize·delete)에 `Ignored` 정책 라벨이 둘 이상 + `Expandin
 """
 
 import pytest
-from PySide6.QtWidgets import QLabel, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 import CVDv2 as main_module
 import app.theme as theme
@@ -172,18 +172,20 @@ class TestStatusAndFileSizeAreVisible:
         assert _rendered(widget.fileSizeLabel) != ""
         assert "123.00 MB" in _rendered(widget.fileSizeLabel)
 
-    def test_finished_shows_completion_and_size(self, qapp) -> None:
-        # #245 상태별 슬롯: 완료 슬롯은 "✓ 완료 표시"다 — 소요 시간(download_time)
-        # 표시는 오너 확정 설계에서 빠졌다(완료 카드가 답할 질문은 "어디에?"이고
-        # 그건 📁 버튼이 답한다).
+    def test_finished_shows_completion_and_size(self, qapp: QApplication) -> None:
+        """완료 카드면 상태 아이콘이 done, 상태 글이 소요 시간, 정보 글에 크기가 보여야 한다.
+
+        FINISHED · 800 MiB · download_time 00:05:12 -> 아이콘 "done"(「Completed」 단어는 아이콘 —
+        inbox 177), 상태 글 "5:12", 정보 글에 "800"
+        """
         item = _make_item()
         item.download_size = 800 * 1024 * 1024
         item.downloadState = DownloadState.FINISHED
         item.download_time = "00:05:12"
         widget = _build_widget(item, qapp, width=_UNCONSTRAINED_WIDTH)
 
-        assert _rendered(widget.statusLabel) != ""
-        assert "Completed" in widget.statusLabel.text()
+        assert widget.statusIcon.state() == "done"
+        assert _rendered(widget.statusLabel) == "5:12"
         assert _rendered(widget.fileSizeLabel) != ""
         assert "800" in _rendered(widget.fileSizeLabel)
 

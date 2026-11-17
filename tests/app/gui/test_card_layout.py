@@ -209,10 +209,10 @@ class TestTwoLeftBaselines:
 
     @pytest.mark.parametrize("width", WIDTHS)
     def test_exactly_two_left_baselines(self, qapp, width) -> None:
-        """썸네일 왼쪽이 카드 안쪽 여백 + 테두리 1px이고 글 열이 그 오른쪽이어야 한다.
+        """썸네일 왼쪽이 카드 행 안쪽 여백이고 글 열이 그 오른쪽이어야 한다(띠 행 — 좌우 테두리 없음, #611).
 
         창 폭 560 · 900 · 1600
-        -> thumb_x == cardPadding + 1, thumb_x < 글 열 x
+        -> thumb_x == cardPadding, thumb_x < 글 열 x
         """
         widget = _make_widget(qapp)
         _at_width(widget, width)
@@ -222,7 +222,7 @@ class TestTwoLeftBaselines:
         assert len(baselines) == 2 and thumb_x < content_x, (
             f"기준선이 둘이 아니다: thumb={thumb_x}, content={content_x}"
         )
-        assert thumb_x == theme.METRICS["cardPadding"] + 1
+        assert thumb_x == theme.METRICS["cardPadding"]
 
     def test_baselines_do_not_move_as_the_window_widens(self, qapp) -> None:
         """창 폭이 바뀌어도 썸네일 · 글 열 기준선의 x가 같아야 한다.
@@ -844,30 +844,16 @@ class TestProgressBarOnlyWithProgress:
 
     @pytest.mark.parametrize("width", WIDTHS)
     def test_bar_is_clipped_to_the_card_corners(self, qapp, width) -> None:
-        """막대 양끝이 카드의 둥근 모서리 바깥으로 튀어나오지 않는다.
+        """막대는 행 좌우 끝까지 가고 아래 끝이 행 아래끝(구분선 자리)과 같아야 한다 — 잘라 낼 모서리가 없다(#611).
 
-        바 자체의 QSS border-radius는 높이(4px)에 눌려 카드 반지름(cardRadius)을
-        못 따라가 실기 렌더에서 바닥 모서리 밖에 트랙·진행색 조각이 남았다
-        (#245 오너 실기 제보 — 카드 왼쪽 바깥의 짧은 선). 그래서 카드
-        곡률 마스크를 건다. 마스크 안/밖을 순수 기하로 잰다(폰트 무관).
+        띠 행은 모서리 0이라 마스크를 걸지 않는다. 막대 자리를 순수 기하로 잰다(폰트 무관).
+        창 폭 560 · 900 · 1600 -> 마스크 없음, 막대 (0, 카드 면 높이 − 막대 높이, 카드 면 폭, 막대 높이)
         """
         widget = _make_widget(qapp)
         _set_state(widget, DownloadState.RUNNING)
         _at_width(widget, width)
         bar = widget.progressBar
-        mask = bar.mask()
-        assert not mask.isEmpty(), "진행바에 카드 곡률 마스크가 없다"
-        w, h = bar.width(), bar.height()
-
-        # 바닥 모서리 픽셀은 잘려 있고(카드 몸통 밖), 가운데는 살아 있다
-        assert not mask.contains(QPoint(0, h - 1)), (
-            f"폭 {width}px: 바 왼쪽 아래 모서리가 카드 곡률 밖에 남는다"
-        )
-        assert not mask.contains(QPoint(w - 1, h - 1)), (
-            f"폭 {width}px: 바 오른쪽 아래 모서리가 카드 곡률 밖에 남는다"
-        )
-        assert mask.contains(QPoint(w // 2, h - 1))
-        assert mask.contains(QPoint(w // 2, 0))
-        # 마스크가 바 안쪽 대부분은 살려 둔다 — 잘려 나가는 것은 모서리뿐
-        radius = theme.METRICS["cardRadius"]
-        assert mask.contains(QPoint(radius, h - 1)) and mask.contains(QPoint(w - 1 - radius, h - 1))
+        frame = widget.contentFrame
+        assert bar.mask().isEmpty(), "띠 행의 막대에 마스크가 걸렸다"
+        bar_h = theme.METRICS["barHeight"]
+        assert bar.geometry().getRect() == (0, frame.height() - bar_h, frame.width(), bar_h)

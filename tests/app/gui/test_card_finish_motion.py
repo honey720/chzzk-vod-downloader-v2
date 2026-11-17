@@ -195,56 +195,6 @@ class TestFinishMotionBar:
         assert _close(_face_mid(card), _token("cardTintFinished"))
 
 
-class TestFinishMotionFill:
-    """배경 채움 방식 완료 모션 — 채움이 끝까지 차며 완료 색조가 된다."""
-
-    def test_fill_grows_to_the_end_and_turns_into_the_tint(self, qapp) -> None:
-        """채움 40% 카드가 완료되면 채움이 줄지 않고 400ms에 끝까지 차며 색이 완료 색조로 섞여야 한다.
-
-        배경 채움 · 애니메이션 켬, 40% -> 완료, 0 · 50 · … · 399ms -> 채움 비율이 줄지 않음 · 399ms에 ≈ 1,
-        섞기 0ms 0 · 400ms 1(섞는 토큰 cardTintFinished), 모션 시간 FINISH_MOTION_MS, 막대 숨음
-        """
-        _display(progress="fill", animations=True)
-        card = _running()
-        motion = _become(card, D.FINISHED)
-        assert motion is not None and motion.duration() == FINISH_MOTION_MS
-        fills = []
-        for ms in TIMES:
-            _at(motion, ms)
-            assert not card.progressBar.isVisible()
-            fills.append(card.contentFrame.fill()[0])
-        assert fills == sorted(fills) and fills[-1] == pytest.approx(1.0), fills
-        _at(motion, 0)
-        assert card.contentFrame.fillLook()[1] == 0.0
-        _at(motion, FINISH_MOTION_MS - 1)
-        toward, blend, _ = card.contentFrame.fillLook()
-        assert toward == "cardTintFinished" and blend > 0.99
-
-    def test_waiting_card_shows_the_tint_growing(self, qapp) -> None:
-        """채움 방식에서 대기 카드가 완료되면 모션 가운데에 카드 색조 세기가 0과 1 사이여야 한다.
-
-        배경 채움 · 애니메이션 켬, 대기 -> 완료, 200ms -> 색조 cardTintFinished · 세기 0 < 값 < 1
-        """
-        _display(progress="fill", animations=True)
-        card = _card(_item(D.WAITING))
-        motion = _become(card, D.FINISHED)
-        assert motion is not None
-        _at(motion, 200)
-        token, strength = card.contentFrame.wash()
-        assert token == "cardTintFinished" and 0.0 < strength < 1.0
-
-    def test_after_the_motion_the_whole_card_is_tinted(self, qapp) -> None:
-        """채움 방식 완료 모션이 끝나면 채움이 없고 QSS 색조가 걸리고 막대 자리 화소가 완료 색조여야 한다."""
-        _display(progress="fill", animations=True)
-        card = _running()
-        motion = _become(card, D.FINISHED)
-        _at(motion, motion.duration())
-        assert card.contentFrame.fill() == (0.0, "")
-        assert card.contentFrame.property("tint") == "finished"
-        assert card.motion() is None
-        assert _close(_face_mid(card), _token("cardTintFinished"))
-
-
 class TestFailMotion:
     """실패 모션 — 끝까지 채우지 않고 제자리에서 실패 색이 되며 사라진다. 카드 색조가 나타난다."""
 
@@ -267,33 +217,13 @@ class TestFailMotion:
         toward, _, opacity = card.progressBar.look()
         assert toward == "stateFailed" and 0.0 < opacity < 1.0
 
-    def test_fill_does_not_grow_and_fades(self, qapp) -> None:
-        """채움 40% 카드가 실패하면 모션 동안 채움 비율이 0.4 그대로이고 채움 불투명도가 줄어야 한다.
-
-        배경 채움 · 애니메이션 켬, 40% -> 실패, 0 · 50 · … · 399ms -> 채움 0.4, 200ms 불투명도 0 < 값 < 1,
-        200ms 색조 세기 0 < 값 < 1
-        """
-        _display(progress="fill", animations=True)
-        card = _running()
-        motion = _become(card, D.FAILED)
-        assert motion is not None and motion.duration() == FAIL_MOTION_MS
-        for ms in TIMES:
-            _at(motion, ms)
-            assert card.contentFrame.fill()[0] == pytest.approx(0.4), ms
-        _at(motion, 200)
-        assert 0.0 < card.contentFrame.fillLook()[2] < 1.0
-        token, strength = card.contentFrame.wash()
-        assert token == "cardTintFailed" and 0.0 < strength < 1.0
-
-    @pytest.mark.parametrize("progress", ("bar", "fill"))
-    def test_after_the_motion_the_card_has_the_failed_tint(self, qapp, progress: str) -> None:
-        """실패 모션이 끝나면 막대 · 채움이 없고 tint "failed"이고 막대 자리 화소가 실패 색조여야 한다."""
-        _display(progress=progress, animations=True)
+    def test_after_the_motion_the_card_has_the_failed_tint(self, qapp) -> None:
+        """실패 모션이 끝나면 막대가 없고 tint "failed"이고 막대 자리 화소가 실패 색조여야 한다."""
+        _display(animations=True)
         card = _running()
         motion = _become(card, D.FAILED)
         _at(motion, motion.duration())
         assert not card.progressBar.isVisible()
-        assert card.contentFrame.fill() == (0.0, "")
         assert card.contentFrame.property("tint") == "failed"
         assert card.motion() is None
         assert _drained(card) == []
@@ -301,17 +231,15 @@ class TestFailMotion:
 
 
 class TestAnimationsOff:
-    @pytest.mark.parametrize("progress", ("bar", "fill"))
     @pytest.mark.parametrize("state,tint", [(D.FINISHED, "finished"), (D.FAILED, "failed")])
     def test_no_motion_and_the_last_look_at_once(
-        self, qapp, progress: str, state: DownloadState, tint: str
+        self, qapp, state: DownloadState, tint: str
     ) -> None:
         """애니메이션 끔이면 받는 중 카드가 완료 · 실패될 때 모션 없이 바로 막대 없음 · 색조여야 한다."""
-        _display(progress=progress, animations=False)
+        _display(animations=False)
         card = _running()
         assert _become(card, state) is None
         assert not card.progressBar.isVisible()
-        assert card.contentFrame.fill() == (0.0, "")
         assert card.contentFrame.property("tint") == tint
         assert card.contentFrame.wash() == ("", 0.0)
 
@@ -421,17 +349,6 @@ class TestHoveredMotion:
         assert _close(_pixel(frame, frame.width() // 2, y), _token("cardTintFinishedHover"))
         _at(motion, motion.duration())
         assert card.contentFrame.property("hover") is True, "전제: 호버가 남아 있다"
-        assert _close(_pixel(frame, frame.width() // 2, y), _token("cardTintFinishedHover"))
-
-    def test_hovered_fill_card_turns_into_the_hover_tint(self, qapp) -> None:
-        """배경 채움 방식에서 호버한 카드가 완료되면 399ms 채움 화소가 cardTintFinishedHover여야 한다."""
-        _display(progress="fill", animations=True)
-        card = _running()
-        card.setHovered(True)
-        motion = _become(card, D.FINISHED)
-        frame = card.contentFrame
-        _at(motion, FINISH_MOTION_MS - 1)
-        y = card.progressBar.geometry().top() - 2
         assert _close(_pixel(frame, frame.width() // 2, y), _token("cardTintFinishedHover"))
 
 

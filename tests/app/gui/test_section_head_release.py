@@ -18,6 +18,7 @@
 import gc
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
@@ -506,11 +507,12 @@ def test_stopping_during_the_cut_does_not_make_the_app_give_up_waiting_for_the_w
 def test_pausing_during_the_cut_shows_paused_and_resuming_goes_back_to_cutting(
     qtbot, window, monkeypatch
 ) -> None:
-    """구간을 자르는 도중 일시정지하면 카드가 "Paused"로 서 있고, 재개하면 "Cutting"으로 돌아가 끝나야 한다.
+    """구간을 자르는 도중 일시정지하면 카드가 일시정지(아이콘 paused)로 서 있고, 재개하면 "Cutting"으로 돌아가 끝나야 한다.
 
     경계 GOP를 다시 인코딩하는 ffmpeg를 띄우는 순간에 전역 버튼으로 일시정지(버튼이 눌릴 때까지 테스트가
     그 ffmpeg를 세워 둔다) → 진행률이 선 뒤 0.8초 지켜봄 → 다시 눌러 재개
-    -> 일시정지 중: 카드 PAUSED, 상태 문구가 "% · Paused"로 끝난다, 진행률이 0.8초 동안 그대로다,
+    -> 일시정지 중: 카드 PAUSED, 상태 아이콘 paused, 상태 문구가 진행률 「N%」(구간 둘 이상이면 「 · 끝낸/전체」)
+       뿐이고 "Cutting"이 없다(「Paused」는 아이콘 — inbox 177), 진행률이 0.8초 동안 그대로다,
        그 ffmpeg가 살아 있다, 카드가 완료되지 않았다
     -> 재개 직후: 카드 RUNNING, 상태 문구에 "Cutting"
     -> 끝: 카드 FINISHED, 구간 파일이 만들어진다, 띄운 ffmpeg가 모두 끝났다
@@ -540,6 +542,7 @@ def test_pausing_during_the_cut_shows_paused_and_resuming_goes_back_to_cutting(
         _pump()
         _wait_until_progress_stands(qtbot, item)
         first = (item.downloadState, card.statusLabel.text(), item.download_progress)
+        paused_icon = card.statusIcon.state()
         qtbot.wait(800)
         second = (item.downloadState, card.statusLabel.text(), item.download_progress)
         alive = audio[0].poll() is None
@@ -554,7 +557,9 @@ def test_pausing_during_the_cut_shows_paused_and_resuming_goes_back_to_cutting(
         _wait_for_engine_threads()
 
         assert first[0] == second[0] == DownloadState.PAUSED
-        assert first[1].endswith("% · Paused") and second[1] == first[1]
+        assert paused_icon == "paused"
+        assert re.fullmatch(r"\d+(\.\d)?%( · \d+/\d+)?", first[1]), first[1]
+        assert second[1] == first[1]
         assert second[2] == first[2]
         assert alive, "전제: 일시정지 중에 컷의 ffmpeg가 살아 있다(끝나지 않았다)"
         assert resumed[0] == DownloadState.RUNNING and "Cutting" in resumed[1]

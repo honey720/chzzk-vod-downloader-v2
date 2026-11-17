@@ -58,19 +58,21 @@ QToolTip {
 
 /* ---------- 상·하단 패널 ---------- */
 
-/* 바는 창 끝까지 — 모서리 없이, 목록 쪽 한 줄만 경계선(#536 — 설계 §11.1, 프로토 11b .bar · .hdr · .foot).
+/* 바는 창 끝까지 — 모서리 없이, 목록 쪽 한 줄만 경계선(#536 — 설계 §11.1, 프로토 11b .bar · .hdr · .foot). 헤더바 아래 ·
+ * 하단바 위 선은 카드 행 사이 구분선과 같은 선이다(설계 §13, #611). 바 면(@barBg)은 카드 면에서 한 단계 다른 면이다
+ * (#611 176i).
  * 안쪽 여백은 QSS padding이 아니라 레이아웃 마진(theme.METRICS["outerMargin"] · ["barPadY"],
  * app/views/mainWindow.py::_applyLayoutMetrics가 런타임에 건다)이 준다 — 바 안 내용 끝과
  * 카드 바깥 끝이 같은 두 선에 놓이게 하기 위해서다. */
 QFrame#headerFrame {
-    background-color: @surface;
+    background-color: @barBg;
     border: none;
     border-bottom: 1px solid @border;
     border-radius: 0px;
 }
 
 QFrame#infoFrame {
-    background-color: @surface;
+    background-color: @barBg;
     border: none;
     border-top: 1px solid @border;
     border-radius: 0px;
@@ -144,30 +146,27 @@ QLabel#thumbnailLabel {
     color: @textMuted;
 }
 
-/* 카드 테두리 — 항상 중립색이다(#244). 상태는 상태 아이콘·상태 텍스트·
- * (진행분이 있을 때 — 진행·일시정지 — 보이는) 하단 진행바가 알린다 — 카드 프레임 자체는
- * state 동적 속성을 안 본다.
+/* 카드 행 — 띠 목록(설계 §13, #611): 테두리 · 모서리 없이 아래 구분선 하나(@border, 행 사이 선). 구분선은 항상
+ * 중립색이다(#244) — 상태는 상태 아이콘 · 상태 글 · (진행분이 있을 때) 하단 진행바가 알린다.
  *
- * padding은 QSS가 아니라 카드 내부 레이아웃 마진(theme.METRICS["cardPadding"])
- * 이 준다 — 하단 진행바가 카드 가장자리에 딱 붙어야 해서(padding이 있으면
- * 바가 테두리에서 떨어진다) 프레임 자체는 0으로 둔다. 가로 0 규칙(#227
- * PR #234의 3-OS 폭 회귀)은 tests/app/gui/test_widget_theme.py::
- * TestCardInnerWidthIsUnchanged가 새 기준으로 계속 고정한다. */
+ * padding은 QSS가 아니라 카드 내부 레이아웃 마진(theme.METRICS["cardPadding"] · ["cardPadY"])이 준다 — 하단
+ * 진행바가 행 아래끝에 딱 붙어야 해서 프레임 자체는 0으로 둔다. */
 #contentFrame {
     background-color: @cardBg;
-    border: 1px solid @border;
-    border-radius: @cardRadius;
+    border: none;
+    border-bottom: 1px solid @border;
+    border-radius: 0px;
     padding: 0px;
 }
 
-/* 카드 호버 — 바탕 한 단계(#550). `hover`는 app/widgets/widget.py::setHovered가 심는다 — QSS
+/* 카드 호버 — 바탕 반 단계(#550 · #611 176q). `hover`는 app/widgets/widget.py::setHovered가 심는다 — QSS
  * :hover는 목록이 바뀐 뒤 포인터 밑 카드를 다시 맞출 수 없다(app/widgets/view.py::_rehover) */
 #contentFrame[hover="true"] {
     background-color: @cardHoverBg;
 }
 
 /* 완료 · 실패 카드 전체 색조(#554 — 설계 §12.1 카드 배치 · §8의 6). 색은 theme.py가 상태 색의 색상 ·
- * ΔE00 목표로 셈한다. `tint`는 app/widgets/widget.py::applyStateStyle이 심는다. 호버면 그 색조에서 한 단계 */
+ * ΔE00 목표로 셈한다. `tint`는 app/widgets/widget.py::applyStateStyle이 심는다. 호버면 그 색조에서 반 단계 */
 #contentFrame[tint="finished"] {
     background-color: @cardTintFinished;
 }
@@ -184,18 +183,20 @@ QLabel#thumbnailLabel {
     background-color: @cardTintFailedHover;
 }
 
-/* 눌린 카드(#561) — 호버에서 한 단계 더. `pressed`는 app/widgets/widget.py::_setPressed가 심는다(고르기를
- * 시작한 누름 동안만). 호버와 함께 켜지므로 호버 규칙 뒤에 두고, 색조 카드는 속성 수가 같은 규칙으로 따로 둔다 */
-#contentFrame[pressed="true"] {
-    background-color: @cardPressedBg;
+/* 고른 행(선택 모드, #611 — 설계 §13): 카드 면(색조 카드면 색조 면)에서 한 단계인 중립 선택 면 — 강조색을
+ * 섞지 않는다(Windows 11 목록 방식, #611 176q). 고름+호버도 선택 면 그대로다. 왼쪽 강조색 띠는 카드 면이
+ * 그린다. `picked`는 app/widgets/contentItemWidget.py::CardFace.setSelected가 심는다. 속성 수가 같은 호버 ·
+ * 색조 규칙보다 뒤에 두어 이기게 하고, 색조 카드는 속성 둘 규칙으로 중립 선택 규칙을 이긴다 */
+#contentFrame[picked="true"] {
+    background-color: @cardSelectedBg;
 }
 
-#contentFrame[tint="finished"][pressed="true"] {
-    background-color: @cardTintFinishedPressed;
+#contentFrame[tint="finished"][picked="true"] {
+    background-color: @cardTintFinishedSelected;
 }
 
-#contentFrame[tint="failed"][pressed="true"] {
-    background-color: @cardTintFailedPressed;
+#contentFrame[tint="failed"][picked="true"] {
+    background-color: @cardTintFailedSelected;
 }
 
 /* 색조 위 상태 글 — 같은 색상의 밝기만 옮겨 4.5를 지키는 색(theme.py `…OnTint`) */
@@ -278,11 +279,13 @@ QPushButton[role="primary"]:pressed {
     border-color: @accentPressed;
 }
 
+/* 꺼진 주 동작 — 면 surfaceAlt · 글 textDisabled, 테두리 없음(투명 — 자리만). 테두리는 입력 칸만 그린다(#611 —
+ * 오너 실기 2026-11-15: 꺼진 ▶은 테두리가 있고 꺼진 ■은 없었다) */
 QPushButton#downloadButton:disabled,
 QPushButton[role="primary"]:disabled {
-    background-color: @surface;
+    background-color: @surfaceAlt;
     color: @textDisabled;
-    border-color: @border;
+    border-color: transparent;
 }
 
 /* 아이콘 버튼(조작·삭제) — cardButton 정사각 고정이라 여백을 0으로 되돌려야
@@ -293,9 +296,10 @@ QPushButton[role="icon"] {
     border-color: transparent;
 }
 
+/* 호버는 면만 — 테두리는 투명 그대로(바 버튼 규칙과 같다, #611) */
 QPushButton[role="icon"]:hover {
     background-color: @surfaceHover;
-    border-color: @borderStrong;
+    border-color: transparent;
 }
 
 QPushButton[role="icon"]:pressed {
@@ -317,39 +321,6 @@ QPushButton[role="filter"] {
     padding: 2px 10px;
     font-size: @fontSizeMeta;
     color: @textMuted;
-}
-
-/* 펼침 버튼(#495 — 헤더바 저장 위치 · 정렬) — QToolButton + QMenu. 바탕 · 테두리만 여기서
- * 칠하고 도형 · 글 · ▾는 app/widgets/header_controls.py::DropButton.paintEvent가 그린다.
- * `role`은 그 클래스가 심는다. 스타일의 펼침 표시(::menu-indicator)는 지운다 — 하나라도
- * 빼면 그 부분만 네이티브로 남는다. */
-QToolButton[role="drop"] {
-    background-color: @surfaceAlt;
-    color: @text;
-    border: 1px solid @border;
-    border-radius: @radius;
-    padding: 0px;
-}
-
-QToolButton[role="drop"]:hover {
-    background-color: @surfaceHover;
-    border-color: @borderStrong;
-}
-
-QToolButton[role="drop"]:pressed,
-QToolButton[role="drop"]:open {
-    background-color: @surfacePressed;
-    border-color: @borderStrong;
-}
-
-QToolButton[role="drop"]:disabled {
-    background-color: @surface;
-    border-color: @border;
-}
-
-QToolButton[role="drop"]::menu-indicator {
-    image: none;
-    width: 0px;
 }
 
 /* 부차 조작(완료된 VOD 삭제 등) — 주요 버튼과 같은 무게로 두지 않는다
@@ -376,8 +347,11 @@ QPushButton[role="subtle"]:disabled {
 /* ---------- 셸 바 컨트롤 모양 · 상태 (#536 — 설계 §11.3 · §11.5 · §11.7) ----------
  * 메뉴바 · 헤더바 · 하단바 안의 컨트롤만 — 설정 창 · 편집 창은 설정 메뉴 단계에서 맞춘다.
  * 높이(@barControl)는 코드가 건다(mainWindow._applyBarControls). 모서리는 컨트롤 반경, 칩도 같다.
- * 상태는 모든 바 컨트롤이 같은 규칙: 호버 = 바탕 surfaceHover · 테두리 borderStrong, 눌림 = surfacePressed ·
- * borderStrong, 키보드 초점 = 테두리 강조색, 꺼짐 = 바탕 surface · 글 textDisabled · 테두리 border.
+ * 누르면 바로 일이 일어나는 버튼(동작 버튼)은 한 규칙(설계 §13, #611): 평소 면 · 테두리 없음, 호버 = 면 barHover,
+ * 눌림 = 면 barPressed(호버 면과 고른 면 사이, 176v), 고른 칩 · 켠 선택 버튼 = 면 barSelected(호버는 이 면에서 바 면 쪽으로 반 단계, 176v), 고른 메뉴 = 면 surfaceAlt
+ * (테두리 없음), 키보드 초점 = 테두리 강조색.
+ * 테두리가 늘 보이는 것은 입력 칸 — URL 입력창과 값을 고르는 펼침 버튼(입력 칸 절)뿐이다. 주 동작(▶ · ‖ — 다운로드
+ * 버튼)은 강조색 채움 그대로다.
  * 초점은 키보드로만 받는다(초점 정책 Tab — 마우스로 누른 뒤 테두리가 남지 않는다). */
 QFrame#appMenuBar QPushButton,
 QFrame#headerFrame QPushButton,
@@ -387,19 +361,70 @@ QFrame#infoFrame QPushButton {
     border-radius: @controlRadius;
 }
 
-/* 선택 버튼(#561) — 선택 모드 안에서는 눌린 모양(다시 누르면 나온다). 도형은 IconButton이 그린다 */
+/* 바 버튼 평소 · 호버 · 눌림 · 꺼짐(#611) — 투명 테두리 1px는 자리만 잡는다(focus ring 테두리가 켜져도 크기가 같다) */
+QFrame#appMenuBar QPushButton,
+QFrame#headerFrame QPushButton,
+QFrame#infoFrame QPushButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+}
+
+QFrame#appMenuBar QPushButton:hover,
+QFrame#headerFrame QPushButton:hover,
+QFrame#infoFrame QPushButton:hover {
+    background-color: @barHover;
+    border-color: transparent;
+}
+
+QFrame#appMenuBar QPushButton:pressed,
+QFrame#headerFrame QPushButton:pressed,
+QFrame#infoFrame QPushButton:pressed {
+    background-color: @barPressed;
+    border-color: transparent;
+}
+
+QFrame#appMenuBar QPushButton:disabled,
+QFrame#headerFrame QPushButton:disabled,
+QFrame#infoFrame QPushButton:disabled {
+    background-color: transparent;
+    border-color: transparent;
+}
+
+/* 주 동작(▶ · ‖) — 강조색 채움 그대로(위 바 버튼 규칙보다 구체적으로 다시 건다) */
+QFrame#infoFrame QPushButton#downloadButton {
+    background-color: @accent;
+    border-color: @accent;
+}
+
+QFrame#infoFrame QPushButton#downloadButton:hover {
+    background-color: @accentHover;
+    border-color: @accentHover;
+}
+
+QFrame#infoFrame QPushButton#downloadButton:pressed {
+    background-color: @accentPressed;
+    border-color: @accentPressed;
+}
+
+QFrame#infoFrame QPushButton#downloadButton:disabled {
+    background-color: @surfaceAlt;
+    border-color: transparent;
+}
+
+/* 선택 버튼(#561) — 선택 모드 안에서는 켠 모양(면 barSelected, 테두리 없음 — #611 · 176t). 도형은 IconButton이 그린다 */
 QFrame#headerFrame QPushButton#selectButton {
     padding: 0px;
 }
 
 QFrame#headerFrame QPushButton#selectButton[on="true"] {
-    background-color: @surfacePressed;
-    border-color: @borderStrong;
+    background-color: @barSelected;
+    border-color: transparent;
 }
 
-/* 눌린 모양 규칙이 초점 규칙보다 구체적이라 초점 테두리를 덮는다 — 그 뒤에 다시 건다 */
+/* 켠 선택 버튼의 키보드 focus ring은 면 바깥 1px 띄워 IconButton.paintEvent가 그린다(176u) — 강조색은 켠 면
+ * (barSelected) 위에서 묻힌다. 아래 공용 초점 규칙이 덮지 않게 더 구체적으로 테두리를 끈다 */
 QFrame#headerFrame QPushButton#selectButton[on="true"]:focus {
-    border-color: @accent;
+    border-color: transparent;
 }
 
 /* 선택 줄(#561 — 설계 §12.1 「선택 모드」): 면 · 테두리는 SelectBar가 그린다(말풍선과 같은 떠 있는 면). 안 버튼은
@@ -419,11 +444,11 @@ QWidget#selectBar QPushButton[role="selectIcon"] {
 }
 
 QWidget#selectBar QPushButton[role="selectIcon"]:hover {
-    background-color: @surfaceHover;
+    background-color: @barHover;
 }
 
 QWidget#selectBar QPushButton[role="selectIcon"]:pressed {
-    background-color: @surfacePressed;
+    background-color: @barPressed;
 }
 
 QWidget#selectBar QPushButton[role="selectIcon"][danger="true"]:hover,
@@ -444,13 +469,15 @@ QWidget#selectBar QPushButton#selectCheck {
     border: none;
 }
 
-/* 메뉴바(#536 — 설계 §12.1 「셸 모양은 프로토대로」, 프로토 11b · 11k): 바 면 + 아래 경계선. 고른 메뉴는 버튼 면 ·
- * 굵은 글(속성 on — :checked 글꼴은 크기 힌트에 들지 않는다), 고르지 않은 메뉴는 면 · 테두리 없는 흐린 글. 평소에도
- * 투명 테두리 1px — 호버 · 초점 때 크기가 바뀌지 않는다. 상태는 셸 바 규칙 그대로 */
+/* 메뉴바(#536 — 설계 §12.1 「셸 모양은 프로토대로」, 프로토 11b · 11k): 바 면만 — 아래 경계선은 두지 않는다. 메뉴바와
+ * 헤더바는 같은 바 면 한 덩어리이고, 바 ↔ 목록 경계는 헤더바 아래 선 하나다(설계 §13, #611).
+ * 메뉴 탭은 밑줄 탭(#611 — 176d 그림 ③): 면은 어느 상태에도 없다. 고른 탭 = 글 text · 굵게(속성 on — :checked
+ * 글꼴은 크기 힌트에 들지 않는다) + 아래 강조색 밑줄, 고르지 않은 탭 = 흐린 글, 호버 · 눌림 = 글 text. 밑줄과
+ * 키보드 초점 상자(밑줄과 겹치지 않는 글 둘레)는 app/widgets/menu_button.py::MenuButton.paintEvent가 그린다 —
+ * QSS 테두리는 네 변이 한 색이라 밑줄과 초점을 가를 수 없다. 투명 테두리 1px는 늘 둔다(버블 자리 계산이 센다) */
 QFrame#appMenuBar {
-    background-color: @surface;
+    background-color: @barBg;
     border: none;
-    border-bottom: 1px solid @border;
     border-radius: 0px;
 }
 
@@ -458,65 +485,80 @@ QFrame#appMenuBar QPushButton[role="menu"] {
     background-color: transparent;
     border: 1px solid transparent;
     color: @textMuted;
+    padding-left: @menuTabPadX;
 }
 
 QFrame#appMenuBar QPushButton[role="menu"][on="true"] {
     font-weight: bold;
 }
 
-QFrame#appMenuBar QPushButton[role="menu"]:checked {
-    background-color: @surfaceAlt;
-    border-color: @border;
-    color: @text;
-}
-
-QFrame#appMenuBar QPushButton[role="menu"]:hover {
-    background-color: @surfaceHover;
-    border-color: @borderStrong;
-    color: @text;
-}
-
+QFrame#appMenuBar QPushButton[role="menu"]:checked,
+QFrame#appMenuBar QPushButton[role="menu"]:hover,
 QFrame#appMenuBar QPushButton[role="menu"]:pressed {
-    background-color: @surfacePressed;
-    border-color: @borderStrong;
+    background-color: transparent;
+    border-color: transparent;
     color: @text;
 }
 
+/* 초점 상자는 그리기 코드가 맡는다 — 아래 공용 초점 규칙(테두리 강조색)을 탭에서는 끈다 */
 QFrame#appMenuBar QPushButton[role="menu"]:focus {
-    border-color: @accent;
+    border-color: transparent;
 }
 
-/* 상태 필터 칩(#536 — 설계 §12.1, 프로토 11k): 고른 칩 = 바 면 + 테두리(강조색 채움 아님 — 채운 강조 버튼은
- * 다운로드 하나, §11.6), 나머지 = 면 · 테두리 없는 글(투명 테두리 1px로 자리만). 실패 칩 글은 실패 색 — 고른 칩 ·
- * 호버에서도(아래 [alert] 규칙을 상태 규칙 뒤에 둔다) */
+/* 상태 필터 칩(#536 · #611 — 설계 §13): 고른 칩 = 면 barSelected만(테두리 없음, 강조색 채움 아님 — 채운 강조 버튼은
+ * 다운로드 하나 · 바 면에서 두 단계라 호버보다 진하고 포인터를 올려도 그대로 — 176t), 나머지 = 면 · 테두리 없는 글(투명 테두리 1px로 자리만). 실패 칩 글은 실패 색
+ * (아래 [alert] 규칙을 상태 규칙 뒤에 둔다). 호버 · 눌림 동안(176l)과 고른 동안(176u)은 text */
 QFrame#headerFrame QPushButton[role="filter"] {
     background-color: transparent;
     border: 1px solid transparent;
 }
 
 QFrame#headerFrame QPushButton[role="filter"]:checked {
-    background-color: @surface;
-    border-color: @border;
+    background-color: @barSelected;
+    border-color: transparent;
     color: @text;
 }
 
 QFrame#headerFrame QPushButton[role="filter"]:hover {
-    background-color: @surfaceHover;
-    border-color: @borderStrong;
+    background-color: @barHover;
+    border-color: transparent;
     color: @text;
 }
 
 QFrame#headerFrame QPushButton[role="filter"]:pressed {
-    background-color: @surfacePressed;
-    border-color: @borderStrong;
+    background-color: @barPressed;
+    border-color: transparent;
+}
+
+/* 고른 칩은 포인터를 올려도 고른 면 그대로다 — 호버 규칙 뒤에 둔다(176t) */
+QFrame#headerFrame QPushButton[role="filter"]:checked:hover {
+    background-color: @barSelected;
 }
 
 QFrame#headerFrame QPushButton[role="filter"]:focus {
     border-color: @accent;
 }
 
+/* 고른 칩의 키보드 focus ring은 면 바깥 1px 띄워 그리기 코드가 그린다(app/widgets/focus_ring.py::paint_lifted_ring,
+ * 176u) — 강조색은 고른 면(barSelected) 위에서 묻힌다. 여기서는 QSS 테두리를 끈다 */
+QFrame#headerFrame QPushButton[role="filter"]:checked:focus {
+    border-color: transparent;
+}
+
 QFrame#headerFrame QPushButton[role="filter"][alert="true"] {
     color: @stateFailed;
+}
+
+/* 고른 실패 칩 글도 text — stateFailed는 barSelected 위에서 4.5에 못 미친다(176u) */
+QFrame#headerFrame QPushButton[role="filter"][alert="true"]:checked {
+    color: @text;
+}
+
+/* 실패 칩도 호버 · 눌림 동안은 다른 칩과 같은 text — stateFailed는 barHover · barPressed 위에서 4.5에 못 미친다
+ * (176l). 포인터를 떼면 위 규칙대로 실패 색으로 돌아간다 */
+QFrame#headerFrame QPushButton[role="filter"][alert="true"]:hover,
+QFrame#headerFrame QPushButton[role="filter"][alert="true"]:pressed {
+    color: @text;
 }
 
 QFrame#appMenuBar QPushButton:focus,
@@ -531,24 +573,85 @@ QFrame#infoFrame QPushButton#downloadButton:focus {
     border-color: @focusOnAccent;
 }
 
-/* ---------- 입력창 ---------- */
+/* 마우스로 받은 초점에는 강조색 테두리가 없다(#611 176h · 176i). `keyFocus`는 app/widgets/focus_ring.py::KeyFocusMarker가
+ * 바 컨트롤(메뉴바 · 헤더바 · 하단바)에 심는다("false" = 마우스 · 그 밖). 위 초점 규칙보다 구체적으로 평소 테두리로
+ * 되돌린다 — 버튼은 테두리 없음(면으로 모양), 펼침 칸은 입력 칸 테두리(호버 · 눌림은 입력 칸 규칙 그대로). 메뉴 탭의
+ * 초점 상자는 그리기 코드가 같은 속성을 읽는다 */
+QFrame#appMenuBar QPushButton[keyFocus="false"]:focus,
+QFrame#headerFrame QPushButton[keyFocus="false"]:focus,
+QFrame#infoFrame QPushButton[keyFocus="false"]:focus,
+QFrame#headerFrame QPushButton#selectButton[on="true"][keyFocus="false"]:focus,
+QFrame#infoFrame QPushButton#downloadButton[keyFocus="false"]:focus {
+    border-color: transparent;
+}
+
+QFrame#headerFrame QToolButton[role="drop"][keyFocus="false"]:focus {
+    border-color: @fieldEdge;
+}
+
+QFrame#headerFrame QToolButton[role="drop"][keyFocus="false"]:focus:hover {
+    border-color: @fieldEdgeHover;
+}
+
+QFrame#headerFrame QToolButton[role="drop"][keyFocus="false"]:focus:pressed,
+QFrame#headerFrame QToolButton[role="drop"][keyFocus="false"]:focus:open {
+    border-color: @accent;
+}
+
+/* ---------- 입력 칸 — 값을 쓰는 칸 · 값을 고르는 칸 (#611 — 설계 §13) ----------
+ * 입력창(QLineEdit)과 펼침 버튼(role="drop" — 저장 위치 · 정렬 · 좁은 폭의 상태 드롭다운, 아이콘 모양 포함)은 한
+ * 모양이다: 면 surfaceAlt · 테두리 네 변 같은 1px · 모서리 radius(바 안에서는 controlRadius — 셸 바 절). 펼침
+ * 버튼은 바탕 · 테두리만 여기서 칠하고 도형 · 글 · ⌄는 app/widgets/header_controls.py::DropButton.paintEvent가
+ * 그린다. 설정 단계의 공용 선택 칸도 이 규칙을 쓴다.
+ * 상태(#611 176h — 176g의 「아래 변만 진하게 · 초점 아래 2px」를 바꿈): 평소 = 네 변 fieldEdge, 호버 = 네 변 두 단계
+ * 진하게(fieldEdgeHover, #611 176s), 초점 · 펼친 동안 · 눌림 = 네 변 강조색 1px(호버보다 뒤에 두어 초점이 앞선다 — 굵기가
+ * 같아 칸 높이 · 글 자리가 그대로다), 꺼짐 = 네 변 옅은 border · 글 textDisabled(면 그대로 — 꺼진 칸은 대비 3:1
+ * 대상이 아니다). 테두리를 그리는 것은 이 입력 칸뿐이다 — 버튼은 면으로 모양을 낸다(꺼짐 포함). */
+QLineEdit,
+QToolButton[role="drop"] {
+    background-color: @fieldBg;
+    color: @text;
+    border: 1px solid @fieldEdge;
+    border-radius: @radius;
+}
 
 QLineEdit {
-    background-color: @surfaceAlt;
-    color: @text;
-    border: 1px solid @border;
-    border-radius: @radius;
-    padding: 5px 8px;
+    padding: @fieldPadY 8px;
     selection-background-color: @accent;
     selection-color: @onAccent;
 }
 
-QLineEdit:focus {
+/* URL 입력창 안쪽 좌우 여백 — 펼침 버튼(header_controls.BUTTON_PADDING 10)과 같게(#611) */
+QLineEdit#urlInput {
+    padding: @fieldPadY @fieldPadX;
+}
+
+QToolButton[role="drop"] {
+    padding: 0px;
+}
+
+QLineEdit:hover,
+QToolButton[role="drop"]:hover {
+    border-color: @fieldEdgeHover;
+}
+
+QLineEdit:focus,
+QToolButton[role="drop"]:focus,
+QToolButton[role="drop"]:pressed,
+QToolButton[role="drop"]:open {
     border-color: @accent;
 }
 
-QLineEdit:disabled {
+QLineEdit:disabled,
+QToolButton[role="drop"]:disabled {
     color: @textDisabled;
+    border: 1px solid @border;
+}
+
+/* 스타일의 펼침 표시는 지운다 — 하나라도 빼면 그 부분만 네이티브로 남는다 */
+QToolButton[role="drop"]::menu-indicator {
+    image: none;
+    width: 0px;
 }
 
 /* ---------- 구간 편집 창 (#309) ---------- */
@@ -634,17 +737,29 @@ QFrame#sectionDropLine {
  * 다시 산다), 그 대체 경로가 정확히 이 프로퍼티들이다. Qt 공식 스타일시트
  * 레퍼런스가 QComboBox 프로퍼티로 문서화해 둔 경로와 일치한다. */
 QComboBox {
-    background-color: @surfaceAlt;
+    background-color: @fieldBg;
     color: @text;
-    border: 1px solid @border;
+    border: 1px solid @fieldEdge;
     border-radius: @radius;
-    padding: 5px 8px;
+    padding: @fieldPadY 8px;
     selection-background-color: @accent;
     selection-color: @onAccent;
 }
 
 QComboBox:hover {
-    border-color: @borderStrong;
+    border-color: @fieldEdgeHover;
+}
+
+/* 초점 · 펼친 동안 — 입력 칸과 같다(네 변 강조색 1px) */
+QComboBox:focus,
+QComboBox:on {
+    border-color: @accent;
+}
+
+/* 꺼진 콤보 — 입력 칸과 같이 테두리 옅은 border · 글 textDisabled(#611). 면은 그대로 */
+QComboBox:disabled {
+    color: @textDisabled;
+    border: 1px solid @border;
 }
 
 /* 닫힌 화살표 버튼(#240 감사 항목 1) — 여기를 비워두면 Fusion 기본 버튼
@@ -656,7 +771,7 @@ QComboBox::drop-down {
     subcontrol-position: top right;
     width: 20px;
     border-left: 1px solid @border;
-    background-color: @surfaceAlt;
+    background-color: @fieldBg;
 }
 
 QComboBox::drop-down:hover {
@@ -673,8 +788,8 @@ QComboBox::drop-down:hover {
 QComboBox::down-arrow {
     width: 0px;
     height: 0px;
-    border-left: 4px solid @surfaceAlt;
-    border-right: 4px solid @surfaceAlt;
+    border-left: 4px solid @fieldBg;
+    border-right: 4px solid @fieldBg;
     border-top: 5px solid @textMuted;
 }
 
@@ -734,23 +849,16 @@ QProgressBar::chunk {
     border-radius: @barRadius;
 }
 
-/* 카드 하단 진행바(#244 재설계) — 카드 아래 가장자리에 딱 붙는 전체 폭
- * 막대(진행분이 있을 때 — 진행·일시정지 — 보임; 가시성은
- * content/widget.py::applyStateStyle). 일시정지에서는 [state="paused"]의
- * muted 색으로 "돌고 있지 않다"를 알린다.
- * ⚠️ 여기 border-radius는 카드 곡률을 못 따라간다 — 높이(@barHeight)가 작아
- * Qt가 반지름을 높이 절반으로 눌러 그리고, 그 결과 막대 양끝이 카드의 둥근
- * 모서리 바깥으로 튀어나온다(실기 렌더 실측). 카드 곡률로 잘라내는 것은
- * content/widget.py::_placeProgressBar의 마스크가 한다. */
+/* 카드 하단 진행바(#244 재설계 · #611) — 행 아래끝(구분선 자리)에 겹치는 전체 폭 막대(진행분이 있을 때 — 진행 ·
+ * 일시정지 — 보임; 자리는 app/widgets/widget.py::_placeProgressBar). 트랙은 그리지 않는다 — 구분선이 트랙이다
+ * (설계 §13). 일시정지에서는 [state="paused"]의 muted 색으로 "돌고 있지 않다"를 알린다. */
 #contentFrame QProgressBar {
+    background-color: transparent;
     border-radius: 0px;
-    border-bottom-left-radius: @cardRadius;
-    border-bottom-right-radius: @cardRadius;
 }
 
 #contentFrame QProgressBar::chunk {
     border-radius: 0px;
-    border-bottom-left-radius: @cardRadius;
 }
 
 QProgressBar[state="waiting"]::chunk {

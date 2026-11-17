@@ -191,9 +191,9 @@ class Scene:
         """비교 대상 위젯 — 이름 → 위젯. 화면 구성 요소를 하나씩 셀 수 있게 이름을 붙인다."""
         w = self.window
         parts = {
-            "menu.frame": w.appMenuBar,  # 메뉴바(#492) — 헤더의 설정 톱니가 메뉴 「설정」으로 옮겨 왔다
+            "menu.frame": w.appMenuBar,  # 메뉴바(#492) — 설정은 메뉴바 오른쪽 끝 톱니바퀴(#611)
             "menu.downloadButton": w.menuDownloadButton,
-            "menu.settingsButton": w.menuSettingsButton,
+            "menu.settingsButton": w.settingsButton,
             "header.frame": w.headerFrame,
             "header.urlInput": w.urlInput,
             "header.fetchButton": w.fetchButton,
@@ -392,7 +392,8 @@ class TestFaultInjection:
         stale = _differences(fresh, switched)
         assert "card[running].progressBar" in stale  # [state="running"] 진행바 색
         assert "card[running].frame" in stale  # 카드 배경(#contentFrame)
-        assert "header.fetchButton" in stale  # 버튼 QSS
+        # 입력칸 QSS — 바 버튼은 평소 면 · 테두리가 없어 그 자체로는 안 바뀐다(#611)
+        assert "header.urlInput" in stale
 
     def test_skipping_the_palette_leaves_palette_driven_parts_stale(self, qapp, qtbot) -> None:
         def apply_without_palette(scheme) -> None:

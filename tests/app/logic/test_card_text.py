@@ -151,11 +151,11 @@ class TestSlotTexts:
         item.section_bytes = 2 * KB
         assert card_text.slot_texts(item).size == "1080p · 2.00 KB · 2:00 · Sections 2"
 
-    def test_running_puts_progress_first_then_the_state_word(self) -> None:
-        """받는 중 카드면 상태 글이 「% · Downloading · 속도 · 남은 시간 left」, 정보가 「해상도 · 받은 / 전체」, 아이콘 down이어야 한다.
+    def test_running_puts_progress_first_and_leaves_the_state_word_to_the_icon(self) -> None:
+        """받는 중 카드면 상태 글이 「% · 속도 · 남은 시간 left」(상태 단어 없음), 정보가 「해상도 · 받은 / 전체」, 아이콘 down이어야 한다.
 
         42.0% · 2.5 MB/s · 00:03:12 · 받은 1024 / total_size "2.00 KB"
-        -> "42.0% · Downloading · 2.5 MB/s · 3:12 left", "1080p · 1.00 KB / 2.00 KB", "down"
+        -> "42.0% · 2.5 MB/s · 3:12 left", "1080p · 1.00 KB / 2.00 KB", "down"(inbox 177)
         """
         item = _item(DownloadState.RUNNING)
         item.download_progress = 42
@@ -165,7 +165,7 @@ class TestSlotTexts:
         item.total_size = "2.00 KB"
         texts = card_text.slot_texts(item)
         assert (texts.status, texts.size, texts.icon) == (
-            "42.0% · Downloading · 2.5 MB/s · 3:12 left",
+            "42.0% · 2.5 MB/s · 3:12 left",
             "1080p · 1.00 KB / 2.00 KB",
             "down",
         )
@@ -208,13 +208,13 @@ class TestSlotTexts:
         item.download_progress = 94
         assert card_text.slot_texts(item).status == "94.0% · Post-processing"
 
-    @pytest.mark.parametrize(("pending", "expected"), [(False, "59.0% · Paused"), (True, "Paused")])
+    @pytest.mark.parametrize(("pending", "expected"), [(False, "59.0%"), (True, "")])
     def test_paused_shows_progress_unless_paused_while_preparing(
         self, pending: bool, expected: str
     ) -> None:
-        """일시정지 카드면 「% · Paused」(준비 중에 멈췄으면 「Paused」만), 아이콘 pause여야 한다.
+        """일시정지 카드면 상태 글이 「%」(준비 중에 멈췄으면 빈 글), 아이콘 pause여야 한다.
 
-        59% · prepare_pending False/True -> "59.0% · Paused", "Paused"
+        59% · prepare_pending False/True -> "59.0%", ""(「Paused」는 아이콘이 말한다 — inbox 177)
         """
         item = _item(DownloadState.PAUSED)
         item.download_progress = 59
@@ -222,13 +222,11 @@ class TestSlotTexts:
         texts = card_text.slot_texts(item)
         assert (texts.status, texts.icon) == (expected, "pause")
 
-    @pytest.mark.parametrize(
-        ("elapsed", "expected"), [("00:02:12", "Completed · 2:12"), ("", "Completed")]
-    )
+    @pytest.mark.parametrize(("elapsed", "expected"), [("00:02:12", "2:12"), ("", "")])
     def test_finished_shows_the_elapsed_time_when_known(self, elapsed: str, expected: str) -> None:
-        """완료 카드면 상태 글이 「Completed · 걸린 시간」(모르면 시간 없이), 아이콘 ok여야 한다.
+        """완료 카드면 상태 글이 걸린 시간(모르면 빈 글), 아이콘 ok여야 한다.
 
-        download_time 00:02:12 / "" -> "Completed · 2:12", "Completed"
+        download_time 00:02:12 / "" -> "2:12", ""(「Completed」는 아이콘이 말한다 — inbox 177)
         """
         item = _item(DownloadState.FINISHED)
         item.download_time = elapsed

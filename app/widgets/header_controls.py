@@ -17,6 +17,7 @@ from PySide6.QtGui import (
     QFontMetricsF,
     QIcon,
     QPainter,
+    QPaintEvent,
     QPen,
 )
 from PySide6.QtWidgets import (
@@ -38,7 +39,8 @@ import app.theme as theme
 from app.viewmodels.card_order import FILTER_KEYS, SORT_KEYS
 from app.viewmodels.save_location import SaveLocations, folder_name
 from app.widgets.widget import abbreviate_path, path_display_parts
-from app.widgets.icons import action_pixmap
+from app.widgets.focus_ring import paint_lifted_ring
+from app.widgets.icons import STROKE, action_pixmap
 from app.widgets.tip_bubble import hide_tip, show_tip
 
 BUTTON_PADDING = 10  # 펼침 버튼 안쪽 좌우 여백(px) — 프로토 v8 저장 위치 버튼
@@ -350,11 +352,15 @@ def fit_path(metrics: QFontMetrics, path: str, room: int) -> str:
 
 
 class DropButton(QToolButton):
-    """누르면 메뉴가 펼쳐지는 글 버튼 — [도형] 글 ▾ (#495).
+    """누르면 메뉴가 펼쳐지는 값 고르는 칸 — [도형] 글 … ⌄ (#495).
 
     글은 `setFullText`로 주고, 폭에 맞춰 가운데를 줄여 그린다. 도형(`glyph`)은 `app.widgets.icons`의
     이름이다(없으면 글만). 폭은 호출자가 `setFixedWidth`로 건다 — 고른 값에 따라 버튼 폭이 바뀌면
     헤더바가 움직인다.
+
+    겉모양은 URL 입력창과 같은 입력 칸이다(전역 QSS 입력 칸 절 — 평소에도 테두리, #611). 칸 폭은 고른 글을
+    따르지 않으므로 글은 왼쪽 안쪽 여백 뒤에, ⌄는 오른쪽 안쪽 여백 앞(칸 오른쪽 안쪽 끝)에 두고 그 사이는
+    빈자리로 남긴다 — 테두리가 둘을 한 칸으로 묶는다.
     """
 
     # 앞 도형 색 토큰 — 모든 펼침 버튼이 흐린 글 색 단색이다. 색은 상태 · 조작에만 쓴다(#536 오너 결정)
@@ -404,14 +410,14 @@ class DropButton(QToolButton):
 
     def _chrome(self) -> int:
         """글 밖의 폭 — 테두리 둘 · 좌우 여백 · 도형과 그 간격 · ▾와 그 간격."""
-        glyph = theme.METRICS["actionGlyph"] + GLYPH_GAP if self._glyph else 0
+        glyph = theme.METRICS["menuIcon"] + GLYPH_GAP if self._glyph else 0
         return 2 + 2 * BUTTON_PADDING + glyph + CARET_GAP + CARET_WIDTH
 
     def _textRect(self) -> QRect:
         """글을 그리는 칸."""
         left = 1 + BUTTON_PADDING
         if self._glyph:
-            left += theme.METRICS["actionGlyph"] + GLYPH_GAP
+            left += theme.METRICS["menuIcon"] + GLYPH_GAP
         right = 1 + BUTTON_PADDING + CARET_WIDTH + CARET_GAP
         return QRect(left, 0, self.width() - left - right, self.height())
 
@@ -426,7 +432,8 @@ class DropButton(QToolButton):
         tokens = theme.current_tokens()
         enabled = self.isEnabled()
         if self._glyph:
-            size = theme.METRICS["actionGlyph"]
+            # 글 옆 그림은 글 크기(menuIcon) — 아이콘만인 좁은 폭(_paintIcon)은 narrowIcon(176k)
+            size = theme.METRICS["menuIcon"]
             glyph_color = tokens[self.glyphToken if enabled else "textDisabled"]
             pixmap = action_pixmap(self._glyph, glyph_color, size, self.devicePixelRatioF())
             painter.drawPixmap(1 + BUTTON_PADDING, (self.height() - size) // 2, pixmap)
@@ -763,6 +770,19 @@ CHIP_COUNT_RESERVE = 999  # 칩 폭을 잡는 숫자 — 세 자리까지 칩 ·
 CHIP_GAP = 4  # 칩 사이 간격(px) — 좁은 폭의 드롭다운 ↔ 실패 칩도 같다
 
 
+class FilterChip(QPushButton):
+    """상태 필터 칩 하나 — 고른 칩의 키보드 focus ring을 고른 면에서 띄워 그린다 (#611 176u).
+
+    면 · 글은 전역 QSS가 칠한다. 고른 칩에 키보드 초점이 오면 QSS 테두리는 꺼지고 `paint_lifted_ring`이
+    가장자리에 강조색 테두리와 바 면 간격을 그린다 — 칩 크기 · 글 자리는 그대로다.
+    """
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+        if self.isChecked():
+            paint_lifted_ring(self)
+
+
 class FilterChips(QWidget):
     """헤더바 2줄 상태 필터 — 상태별 숫자 칩(전체 · 대기 · 진행 · 일시정지 · 완료 · 실패) (#495).
 
@@ -794,7 +814,7 @@ class FilterChips(QWidget):
         self.dropButton.hide()
         layout.addWidget(self.dropButton)
         for key in FILTER_KEYS:
-            chip = QPushButton(self)
+            chip = FilterChip(self)
             chip.setObjectName(f"filterChip_{key}")
             chip.setProperty("role", "filter")
             chip.setProperty("alert", False)
@@ -991,7 +1011,7 @@ class BusyButton(QPushButton):
             )
             painter.end()
             return
-        pen = QPen(QColor(color), 1.5)
+        pen = QPen(QColor(color), STROKE)  # 아이콘 규칙의 선 굵기(inbox 177)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
         painter.drawArc(rect.adjusted(1, 1, -1, -1), -self._step * SPIN_STEP_DEGREES * 16, 270 * 16)

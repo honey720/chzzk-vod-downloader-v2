@@ -291,11 +291,9 @@ SCHEMA: tuple[Setting, ...] = (
     Setting("window", {}, _window),
     # 카드 화면(#554 — 설계 §12.1). 화면 항목은 설정 단계에서 만든다 — 그때까지 키로만 고른다.
     # 키 이름은 app/viewmodels/card_display.py 한 곳에서 쓴다(설정 단계에서 바꿀 수 있게)
-    # 진행 표시 — "bar"(카드 아래끝 막대) · "fill"(카드 배경 채움)
-    Setting("cardProgress", "bar", _one_of(("bar", "fill"))),
     # 썸네일 줄이기 — 참이면 늘 「위 두 줄 옆」(68×38), 거짓이면 늘 큰 썸네일(110×62)
     Setting("cardCompactThumbnail", False, _boolean),
-    # 부드러운 애니메이션(채움 이어 움직임 · 중지 모션) — 거짓이면 바뀜이 바로 일어난다(설계 §8의 12)
+    # 부드러운 애니메이션(막대 이어 움직임 · 중지 모션) — 거짓이면 바뀜이 바로 일어난다(설계 §8의 12)
     Setting("animations", True, _boolean),
 )
 

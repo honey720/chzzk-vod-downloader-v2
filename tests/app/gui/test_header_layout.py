@@ -169,7 +169,7 @@ class TestStructure:
         _at_width(window, "wide")
         chain = [
             window.menuDownloadButton,
-            window.menuSettingsButton,
+            window.settingsButton,
             *_line_widgets(window),
             *window.filterChips.values(),
             window.sortButton,
@@ -266,8 +266,8 @@ class TestSaveLocationButtonWidth:
         qapp.installTranslator(korean)
         hangul = VodDownloader()
         try:
-            # 등록은 글 없는 「+」 아이콘이라(#536) 메뉴바 「설정」 글로 번역을 확인한다
-            assert hangul.menuSettingsButton.text() == "설정", (
+            # 등록 · 설정은 글 없는 아이콘이라(#536 · #611) 메뉴바 「VOD 다운」 글로 번역을 확인한다
+            assert hangul.menuDownloadButton.text() == "VOD 다운", (
                 "ko 번역이 적용되지 않았다 — 전제 확인"
             )
             _at_width(english, width)

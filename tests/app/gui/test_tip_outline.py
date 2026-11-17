@@ -93,6 +93,45 @@ def test_tail_base_is_filled_with_the_face(qapp: QApplication, scheme: str, side
     assert not lined, f"꼬리 밑변에 테두리 색: {lined}"
 
 
+def _render_scaled(bubble: TipBubble, ratio: float) -> QImage:
+    """말풍선을 배율 `ratio`인 투명 이미지에 그린다 — 화면 배율 1.25 · 1.5에서 그려지는 화소와 같은 격자."""
+    image = QImage(
+        round(bubble.width() * ratio),
+        round(bubble.height() * ratio),
+        QImage.Format.Format_ARGB32_Premultiplied,
+    )
+    image.setDevicePixelRatio(ratio)
+    image.fill(Qt.GlobalColor.transparent)
+    bubble.render(image)
+    return image
+
+
+@pytest.mark.parametrize("ratio", [1.25, 1.5])
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize("side", SIDES)
+def test_tail_base_is_filled_at_fractional_scales(
+    qapp: QApplication, scheme: str, side: str, ratio: float
+) -> None:
+    """꼬리 밑변 자리 화소가 배율 1.25 · 1.5, 다크 · 라이트, 꼬리 위 · 아래 모두에서 면 색이어야 한다(#611).
+
+    배율 ratio 이미지에 render, 꼬리 가운데 ±(밑변 절반 − 3) x ratio 열 x 몸통 변 ±1줄(화소)
+    -> 모든 화소의 테두리 몫 < 0.1
+    """
+    bubble, _image = _shown(qapp, scheme, side)
+    image = _render_scaled(bubble, ratio)
+    tokens = theme.current_tokens()
+    edge = round(_edge(bubble) * ratio)
+    center = round(_tail_center(bubble) * ratio)
+    reach = int((theme.METRICS["tipTailWidth"] // 2 - 3) * ratio)
+    shares = {
+        (x, y): _border_share(image.pixelColor(x, y), tokens)
+        for x in range(center - reach, center + reach + 1)
+        for y in range(edge - 1, edge + 2)
+    }
+    lined = {point: round(share, 2) for point, share in shares.items() if share >= 0.1}
+    assert not lined, f"배율 {ratio} 꼬리 밑변에 테두리 색: {lined}"
+
+
 @pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize("side", SIDES)
 def test_outer_outline_keeps_its_border(qapp: QApplication, scheme: str, side: str) -> None:

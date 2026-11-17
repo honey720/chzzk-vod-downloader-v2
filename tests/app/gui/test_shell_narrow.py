@@ -716,7 +716,7 @@ def test_no_bar_button_is_cut_at_the_minimum_width(window: VodDownloader) -> Non
     _add(window, DownloadState.FAILED)
     _at_width(window, window.minimumWidth())
     bars = {
-        window.appMenuBar: (window.menuDownloadButton, window.menuSettingsButton),
+        window.appMenuBar: (window.menuDownloadButton, window.settingsButton),
         window.headerFrame: (
             window.urlInput,
             window.saveLocationButton,
@@ -756,7 +756,7 @@ def test_menu_buttons_are_bar_controls_inside_the_bar_padding(window: VodDownloa
     """메뉴 버튼 둘은 높이가 바 컨트롤 높이이고 첫 버튼은 창 왼쪽 · 위에서 바 안쪽 여백만큼 떨어져야 한다."""
     _at_width(window, window.minimumWidth() + WIDE_EXTRA)
     control = theme.METRICS["barControl"]
-    for button in (window.menuDownloadButton, window.menuSettingsButton):
+    for button in (window.menuDownloadButton, window.settingsButton):
         assert button.height() == control
     corner = window.menuDownloadButton.mapTo(window, QPoint(0, 0))
     assert corner == QPoint(theme.METRICS["outerMargin"], theme.METRICS["barPadY"])

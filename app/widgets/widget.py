@@ -9,11 +9,11 @@ import threading
 import time
 
 from PySide6.QtCore import (
+    QCoreApplication,
     QDir,
     QEasingCurve,
     QEvent,
     QProcess,
-    QRectF,
     QSize,
     Qt,
     QTimer,
@@ -32,7 +32,6 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPixmap,
-    QRegion,
     QResizeEvent,
     QShowEvent,
 )
@@ -43,12 +42,10 @@ from app.network import REQUEST_TIMEOUT
 from app.section_input.basis import SECTION_CONTENT_TYPES
 from app.system.thread_handoff import MainCall
 from app.viewmodels import card_display, card_text
-from app.viewmodels.card_text import (  # noqa: F401 — 바깥(footer_bar · 테스트)이 이 자리에서 import한다
-    STATE_ICON,
-    short_time,
-)
+from app.viewmodels.card_text import short_time  # noqa: F401 — 바깥(footer_bar · 테스트)이 이 자리에서 import한다
 from app.viewmodels.data import ContentItem
 from app.widgets.contentItemWidget import HoverShade, Ui_ContentItemWidget
+from app.widgets.focus_ring import HANDOVER
 from app.widgets.narrow_steps import step_level
 from app.widgets.tip_bubble import install_tips
 from core.engine.session import get_thread_session
@@ -155,6 +152,18 @@ def _resolution_key(resolution) -> int:
 # 3줄 상태 원 아이콘(card_text.SlotTexts.icon) → 메뉴 버블의 상태 그림 — 같은 그림 · 같은 상태 색(#550)
 _STATUS_BUBBLE = {"down": "running", "pause": "paused", "ok": "done", "err": "all_failed"}
 
+
+def status_icon_name(icon: str) -> str:
+    """3줄 상태 원 아이콘의 접근성 이름 — 상태 이름 그대로(화면에서는 글을 빼고 아이콘만 둔다, inbox 177)."""
+    names = {
+        "down": QCoreApplication.translate("ContentItemWidget", "Downloading"),
+        "pause": QCoreApplication.translate("ContentItemWidget", "Paused"),
+        "ok": QCoreApplication.translate("ContentItemWidget", "Completed"),
+        "err": QCoreApplication.translate("ContentItemWidget", "Failed"),
+    }
+    return names.get(icon, "")
+
+
 # 카드 버튼 전부 — 왼쪽부터의 자리 차례(contentItemWidget.py가 이 차례로 놓는다)
 CARD_BUTTON_NAMES = (
     "editButton",
@@ -187,10 +196,10 @@ TIP_LABEL_NAMES = (
     "pathIcon",
 )
 
-STOP_MOTION_MS = 300  # 중지 모션 — 막대 · 채움이 왼쪽 끝까지 줄어드는 시간(ms, 설계 §12.1)
-# 완료 모션 — 막대 · 채움이 끝까지 차며 완료 색이 되고 카드 색조가 나타나는 시간(ms, 프로토 FILL_FINISH_MS, #571)
+STOP_MOTION_MS = 300  # 중지 모션 — 막대가 왼쪽 끝까지 줄어드는 시간(ms, 설계 §12.1)
+# 완료 모션 — 막대가 끝까지 차며 완료 색이 되고 카드 색조가 나타나는 시간(ms, 프로토 FILL_FINISH_MS, #571)
 FINISH_MOTION_MS = 400
-# 실패 모션 — 막대 · 채움이 제자리에서 실패 색이 되며 사라지고 카드 색조가 나타나는 시간(ms, 프로토
+# 실패 모션 — 막대가 제자리에서 실패 색이 되며 사라지고 카드 색조가 나타나는 시간(ms, 프로토
 # FILL_FAIL_MS). 프로토와 달리 끝까지 채우지 않는다 — 실패인데 다 받은 것처럼 보이지 않게(#571)
 FAIL_MOTION_MS = 400
 # 완료 모션 뒤 끝까지 찬 막대가 흐려지며 사라지는 시간(ms) — 프로토에 없는 단계(#571, 150 ~ 200에서 정함)
@@ -202,7 +211,7 @@ TINT_MOTION_FROM = (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.
 _MOTION_EASING = QEasingCurve(
     QEasingCurve.Type.InOutQuad
 )  # 완료 · 실패 · 색조 걷기 곡선(프로토와 같음)
-# 막대 · 배경 채움이 통지 사이를 이어 움직이는 시간(ms) — 엔진의 진행 통지 간격(`PROGRESS_SECONDS`)에서
+# 막대가 통지 사이를 이어 움직이는 시간(ms) — 엔진의 진행 통지 간격(`PROGRESS_SECONDS`)에서
 # 센다(card_display.PROGRESS_INTERVAL_MS, #557). 짧으면 움직이고 서기를 되풀이한다(오너 실기 2026-11-10).
 # 다음 통지가 먼저 오면 그려진 값에서 잇는다
 TICK_MOTION_MS = card_display.PROGRESS_INTERVAL_MS
@@ -329,18 +338,17 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._picking = (
             False  # 목록이 선택 모드다 — 카드 버튼을 숨기고 누름 · 더블 클릭이 고르기다(#561)
         )
-        self._armed = False  # 고르기를 시작한 누름이 이어지는 중 — 카드 안에서 떼면 고른다(#561)
-        self._armedModifiers = Qt.KeyboardModifier.NoModifier  # 그 누름 때의 수정자
-        # 그 누름을 시작한 것 — "mouse"(왼쪽 버튼) · "key"(Space). 둘이 겹치면 먼저 시작한 쪽만 따른다
-        self._armedBy = ""
-        self._pressed = False  # 프레임의 pressed 속성(눌린 바탕)을 켰는지(#561)
+        # 고르기를 한 Space를 누르고 있는지 — 그동안 오는 키 반복 · 마우스 누름은 고르지 않는다(#561 · #611)
+        self._spaceHeld = False
+        # 왼쪽 버튼을 누른 채인지 — 그동안 Space는 무시한다(먼저 시작한 누름만 따른다, #561 · #611)
+        self._mouseHeld = False
         self._tipsInstalled = False  # 말풍선 필터를 걸었는지 — 처음 호버할 때 건다
         self._levelTexts: list[card_text.SlotTexts] = []  # 접는 단계마다의 3줄 글(#554)
         self._needs: list[int] | None = None  # 단계마다 3줄 필요 폭 — 글이 바뀌면 다시 센다
         self._level = 0  # 지금 3줄 접는 단계
         self._appliedLevel = -1  # 라벨에 놓은 단계 — 다르면 글을 다시 놓는다
         self._showYear = True  # 날짜에 연도를 적는지 — 목록이 정한다
-        self._shown = 0.0  # 막대 · 채움이 지금 보이는 진행 비율(0 ~ 1)
+        self._shown = 0.0  # 막대가 지금 보이는 진행 비율(0 ~ 1)
         self._motion: QVariantAnimation | None = None  # 도는 진행 모션 — 없으면 None
         # 도는 모션이 완료 · 실패 · 색조 걷기면 그 모션이 가는 상태 — 아니면 None(#571)
         self._motionGoal: DownloadState | None = None
@@ -368,27 +376,17 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         bar_h = theme.METRICS["barHeight"]
         frame = self.contentFrame
-        bar_y = frame.height() - bar_h - 1
-        self.progressBar.setGeometry(1, bar_y, frame.width() - 2, bar_h)
-        # 카드 곡률로 잘라낸다 — 바 자체의 QSS border-radius는 높이(4px)에
-        # 눌려 카드 반지름을 못 따라가고, 그 결과 막대 양끝이 카드의
-        # 둥근 모서리 바깥으로 튀어나온다(실기 렌더 실측 — 바닥 모서리에
-        # 트랙·진행색 조각이 카드 몸통 밖에 남는다). 프레임 테두리 안쪽의
-        # 둥근 사각형을 바 좌표계로 옮겨 마스크로 건다. 값(QRegion)이라
-        # 카드에 상주하는 파이썬 객체가 아니다.
-        radius = theme.METRICS["cardRadius"] - 1
-        path = QPainterPath()
-        path.addRoundedRect(
-            QRectF(0, 1 - bar_y, frame.width() - 2, frame.height() - 2), radius, radius
-        )
-        self.progressBar.setMask(QRegion(path.toFillPolygon().toPolygon(), Qt.FillRule.WindingFill))
+        # 행 아래끝에 놓는다 — 아래 끝이 구분선 자리와 겹치고, 트랙은 그리지 않는다(구분선이 트랙, 설계 §13 ·
+        # #611). 행 좌우 끝까지다(모서리 0이라 잘라 낼 것이 없다)
+        self.progressBar.setGeometry(0, frame.height() - bar_h, frame.width(), bar_h)
         self.progressBar.raise_()
 
     def _placeCardButtons(self) -> None:
         """카드 버튼 상자를 1줄 오른쪽 끝에, 덮개를 그 밑에 놓는다 (#550).
 
-        버튼 위끝은 썸네일 위끝과 같다. 덮개는 버튼 상자 왼쪽 ``SOLID + FADE``부터 1줄 오른쪽
-        끝까지 덮는다 — 버튼 밑의 채널명 · 날짜 글이 버튼과 겹쳐 보이지 않게.
+        상자 세로 가운데를 1줄 세로 가운데에 맞춘다 — 상자(24)가 1줄(16)보다 커서 위아래로 4씩 넘치고,
+        위끝을 썸네일 위끝에 두면 오버레이가 2줄 제목 글자를 가린다(176j). 오버레이는 버튼 상자 왼쪽
+        ``SOLID + FADE``부터 1줄 오른쪽 끝까지 덮는다 — 버튼 밑의 채널명 · 날짜 글이 버튼과 겹쳐 보이지 않게.
         """
         box = self.hoverBox
         # 숨은 동안 버튼 수가 바뀌었으면 레이아웃 힌트가 옛 값이다 — 먼저 다시 계산시킨다
@@ -397,7 +395,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         box.adjustSize()
         row = self.topRow.geometry()
         right = row.right() + 1
-        top = self.thumbnailLabel.geometry().top()
+        top = row.top() + (row.height() - box.height()) // 2
         box.move(right - box.width(), top)
         shade_left = max(row.left(), box.x() - HoverShade.SOLID - HoverShade.FADE)
         self.hoverShade.setGeometry(shade_left, top, right - shade_left, box.height())
@@ -421,14 +419,16 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         super().showEvent(event)
         self._fitRow3()
-        # 누른 채 숨었다가(지우기 · 필터) 다시 보이는 카드에 눌린 바탕이 남지 않게 한다(#561)
-        if self._armed or self._pressed:
-            self._disarm()
+        # 누른 채 숨었다가(지우기 · 필터) 다시 보이는 카드는 Space를 떼지 않은 것으로 남지 않게 한다(#561)
+        self._spaceHeld = False
 
     def hideEvent(self, event: QHideEvent) -> None:
         """숨는 카드(필터 · 지우기)는 완료 · 실패 · 색조 걷기 모션을 멈추고 마지막 모양으로 간다 (#571)."""
         super().hideEvent(event)
         self._finishStepMotion()
+        # 누른 채 숨으면(Ctrl+누름 뒤 Delete 등) Qt가 누름 대상을 풀어 뗌이 오지 않는다 — 되살린 카드의 Space가
+        # 막히지 않게 지운다(#611)
+        self._mouseHeld = False
 
     # ---- 호버 · 키보드 초점 — 카드 버튼을 보이는 때 (#550) ----
 
@@ -445,7 +445,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return self._hovered
 
     def setHovered(self, hovered: bool) -> None:
-        """호버를 켜고 끈다 — 카드 바탕 한 단계(`cardHoverBg`)와 카드 버튼 (#550).
+        """호버를 켜고 끈다 — 카드 바탕 호버 면(`cardHoverBg`, 고른 카드는 선택 면 그대로)와 카드 버튼 (#550).
 
         포인터의 들어감 · 나감과 목록의 다시 맞추기(`ContentListView._rehover` — 목록이 바뀐 뒤
         포인터 밑의 카드가 달라졌을 때)가 부른다. 같은 값이면 아무것도 하지 않는다.
@@ -507,12 +507,16 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         키보드 초점인지는 초점 이벤트의 사유로 정한다. 창이 다시 활성이 되어 돌아온 초점
         (`ActiveWindowFocusReason`)은 창을 떠나기 전의 종류를 따른다 — 마우스로 받은 초점이
-        창을 오갔다고 키보드 초점(focus ring)이 되지 않는다(#561).
+        창을 오갔다고 키보드 초점(focus ring)이 되지 않는다(#561). 다른 위젯이 꺼지거나 숨어서 Qt가 넘겨준
+        초점은 넘겨준 쪽의 종류를 따른다 — 마우스로 누른 ■이 꺼져 넘어온 초점에는 고리가 없다(#611 176n).
         """
         super().focusInEvent(event)
         returning = event.reason() == Qt.FocusReason.ActiveWindowFocusReason
+        inherited = HANDOVER.arrived(self, event.reason())
         if returning and self._focusBeforeLeaving is not None:
             key = self._focusBeforeLeaving
+        elif inherited is not None:
+            key = inherited
         else:
             key = event.reason() not in _POINTER_REASONS
         self._focusBeforeLeaving = None
@@ -527,8 +531,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         Space를 누른 채 초점이 나가면(↑↓ · Tab · 다른 곳 클릭 · 창 비활성) 그 누름은 고르지 않고 끝낸다.
         """
         super().focusOutEvent(event)
-        if self._armedBy == "key":
-            self._disarm()
+        self._spaceHeld = False  # 뗌은 이 카드로 오지 않는다
+        HANDOVER.left(self, self._keyFocus, event.reason())
         leaving = event.reason() == Qt.FocusReason.ActiveWindowFocusReason
         self._focusBeforeLeaving = self._keyFocus if leaving else None
         self._setKeyFocus(False)
@@ -558,19 +562,20 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         Enter는 더블 클릭과 같은 일(대기 = 편집 창, 완료 = 폴더 열기)이고, 실패 카드에서는 다시 시도다(버튼이
         Tab 차례 밖이라 키보드로 다시 시도할 길이 이것뿐이다). 선택 모드에서는 Enter가 아무것도 열지 않는다.
         ↑↓는 보이는 차례로 앞 · 뒤 카드에 초점을 옮긴다 — 끝에서는 그대로다. Delete는 목록의 단축키가 받는다.
-        선택 모드의 Space는 이 카드를 클릭한 것과 같다(Shift+Space = Shift+클릭) — 클릭과 같이 누르면
-        눌린 바탕만 켜고, 떼면(`keyReleaseEvent`) 목록의 `cardPicked`로 간다(#561). 누른 채 초점이 다른
-        곳으로 가면 고르지 않는다(`focusOutEvent`). 선택 모드 밖의 Space는 받지 않는다 — Shift가 붙어도
-        선택 모드로 들어가지 않는다.
+        선택 모드의 Space는 이 카드를 클릭한 것과 같다(Shift+Space = Shift+클릭) — 마우스와 같이 누르는
+        순간 목록의 `cardPicked`로 가고 눌린 바탕은 없다(#611 오너 재실기). 누르고 있어 오는 키 반복은
+        고르지 않는다 — 처음 누름 한 번만. 선택 모드 밖의 Space는 받지 않는다 — Shift가 붙어도 선택 모드로
+        들어가지 않는다.
         """
         key = event.key()
         if key == Qt.Key.Key_Space and self._picking:
             owner = self._listOwner()
             if owner is not None:
                 event.accept()
-                # 누르고 있을 때 오는 키 반복은 넘긴다. 마우스로 누른 채면 먼저 시작한 마우스만 따른다
-                if not event.isAutoRepeat() and not self._armed:
-                    self._arm(True, event.modifiers(), "key")
+                # 누르고 있을 때 오는 키 반복은 넘긴다. 마우스로 누른 채면 먼저 시작한 마우스만 따른다(이미 골랐다)
+                if not event.isAutoRepeat() and not self._spaceHeld and not self._mouseHeld:
+                    self._spaceHeld = True
+                    owner.cardPicked(self, event.modifiers())
                 return
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             event.accept()
@@ -592,16 +597,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event: QKeyEvent) -> None:
-        """Space로 시작한 누름을 떼면 목록에 고르기를 알린다 — 수정자는 누를 때의 값이다 (#561)."""
-        if event.key() == Qt.Key.Key_Space and self._armedBy == "key":
+        """고르기를 한 Space를 떼면 누르고 있음만 끝낸다 — 고르기는 누를 때 끝났다 (#561 · #611)."""
+        if event.key() == Qt.Key.Key_Space and self._spaceHeld:
             event.accept()
-            if event.isAutoRepeat():
-                return  # 누르고 있을 때 오는 키 반복의 뗌 — 아직 누르고 있다
-            modifiers = self._armedModifiers
-            self._disarm()
-            owner = self._listOwner()
-            if owner is not None and self._picking:
-                owner.cardPicked(self, modifiers)
+            if not event.isAutoRepeat():  # 키 반복의 뗌은 아직 누르고 있는 것이다
+                self._spaceHeld = False
             return
         super().keyReleaseEvent(event)
 
@@ -627,103 +627,55 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """고른 카드인지(강조색 테두리 · 채운 체크 원)."""
         return self.contentFrame.isSelected()
 
-    def setSelected(self, on: bool) -> None:
+    def setSelected(self, on: bool, animate: bool = False) -> None:
         """고른 카드 모양을 켜고 끈다 — 목록이 부른다.
 
-        강조색 테두리는 카드 면과 progress bar가 함께 그린다 — 면 위에 놓인 progress bar가 면의 아래 변을
-        가리므로 그 자리의 테두리는 progress bar가 덧그린다(`CardProgress`).
+        왼쪽 강조색 띠는 카드 면과 progress bar가 함께 그린다 — 면 위에 놓인 progress bar가 면의 아래끝을
+        가리므로 그 자리의 띠는 progress bar가 덧그린다(`CardProgress`). `animate`면 띠가 자라고 줄어든다
+        (`CardFace.setSelected`, #611).
         """
-        self.contentFrame.setSelected(on)
+        self.contentFrame.setSelected(on, animate)
         self.progressBar.setPicked(on)
         self._syncPickMark()
 
-    # ---- 뗄 때 고르기 (#561) ----
-    # 누르면 눌린 바탕만 켜고, 카드 안에서 떼면 고른다. 누른 채 카드 밖으로 나가면 눌린 바탕이 꺼지고 그대로
-    # 떼면 아무 일도 없다. 버튼을 누른 동안에는 포인터가 밖에 있어도 옮김 · 뗌이 누른 위젯으로 온다(Qt)
+    # ---- 고르기 — 마우스 · Space 모두 누를 때 (#561 · #611) ----
+    # 마우스 왼쪽 버튼과 Space는 누르는 순간 고르거나 푼다(Windows 탐색기 등 표준 동작, 오너 실기 2026-11-16) —
+    # 눌린 바탕은 없다(#611 176i). 둘 중 먼저 누른 것만 따르고, 누르고 있는 동안 다른 쪽 누름은 고르지 않는다.
+    # 드래그로 순서 바꾸기(2.13.0)가 들어오면 이미 고른 카드를 누를 때만 고르기를 뗄 때로 미룬다 — 누름이
+    # 끌기의 시작일 수 있어서다. 고르지 않은 카드는 그때도 누를 때 고른다
 
-    def isPressed(self) -> bool:
-        """눌린 바탕이 켜져 있는지 — 고르기를 시작한 누름이 카드 안에 있는 동안."""
-        return self._pressed
+    def _pressPick(self, event: QMouseEvent) -> None:
+        """왼쪽 버튼 누름을 목록에 알리고, 고르기를 시작하는 누름이면 바로 고른다(#611).
 
-    def _setPressed(self, on: bool) -> None:
-        """눌린 바탕(`cardPressedBg` 등)을 켜고 끈다 — 모션 없이 바로 바뀐다."""
-        if on == self._pressed:
-            return
-        self._pressed = on
-        frame = self.contentFrame
-        frame.setProperty("pressed", on)
-        theme.repolish(frame)
-        frame.update()  # 배경 채움은 면이 직접 그린다 — 속성만 바뀌면 다시 그리지 않을 수 있다
-        if self.hoverShade.isVisibleTo(self):
-            self.hoverShade.update()
-
-    def _arm(self, on: bool, modifiers: Qt.KeyboardModifier, source: str = "mouse") -> None:
-        """고르기를 시작한 누름이면 뗌을 기다린다 — 수정자는 누를 때의 값을 든다.
-
-        Args:
-            source: 누름을 시작한 것 — "mouse"(왼쪽 버튼) · "key"(Space)
-        """
-        self._armed = on
-        self._armedModifiers = modifiers
-        self._armedBy = source if on else ""
-        self._setPressed(on)
-
-    def _disarm(self) -> None:
-        self._armed = False
-        self._armedBy = ""
-        self._setPressed(False)
-
-    def _holds(self, event: QMouseEvent) -> bool:
-        """포인터 밑이 이 카드인지 — 굴러 나가 가려진 부분, 다른 위젯이 덮은 부분은 밖으로 본다.
-
-        커서를 읽지 않고 이벤트의 자리로 창에 묻는다(`QWidget.childAt`) — 마우스를 받지 않는 위젯(focus
-        ring)은 건너뛴다.
-        """
-        point = event.position().toPoint()
-        top = self.window()
-        if top is self:
-            return self.rect().contains(point)
-        under = top.childAt(self.mapTo(top, point))
-        return under is self or (under is not None and self.isAncestorOf(under))
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        """카드 바탕 · 글 · 썸네일을 누르면 목록에 알린다 — 고르기는 뗄 때 한다(#561).
-
-        목록이 「고르기를 시작하는 누름」이라고 답하면(선택 모드, 또는 Ctrl/⌘ · Shift와 함께) 눌린 바탕을
-        켜고 뗌을 기다린다. 카드 버튼은 누름을 스스로 받아 여기 오지 않는다. 목록이 없으면(카드만 띄운
-        테스트) 기본 처리다.
+        목록이 「고르기를 시작하는 누름」이라고 답하면(선택 모드, 또는 Ctrl/⌘ · Shift와 함께) 그 자리에서
+        `cardPicked`를 부른다. Space를 누른 채면 먼저 시작한 Space만 따른다(두 번 고르지 않는다).
         """
         owner = self._listOwner()
-        if event.button() == Qt.MouseButton.LeftButton and owner is not None:
+        if owner is None or self._spaceHeld:
+            return
+        modifiers = event.modifiers()
+        if owner.cardPressed(self, modifiers):
+            owner.cardPicked(self, modifiers)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """카드 바탕 · 글 · 썸네일을 누르면 목록에 알린다 — 고르기는 누를 때 한다(#611).
+
+        카드 버튼은 누름을 스스로 받아 여기 오지 않는다. 목록이 없으면(카드만 띄운 테스트) 기본 처리다.
+        """
+        if event.button() == Qt.MouseButton.LeftButton and self._listOwner() is not None:
             event.accept()
-            if self._armedBy == "key":
-                return  # Space를 누른 채다 — 먼저 시작한 Space만 따른다(두 번 고르지 않는다)
-            self._arm(owner.cardPressed(self, event.modifiers()), event.modifiers())
+            self._mouseHeld = True
+            self._pressPick(event)
             return
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        """누른 채 옮기면 눌린 바탕이 포인터가 카드 안에 있는지를 따른다 (#561)."""
-        if self._armedBy == "mouse":
-            event.accept()
-            self._setPressed(self._holds(event))
-            return
-        super().mouseMoveEvent(event)
-
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        """고르기를 시작한 누름을 카드 안에서 떼면 목록에 고르기를 알린다 — 밖에서 떼면 아무 일도 없다 (#561)."""
-        if event.button() == Qt.MouseButton.LeftButton and self._armedBy == "key":
-            event.accept()
-            return  # Space를 누른 채 누른 마우스 — Space를 뗄 때 고른다
-        if event.button() == Qt.MouseButton.LeftButton and self._armed:
-            event.accept()
-            inside = self._holds(event)
-            modifiers = self._armedModifiers
-            self._disarm()
-            owner = self._listOwner()
-            if inside and owner is not None:
-                owner.cardPicked(self, modifiers)
-            return
+        """왼쪽 버튼 뗌은 받기만 한다 — 고르기는 누를 때 끝났다(#611)."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._mouseHeld = False
+            if self._listOwner() is not None:
+                event.accept()
+                return
         super().mouseReleaseEvent(event)
 
     def _syncCardButtons(self) -> None:
@@ -1039,6 +991,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._needs = None
         texts = self._levelTexts[0]
         self.statusIcon.setState(_STATUS_BUBBLE.get(texts.icon, ""))
+        self.statusIcon.setAccessibleName(status_icon_name(texts.icon))
         self.statusLabel.setDetailTip(texts.status_tip or "")
         self._appliedLevel = -1
         self._fitRow3()
@@ -1146,9 +1099,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return max(self.width() - inset, 0)
 
     def _frameInset(self) -> int:
-        """카드 폭 − 안쪽 폭 — 테두리 둘 + 안쪽 여백 둘."""
+        """카드 폭 − 안쪽 폭 — 좌우 테두리(띠 행은 0) + 안쪽 좌우 여백."""
         margins = self.bodyLayout.contentsMargins()
-        return 2 * self.contentFrame.frameWidth() + margins.left() + margins.right()
+        frame = self.contentFrame
+        borders = frame.width() - frame.contentsRect().width()
+        return borders + margins.left() + margins.right()
 
     def _thumbColumn(self) -> int:
         """썸네일 열 — 썸네일 폭 + 썸네일 ↔ 글 간격."""
@@ -1213,12 +1168,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return max(inset + self._thumbColumn() + row1, inset + row3)
         return inset + self._thumbColumn() + max(row1, row3)
 
-    # ---- 진행 막대 · 배경 채움 · 색조 · 중지 모션 (#554) ----
+    # ---- 진행 막대 · 색조 · 중지 모션 (#554) ----
 
     def _target(self) -> tuple[float, str, bool]:
         """(보일 진행 비율, 상태 어휘, 값 없이 움직이는 막대인지) — 지금 아이템으로 정한다.
 
-        완료 · 실패는 0이다 — 막대 · 채움이 없고 카드 전체 색조가 상태를 알린다(#571).
+        완료 · 실패는 0이다 — 막대가 없고 카드 전체 색조가 상태를 알린다(#571).
         """
         item = self.item
         raw = item.downloadState
@@ -1234,26 +1189,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return 0.0, state, False
 
     def _showProgress(self, fraction: float, state: str, busy: bool, snap: bool = False) -> None:
-        """막대 · 채움에 진행을 그린다 — 진행 표시 방식(설정 키)을 따른다.
-
-        값 없이 움직이는 막대(준비 중 · 자르기 준비 중)는 배경 채움 방식에서도 막대로 보인다 — 채울
-        값이 없어 채움으로는 아무것도 안 보인다(#554 리뷰).
+        """카드 아래끝 막대에 진행을 그린다 — 준비 중 · 자르기 준비 중은 값 없이 움직이는 막대다.
 
         `snap`이면(모션 프레임) 그리는 값을 그 폭의 1px 단위로 묶는다 — 화소가 바뀌지 않는 프레임은
         값이 같아 다시 그리지 않는다(오너 2026-11-10, 0.01% 단위의 프레임마다 다시 그리기를 막음).
         폭은 그릴 때마다 지금 폭으로 센다. 멈춘 값(틱 · 모션 끝)은 묶지 않는다.
         """
         self._shown = fraction
-        display = card_display.current()
         bar = self.progressBar
-        if display.fill and not busy:
-            bar.setVisible(False)
-            token = {"running": "cardFillRunning", "paused": "cardFillPaused"}.get(state, "")
-            frame = self.contentFrame
-            drawn = _snapped(fraction, frame.width() - 2) if snap else fraction
-            frame.setFill(drawn, token)
-            return
-        self.contentFrame.setFill(0.0, "")
         maximum = 0 if busy else PROGRESS_SCALE
         if bar.maximum() != maximum:
             bar.setRange(0, maximum)
@@ -1280,7 +1223,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self._motion = None
         self._motionGoal = None
         self.contentFrame.setWash("", 0.0)
-        self.contentFrame.setFillLook("", 0.0, 1.0)
         self.progressBar.setLook("", 0.0, 1.0)
 
     def _setTint(self, tint: str) -> None:
@@ -1320,54 +1262,40 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._setTint(self._cardState() if raw in TINT_STATES else "")
         self._showProgress(*self._target())
 
-    def _startTintMotion(self, previous: DownloadState, finished: bool, fill: bool) -> None:
+    def _startTintMotion(self, previous: DownloadState, finished: bool) -> None:
         """받는 중 · 일시정지 · 대기 → 완료 · 실패 모션을 돈다 (#571).
 
-        완료: 막대 방식은 막대가 그려진 값에서 끝까지 차며 앞 상태 색 → 완료 색으로 바뀌고 같은 시간에 카드
-        색조가 0에서 나타난다(`FINISH_MOTION_MS`). 그 뒤 막대가 `BAR_FADE_MS`에 흐려진다. 배경 채움
-        방식은 채움이 끝까지 차며 완료 색조로 바뀐다 — 다 찬 채움이 곧 카드 전체 색조다. 채움이 없던 대기
-        카드는 채울 색이 없어 카드 색조만 나타난다.
+        완료: 막대가 그려진 값에서 끝까지 차며 앞 상태 색 → 완료 색으로 바뀌고 같은 시간에 카드 색조가
+        0에서 나타난다(`FINISH_MOTION_MS`). 그 뒤 막대가 `BAR_FADE_MS`에 흐려진다.
 
-        실패: 끝까지 채우지 않는다. 막대 방식은 막대가 제자리에서 실패 색으로 바뀌며 사라지고, 배경 채움
-        방식은 채움이 제자리에서 사라진다. 어느 방식이든 같은 시간에 카드 색조가 나타난다(`FAIL_MOTION_MS`).
+        실패: 끝까지 채우지 않는다. 막대가 제자리에서 실패 색으로 바뀌며 사라지고, 같은 시간에 카드 색조가
+        나타난다(`FAIL_MOTION_MS`).
 
         모션 동안 QSS 색조는 걸지 않고 면이 칠한다(`CardFace.setWash`). 끝나면 `_finishStepMotion`이
-        QSS 색조를 걸고 막대 · 채움을 없앤다.
+        QSS 색조를 걸고 막대를 없앤다.
         """
         start = self._shown
         old_state = "paused" if previous == DownloadState.PAUSED else "running"
         if previous == DownloadState.WAITING:
             start, old_state = 0.0, "waiting"
-        old_fill = {"running": "cardFillRunning", "paused": "cardFillPaused"}.get(old_state, "")
         name = "Finished" if finished else "Failed"
         tint, color = f"cardTint{name}", f"state{name}"
         frame, bar = self.contentFrame, self.progressBar
         self._setTint("")
-        if fill:
-            bar.setVisible(False)
-            frame.setFill(start, old_fill)
-        else:
-            frame.setFill(0.0, "")
-            if bar.maximum() != PROGRESS_SCALE:
-                bar.setRange(0, PROGRESS_SCALE)
-            bar.setValue(round(start * PROGRESS_SCALE))
-            if bar.property("state") != old_state:
-                bar.setProperty("state", old_state)
-                theme.repolish(bar)
-            bar.setVisible(finished or start > 0)
+        if bar.maximum() != PROGRESS_SCALE:
+            bar.setRange(0, PROGRESS_SCALE)
+        bar.setValue(round(start * PROGRESS_SCALE))
+        if bar.property("state") != old_state:
+            bar.setProperty("state", old_state)
+            theme.repolish(bar)
+        bar.setVisible(finished or start > 0)
         main = FINISH_MOTION_MS if finished else FAIL_MOTION_MS
-        fade = BAR_FADE_MS if finished and not fill else 0
+        fade = BAR_FADE_MS if finished else 0
 
         def step(ms: float) -> None:
             t = _MOTION_EASING.valueForProgress(min(1.0, ms / main))
-            if fill and finished and old_fill:
-                frame.setFill(_snapped(start + (1.0 - start) * t, frame.width() - 2), old_fill)
-                frame.setFillLook(tint, t, 1.0)
-                return
             frame.setWash(tint, t)
-            if fill:
-                frame.setFillLook("", 0.0, 1.0 - t)
-            elif finished:
+            if finished:
                 bar.setValue(
                     round(_snapped(start + (1.0 - start) * t, bar.width()) * PROGRESS_SCALE)
                 )
@@ -1405,19 +1333,19 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         motion.start()
 
     def _onMotionFinished(self) -> None:
-        """모션이 끝났다 — 지금 아이템의 진행으로 맞춘다(중지 모션이면 대기 — 막대 · 채움 없음)."""
+        """모션이 끝났다 — 지금 아이템의 진행으로 맞춘다(중지 모션이면 대기 — 막대 없음)."""
         motion, self._motion = self._motion, None
         if motion is not None:
             motion.deleteLater()  # 끝난 모션이 카드의 자식으로 쌓이지 않게(이어 움직임은 틱마다 하나)
         self._showProgress(*self._target())
 
     def _applyProgress(self, previous: object) -> None:
-        """상태가 바뀐 뒤 막대 · 채움 · 색조를 맞춘다 — 중지면 줄어드는 모션을 돈다(설계 §12.1 중지 모션).
+        """상태가 바뀐 뒤 막대 · 색조를 맞춘다 — 중지면 줄어드는 모션을 돈다(설계 §12.1 중지 모션).
 
-        중지 확인 뒤 대기로 돌아가는 카드(받는 중 · 일시정지)는 막대 · 채움이 지금 자리에서 왼쪽 끝까지
+        중지 확인 뒤 대기로 돌아가는 카드(받는 중 · 일시정지)는 막대가 지금 자리에서 왼쪽 끝까지
         `STOP_MOTION_MS`에 줄어든다(처음 빠르고 끝에서 느림, 그 카드의 지금 색). 애니메이션을 끄면 바로
-        사라진다. 모션 도중 다시 시작하면 모션을 멈추고 새 진행을 따른다. 받는 중 진행은 막대 · 배경
-        채움 어느 방식이든 틱 사이를 `TICK_MOTION_MS`에 이어 움직인다(애니메이션 켬일 때).
+        사라진다. 모션 도중 다시 시작하면 모션을 멈추고 새 진행을 따른다. 받는 중 막대는 틱 사이를
+        `TICK_MOTION_MS`에 이어 움직인다(애니메이션 켬일 때).
 
         완료 · 실패가 되면 완료 · 실패 모션을 돌고(`_startTintMotion`), 실패 · 완료에서 다른 상태가 되면
         색조를 걷는 모션을 돈다(`_startClearMotion`) — 애니메이션 켬이고 카드가 보일 때만(#571). 그 밖
@@ -1438,7 +1366,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         moving = display.animations and self.isVisible() and previous != raw
         if moving and raw in TINT_STATES and previous in TINT_MOTION_FROM:
             self._stopMotion()
-            self._startTintMotion(previous, raw == DownloadState.FINISHED, display.fill)
+            self._startTintMotion(previous, raw == DownloadState.FINISHED)
             return
         if moving and previous in TINT_STATES and raw not in TINT_STATES:
             self._stopMotion()
@@ -1503,8 +1431,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         동적 속성(`state` · `tint`)만 바꾸고, 색은 전역 QSS 규칙이 고른다 — 속성만 바꾸면 이미 계산된
         스타일이 갱신되지 않으므로 theme.repolish()가 함께 필요하다.
 
-        진행 표시(#554): 막대 방식은 받는 중 · 일시정지가 진행만큼이다. 배경 채움 방식은 받는 중 · 일시정지를
-        카드 면에 칠한다. 어느 방식이든 완료 · 실패는 막대 · 채움 없이 카드 전체 색조다(#571). 준비 중 ·
+        진행 표시(#554 · #611): 막대 하나 — 받는 중 · 일시정지가 진행만큼이다. 완료 · 실패는 막대 없이
+        카드 전체 색조다(#571). 준비 중 ·
         자르기 준비 중은 값 없이 움직이는 막대다.
 
         카드 버튼은 `CARD_BUTTONS`가 상태마다 정한다. 줄 자리 · 카드 높이는 상태와 무관하다
@@ -1572,16 +1500,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         """카드를 더블 클릭하면 `activate`한다. 버튼은 더블 클릭을 스스로 받아 여기 오지 않는다.
 
-        선택 모드에서는 아무것도 열지 않는다(#561) — 두 번째 누름으로 보고 뗌을 기다린다(빠르게 두 번 누르면
-        골랐다가 푼다). Qt는 더블 클릭의 두 번째 누름을 누름이 아니라 더블 클릭으로만 보낸다.
+        선택 모드에서는 아무것도 열지 않는다(#561) — 두 번째 누름으로 보고 그 자리에서 고르기를 바꾼다(빠르게 두 번
+        누르면 골랐다가 푼다). Qt는 더블 클릭의 두 번째 누름을 누름이 아니라 더블 클릭으로만 보낸다.
         """
         if event.button() == Qt.MouseButton.LeftButton:
             event.accept()
             owner = self._listOwner()
             if self._picking and owner is not None:
-                if self._armedBy == "key":
-                    return  # Space를 누른 채다 — 먼저 시작한 Space만 따른다(누름과 같은 규칙)
-                self._arm(owner.cardPressed(self, event.modifiers()), event.modifiers())
+                self._mouseHeld = True
+                self._pressPick(event)  # 두 번째 누름 — 누름과 같은 규칙(골랐다가 푼다)
                 return
             if not self._picking:
                 self.activate()

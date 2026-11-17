@@ -25,7 +25,17 @@
 ## 크기 · 간격은 theme.METRICS, 글자 · 색은 전역 QSS(theme 토큰)가 정한다.
 ################################################################################
 
-from PySide6.QtCore import QCoreApplication, QMetaObject, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import (
+    QCoreApplication,
+    QEasingCurve,
+    QMetaObject,
+    QPointF,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    QVariantAnimation,
+)
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QFrame,
@@ -43,13 +53,19 @@ from PySide6.QtWidgets import (
 import app.theme as theme
 from app.viewmodels import card_display
 from app.widgets.eliding_label import ElidingLabel
-from app.widgets.icons import IconButton
+from app.widgets.icons import STATUS_GRID, STATUS_STROKE, IconButton
 from app.widgets.menu_button import StateBubble
 
 
 def _level(amount: float) -> int:
     """0 ~ 1 비율을 0 ~ 255 단계로 묶는다 — 화면에 그려지는 색 단위다(그 밑의 변화는 화소가 같다)."""
     return round(max(0.0, min(1.0, amount)) * 255)
+
+
+BAND_GROW_MS = (
+    120  # 고를 때 왼쪽 띠가 행 가운데에서 위아래로 자라는 시간(ms, OutCubic — 오너 2026-11-15)
+)
+BAND_SHRINK_MS = 80  # 풀 때 띠가 줄어드는 시간(ms)
 
 
 def mix(start: QColor, end: QColor, amount: float) -> QColor:
@@ -63,12 +79,11 @@ def mix(start: QColor, end: QColor, amount: float) -> QColor:
 
 
 class CardFace(QFrame):
-    """카드 면 — QSS가 바탕 · 테두리 · 색조를 그리고, 배경 채움 방식이면 그 위에 진행 채움을 그린다 (#554).
+    """카드 면 — QSS가 바탕 · 테두리 · 색조를 그리고, 그 위에 모션 색조와 고른 카드 표시를 그린다 (#554).
 
-    채움은 진행만큼 왼쪽부터 카드 면 안쪽(테두리 안)을 칠한다 — 둥근 모서리로 잘라 낸다. 틱마다
-    `setStyleSheet`를 쓰지 않고 `paintEvent`에서 그리며, 채움 끝이 움직이면 바뀐 띠만 다시 그린다
-    (설계 §8의 6). 진행 끝선은 강조하지 않는다(설계 §12.1). 카드마다 붙는 효과 객체가 아니라 값 몇 개
-    (채움 비율 · 색 토큰, 모션 동안의 색조 세기 · 채움 색 섞기)만 든다.
+    카드마다 붙는 효과 객체가 아니라 값 몇 개(고름, 띠 높이 비율, 아래 행과 잇는지, 모션 동안의 색조 토큰 ·
+    세기)만 든다. 띠 애니메이션 객체는 움직이는 동안만 있다. 진행 표시는 카드 아래끝 막대 하나다 — 배경 채움
+    방식은 없앴다(설계 §13, #611).
 
     완료 · 실패 모션(#571) 동안은 QSS 색조(`tint` 속성) 대신 면이 색조를 세기만큼 바탕 위에 칠한다
     (`setWash`) — QSS는 속성 값마다 한 색이라 서서히 나타나게 할 수 없다. 모션이 끝나면 카드가 `tint`
@@ -77,46 +92,105 @@ class CardFace(QFrame):
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
-        self._fill = 0.0  # 채운 비율 0 ~ 1
-        self._fillToken = ""  # 채움 색 토큰 — 빈 글이면 채움 없음
         self._selected = False  # 선택 모드에서 고른 카드 — 강조색 테두리(#561)
+        self._band = 0.0  # 왼쪽 띠의 높이 비율 0 ~ 1 — 고르면 1로 자라고 풀면 0으로 줄어든다(#611)
+        self._joinBelow = False  # 아래 행도 골라 띠가 구분선 자리까지 이어지는지(#611)
+        self._bandMotion: QVariantAnimation | None = None  # 띠가 자라고 줄어드는 동안만 있다
         self._washToken = ""  # 모션 동안 칠하는 색조 토큰 — 빈 글이면 없음(#571)
         self._wash = 0  # 색조 세기 0 ~ 255
-        self._fillToward = ""  # 채움 색이 섞여 가는 토큰 — 빈 글이면 채움 색 그대로(#571)
-        self._fillBlend = 0  # 채움 색 섞기 0 ~ 255
-        self._fillAlpha = 255  # 채움 불투명도 0 ~ 255(#571)
 
     def isSelected(self) -> bool:
         """고른 카드의 강조색 테두리를 그리는지."""
         return self._selected
 
-    def setSelected(self, on: bool) -> None:
-        """고른 카드 테두리를 켜고 끈다 — 줄 배치는 그대로다(그리기만)."""
+    def setSelected(self, on: bool, animate: bool = False) -> None:
+        """고른 행 표시를 켜고 끈다 — 선택 면(QSS `picked`, 중립 한 단계)과 왼쪽 강조색 띠. 줄 배치는 그대로다.
+
+        고른 카드는 호버여도 선택 면 그대로다(#611 176q). 바탕은 늘 바로 바뀐다. `animate`면 띠가 행 세로 가운데에서 위아래로
+        자라고(`BAND_GROW_MS`) 풀 때 줄어든다(`BAND_SHRINK_MS`) — 목록이 카드 한 장만 바뀔 때 넘긴다(#611).
+        """
         if on != self._selected:
             self._selected = on
-            self.update()
+            self.setProperty("picked", on)
+            theme.repolish(self)
+        self._moveBand(1.0 if on else 0.0, animate)
 
-    def fill(self) -> tuple[float, str]:
-        """(채운 비율, 색 토큰)."""
-        return self._fill, self._fillToken
+    def band(self) -> float:
+        """왼쪽 띠의 지금 높이 비율 0 ~ 1."""
+        return self._band
 
-    def setFill(self, fraction: float, token: str) -> None:
-        """채움을 바꾼다 — 바뀐 띠만 다시 그린다. 토큰이 빈 글이면 채움 없음."""
-        fraction = max(0.0, min(1.0, fraction)) if token else 0.0
-        if (fraction, token) == (self._fill, self._fillToken):
+    def bandMotion(self) -> QVariantAnimation | None:
+        """띠가 자라거나 줄어드는 애니메이션 — 움직이지 않으면 None."""
+        return self._bandMotion
+
+    def joinsBelow(self) -> bool:
+        """띠가 아래 구분선 자리까지 이어지는지."""
+        return self._joinBelow
+
+    def setJoinBelow(self, on: bool) -> None:
+        """아래 행도 골랐으면 띠를 구분선 자리까지 칠해 두 행의 띠를 한 줄로 잇는다 — 목록이 정한다(#611)."""
+        if on != self._joinBelow:
+            self._joinBelow = on
+            self._repaintBand()
+
+    def bandRect(self) -> QRectF:
+        """왼쪽 띠 사각형(면 좌표) — 띠가 없으면 빈 사각형.
+
+        행 위끝 ~ 구분선 위가 다 자란 띠다. 자라는 동안은 그 세로 가운데를 중심으로 높이가 비율만큼이다. 다
+        자랐고 아래 행과 이으면 구분선 자리(아래끝 1px)까지 칠한다.
+        """
+        if self._band <= 0.0:
+            return QRectF()
+        width = theme.METRICS["cardSelectBar"]
+        full = self.height() - theme.METRICS["cardSeparator"]
+        if self._band >= 1.0:
+            height = self.height() if self._joinBelow and self._selected else full
+            return QRectF(0, 0, width, height)
+        height = full * self._band
+        return QRectF(0, (full - height) / 2, width, height)
+
+    def _moveBand(self, target: float, animate: bool) -> None:
+        """띠 높이 비율을 target으로 — `animate`가 아니면 바로, 도는 애니메이션은 그 자리에서 멈춘다."""
+        if self._bandMotion is not None:
+            if animate and self._bandMotion.endValue() == target:
+                return  # 이미 그리로 가는 중
+            self._bandMotion.stop()
+            self._bandMotion.deleteLater()
+            self._bandMotion = None
+        if not animate or self._band == target:
+            self._setBand(target)
             return
-        if token != self._fillToken:
-            self._fill, self._fillToken = fraction, token
-            self.update()
-            return
-        left, right = sorted((self._fill, fraction))
-        self._fill = fraction
-        inner = self.width() - 2
-        self.update(int(left * inner), 0, int((right - left) * inner) + 3, self.height())
+        motion = QVariantAnimation(self)
+        motion.setEasingCurve(QEasingCurve.Type.OutCubic)
+        motion.setDuration(BAND_GROW_MS if target > self._band else BAND_SHRINK_MS)
+        motion.setStartValue(self._band)
+        motion.setEndValue(target)
+        motion.valueChanged.connect(self._onBandStep)
+        motion.finished.connect(self._onBandDone)
+        self._bandMotion = motion
+        motion.start()
 
-    def fillRight(self) -> int:
-        """채움의 오른쪽 끝(면 좌표 px). 채움이 없으면 0."""
-        return round(1 + self._fill * (self.width() - 2)) if self._fillToken else 0
+    def _onBandStep(self, value: float) -> None:
+        self._setBand(float(value))
+
+    def _onBandDone(self) -> None:
+        motion, self._bandMotion = self._bandMotion, None
+        if motion is not None:
+            self._setBand(float(motion.endValue()))
+            motion.deleteLater()
+
+    def _setBand(self, value: float) -> None:
+        if value != self._band:
+            self._band = value
+            self._repaintBand()
+
+    def _repaintBand(self) -> None:
+        """띠 자리를 다시 그린다 — 띠는 면과 그 위의 progress bar가 함께 그린다."""
+        self.update(QRect(0, 0, theme.METRICS["cardSelectBar"], self.height()))
+        for bar in self.findChildren(
+            CardProgress, options=Qt.FindChildOption.FindDirectChildrenOnly
+        ):
+            bar.update()
 
     def wash(self) -> tuple[str, float]:
         """(모션 동안 칠하는 색조 토큰, 세기 0 ~ 1) — 칠하지 않으면 ("", 0.0)."""
@@ -130,104 +204,57 @@ class CardFace(QFrame):
             self._washToken, self._wash = token, level
             self.update()
 
-    def fillLook(self) -> tuple[str, float, float]:
-        """(채움 색이 섞여 가는 토큰, 섞기 0 ~ 1, 불투명도 0 ~ 1)."""
-        return self._fillToward, self._fillBlend / 255, self._fillAlpha / 255
-
-    def setFillLook(self, toward: str, blend: float, alpha: float) -> None:
-        """채움 색을 `toward` 색으로 `blend`만큼 섞고 불투명도를 `alpha`로 둔다 — 모션이 쓴다 (#571).
-
-        ("", 0, 1)이면 채움 색 그대로다. 채움 비율 · 토큰(`setFill`)은 바꾸지 않는다.
-        """
-        blend_level = _level(blend) if toward else 0
-        look = (toward if blend_level else "", blend_level, _level(alpha))
-        if look != (self._fillToward, self._fillBlend, self._fillAlpha):
-            self._fillToward, self._fillBlend, self._fillAlpha = look
-            self.update()
-
     def _step(self) -> str:
-        """바탕의 호버 · 눌림 단계 — "Pressed" · "Hover" · "" (QSS 바탕 규칙과 같은 차례)."""
-        if self.property("pressed") is True:
-            return "Pressed"
+        """바탕 단계 — "Selected" · "Hover" · "" (QSS 바탕 규칙과 같은 차례 — 고름이 호버를 이긴다, #611 176q)."""
+        if self._selected:
+            return "Selected"
         return "Hover" if self.property("hover") is True else ""
 
-    def _fillColor(self, pressed: bool) -> QColor:
-        """채움이 칠하는 색 — 섞기 · 불투명도를 따른다(눌린 동안은 한 단계 더 간 색, #561).
-
-        섞여 가는 색조는 지금 호버 · 눌림 단계의 색조다 — 모션이 끝나 QSS 색조로 바뀔 때 색이 튀지 않게(#571).
-        """
-        tokens = theme.current_tokens()
-        color = QColor(tokens[self._fillToken + ("Pressed" if pressed else "")])
-        if self._fillToward:
-            toward = QColor(tokens[self._fillToward + self._step()])
-            color = mix(color, toward, self._fillBlend / 255)
-        color.setAlpha(self._fillAlpha)
-        return color
-
     def _washColor(self) -> QColor:
-        """모션 동안 칠하는 색조 — 지금 호버 · 눌림 단계의 색조(QSS 색조 규칙과 같은 토큰, #571)."""
+        """모션 동안 칠하는 색조 — 지금 바탕 단계의 색조(QSS 색조 규칙과 같은 토큰, #571)."""
         return QColor(theme.current_tokens()[self._washToken + self._step()])
 
     def colorAt(self, x: int) -> QColor:
-        """면 좌표 `x`에서 보이는 바탕색 — 채움 · 색조 · 호버 · 눌림을 따른다(카드 버튼 덮개가 쓴다)."""
+        """면 좌표 `x`에서 보이는 바탕색 — 색조 · 호버를 따른다(카드 버튼 덮개가 쓴다)."""
         tokens = theme.current_tokens()
-        pressed = self.property("pressed") is True
         step = self._step()
         tint = self.property("tint")
         if tint in ("finished", "failed"):
             name = "cardTintFinished" if tint == "finished" else "cardTintFailed"
             ground = QColor(tokens[name + step])
         else:
-            ground = QColor(tokens["card" + step + "Bg"])  # cardBg · cardHoverBg · cardPressedBg
+            ground = QColor(tokens["card" + step + "Bg"])  # cardBg · cardHoverBg · cardSelectedBg
         if self._washToken:
             ground = mix(ground, self._washColor(), self._wash / 255)
-        if self._fillToken and x < self.fillRight():
-            fill = self._fillColor(pressed)
-            ground = mix(ground, fill, fill.alphaF())
         return ground
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """QSS 바탕 · 테두리 위에 모션 색조 · 진행 채움(테두리 안쪽)과 고른 카드의 강조색 테두리를 그린다."""
+        """QSS 바탕 · 구분선 위에 모션 색조(행 전체, 구분선 위)와 고른 행의 왼쪽 강조색 띠를 그린다."""
         super().paintEvent(event)
-        washing = bool(self._washToken)
-        filling = bool(self._fillToken) and self._fill > 0 and self._fillAlpha > 0
-        if washing or filling:
-            radius = theme.METRICS["cardRadius"] - 1
-            inner = QRectF(1, 1, self.width() - 2, self.height() - 2)
-            path = QPainterPath()
-            path.addRoundedRect(inner, radius, radius)
+        if self._washToken:
+            inner = QRectF(0, 0, self.width(), self.height() - theme.METRICS["cardSeparator"])
             painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setClipPath(path)
-            if washing:
-                wash = self._washColor()
-                wash.setAlpha(self._wash)
-                painter.fillRect(inner, wash)
-            if filling:
-                painter.fillRect(
-                    QRectF(1, 1, self._fill * inner.width(), inner.height()),
-                    self._fillColor(self.property("pressed") is True),
-                )
+            wash = self._washColor()
+            wash.setAlpha(self._wash)
+            painter.fillRect(inner, wash)
             painter.end()
-        if self._selected:
-            painter = QPainter(self)
-            draw_picked_border(painter, QRectF(self.rect()))
-            painter.end()
+        draw_picked_band(self, QPointF(0, 0), self)
 
 
-def draw_picked_border(painter: QPainter, card: QRectF) -> None:
-    """고른 카드의 강조색 테두리를 `card`(painter 좌표의 카드 면 사각형) 가장자리에 그린다 (#561).
+def draw_picked_band(face: CardFace, origin: QPointF, device: QWidget) -> None:
+    """고른 행의 왼쪽 끝 강조색 세로 띠(`CardFace.bandRect`)를 `device`에 그린다 (#561 · #611).
 
-    테두리 1px 자리를 덮고 안쪽으로 1px 더 간다 — 호버 · 눌림이어도 강조색 그대로다(프로토 card.py). 카드
-    면과 그 위의 progress bar가 같은 모양을 각자 그린다 — progress bar는 카드 면의 자식이라 면이 그린 테두리의
-    아래 변을 가린다.
+    호버 · 눌림이어도 강조색 그대로다. 카드 면과 그 위의 progress bar가 같은 띠를 각자 그린다 — progress
+    bar가 면 위에 놓여 면이 그린 띠의 아래 끝을 가리므로 그 자리는 progress bar가 자기 위에 덧그린다(띠가
+    진행 막대 위에 보인다 — 연달아 고른 띠가 받는 중 카드에서도 끊기지 않는다). `origin`은 `device` 좌표에서
+    면의 왼쪽 위다.
     """
-    edge = theme.METRICS["cardSelectBorder"] / 2
-    radius = theme.METRICS["cardRadius"] - edge
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.setPen(QPen(QColor(theme.current_tokens()["accent"]), edge * 2))
-    painter.drawRoundedRect(card.adjusted(edge, edge, -edge, -edge), radius, radius)
+    rect = face.bandRect()
+    if rect.isEmpty():
+        return
+    painter = QPainter(device)
+    painter.fillRect(rect.translated(origin), QColor(theme.current_tokens()["accent"]))
+    painter.end()
 
 
 class CardProgress(QProgressBar):
@@ -272,16 +299,14 @@ class CardProgress(QProgressBar):
             self.update()
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """progress bar를 그린 뒤, 고른 카드면 카드 면 가장자리의 강조색 테두리를 그 위에 그린다."""
+        """progress bar를 그린 뒤, 카드 면의 왼쪽 띠가 걸치면 그 위에 덧그린다 — 띠가 막대 위에 보인다."""
         if self._toward or self._opacity < 255:
             self._paintLook()
         else:
             super().paintEvent(event)
-        if self._picked:
-            painter = QPainter(self)
-            painter.translate(-self.x(), -self.y())
-            draw_picked_border(painter, QRectF(self.parentWidget().rect()))
-            painter.end()
+        face = self.parentWidget()
+        if isinstance(face, CardFace):
+            draw_picked_band(face, QPointF(-self.x(), -self.y()), self)
 
     def _paintLook(self) -> None:
         """모션 동안의 막대 — QSS 막대를 불투명도로 그리고, 채운 몫에 덧칠 색을 섞기만큼 얹는다.
@@ -386,7 +411,9 @@ class CardThumbnail(QLabel):
             check.moveTo(start_x * scale, start_y * scale)
             for x, y in rest:
                 check.lineTo(x * scale, y * scale)
-            pen = QPen(QColor(tokens["onAccent"]), theme.PICK_MARK_CHECK_WIDTH * scale)
+            # ✓ 선 — 상태 아이콘 규칙(16 격자에서 STATUS_STROKE)을 지름에 비례해 키운다(inbox 177)
+            check_width = STATUS_STROKE * side / STATUS_GRID
+            pen = QPen(QColor(tokens["onAccent"]), check_width)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             painter.setPen(pen)
@@ -434,7 +461,7 @@ class HoverShade(QWidget):
     """카드 버튼 밑의 1줄 글을 카드 바탕으로 덮는 오버레이 — 그림만, 마우스는 밑으로 간다 (#550).
 
     왼쪽 ``FADE``는 투명 → 바탕색으로 흐려지고, 그 오른쪽은 바탕색으로 채운다. 바탕색은 그 자리에서
-    보이는 카드 면의 색이다(호버 · 완료 · 실패 색조 · 배경 채움, `CardFace.colorAt`) — 그릴 때 읽는다.
+    보이는 카드 면의 색이다(호버 · 완료 · 실패 색조, `CardFace.colorAt`) — 그릴 때 읽는다.
     카드마다 붙는 효과 객체(QGraphicsEffect)가 아니라 그리기만 하는 위젯이다.
     """
 
@@ -480,6 +507,7 @@ class Ui_ContentItemWidget(object):
         ContentItemWidget.resize(600, 80)
 
         pad = theme.METRICS["cardPadding"]
+        pad_y = theme.METRICS["cardPadY"]
         gap = theme.METRICS["cardRowSpacing"]
         bar_h = theme.METRICS["barHeight"]
         button = theme.METRICS["cardButton"]
@@ -499,7 +527,7 @@ class Ui_ContentItemWidget(object):
         self.compactThumbnail = card_display.current().compact_thumbnail
         self.bodyLayout = QGridLayout(self.contentFrame)
         self.bodyLayout.setObjectName("bodyLayout")
-        self.bodyLayout.setContentsMargins(pad, pad, pad, pad)
+        self.bodyLayout.setContentsMargins(pad, pad_y, pad, pad_y)
         self.bodyLayout.setHorizontalSpacing(theme.METRICS["cardThumbGap"])
         self.bodyLayout.setVerticalSpacing(gap)
         self.bodyLayout.setColumnStretch(1, 1)

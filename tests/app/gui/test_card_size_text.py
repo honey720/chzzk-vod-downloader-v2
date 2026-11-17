@@ -22,6 +22,7 @@ from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
+from pytestqt.qtbot import QtBot
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
@@ -646,7 +647,8 @@ def test_total_size_is_the_first_thing_to_give_way_when_the_card_narrows(qtbot, 
     인코딩 완료 VOD 받는 중 · 일시정지(받은 100 MiB / 전체 28.99 GB), 넓은 창에서 4px씩 좁힘
     -> 처음 글이 바뀐 폭에서: 크기 == "1080p · 100.00 MB", 상태 글은 잘리지 않음, 저장 위치는 이미
     빠짐(아이콘 · 이름 둘 다 숨음 — #554 접는 차례: 저장 위치가 받을 크기보다 먼저)
-    -> 더 좁혀 상태 글이 잘릴 때까지: 크기 글은 다시 길어지지 않음
+    -> 더 좁혀 상태 글이 잘리거나 최소폭에 닿을 때까지: 크기 글은 다시 길어지지 않음(상태 단어가 빠져
+    상태 글이 짧아 최소폭이 먼저 올 수 있다 — inbox 177)
     """
     # 넓은 창 — 대체 글꼴(빈 글꼴 폴더)에서도 접기 전 모양이 들어가는 폭
     window, widget = _card("video", state, received=100 * MB, width=2400)
@@ -663,14 +665,16 @@ def test_total_size_is_the_first_thing_to_give_way_when_the_card_narrows(qtbot, 
     assert not widget.pathIcon.isVisible()
 
     seen = []
-    _narrow_until(
-        window,
-        widget,
-        lambda: (
-            seen.append(widget.fileSizeLabel.text())
-            or QLabel.text(widget.statusLabel) != widget.statusLabel.text()
-        ),
-    )
+    width = window.width()
+    while QLabel.text(widget.statusLabel) == widget.statusLabel.text():
+        seen.append(widget.fileSizeLabel.text())
+        width -= 4
+        window.resize(width, window.height())
+        _pump()
+        if widget.width() != width:
+            seen.append(widget.fileSizeLabel.text())  # 최소폭에 닿으며 바뀐 글도 잰다
+            break  # 최소폭 — 그 아래는 같은 모양을 다시 잰다
+    assert len(seen) > 1, "전제: 더 좁힐 자리가 있었다"
     assert set(seen) == {"1080p · 100.00 MB"}
 
 
@@ -1429,12 +1433,12 @@ def test_restarted_card_shows_nothing_of_the_previous_run_while_preparing(qtbot,
     assert "400.00 B" not in shown(widget.fileSizeLabel)
 
 
-def test_card_paused_while_preparing_says_paused_without_a_percent(qtbot, window) -> None:
-    """준비 중에 일시정지한 카드는 진행률 없이 "Paused"만 적고, 준비가 끝나면 "0.0% · Paused"여야 한다.
+def test_card_paused_while_preparing_shows_no_percent(qtbot: QtBot, window: tuple) -> None:
+    """준비 중에 일시정지한 카드는 상태 문구가 빈 글이고, 준비가 끝나면 "0.0%"여야 한다 — 상태는 아이콘 paused.
 
     받기 시작 → 진행 400/1000(40%) → 중단 → 다시 시작 → 준비가 끝나기 전에 일시정지 → 준비 끝 통지
-    -> 일시정지 직후: 카드 PAUSED, 상태 문구 == "Paused"
-    -> 준비 끝 통지 뒤: 카드 PAUSED, 상태 문구 == "0.0% · Paused"
+    -> 일시정지 직후: 카드 PAUSED, 상태 문구 == "", 상태 아이콘 "paused"(inbox 177)
+    -> 준비 끝 통지 뒤: 카드 PAUSED, 상태 문구 == "0.0%", 상태 아이콘 "paused"
     """
     win, item, engine = window
     win.downloadViewModel._prepareTimer.setInterval(60_000)
@@ -1450,15 +1454,16 @@ def test_card_paused_while_preparing_says_paused_without_a_percent(qtbot, window
 
     win.downloadButton.click()  # 일시정지
     _pump()
-    while_preparing = (item.downloadState, shown(widget.statusLabel))
+    while_preparing = (item.downloadState, shown(widget.statusLabel), widget.statusIcon.state())
     _first_progress(engine.submissions[1])
     qtbot.waitUntil(lambda: not item.prepare_pending, timeout=3000)
     _pump()
 
-    assert while_preparing == (DownloadState.PAUSED, "Paused")
-    assert (item.downloadState, shown(widget.statusLabel)) == (
+    assert while_preparing == (DownloadState.PAUSED, "", "paused")
+    assert (item.downloadState, shown(widget.statusLabel), widget.statusIcon.state()) == (
         DownloadState.PAUSED,
-        "0.0% · Paused",
+        "0.0%",
+        "paused",
     )
 
 

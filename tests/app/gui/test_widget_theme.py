@@ -79,14 +79,13 @@ def _apply_dark_card_qss(qapp) -> None:
 
 
 def _card_border_colour(frame) -> QColor:
-    """카드 프레임의 실제 렌더 테두리 색 — 좌측 변, 세로 중앙 지점.
+    """카드 행의 실제 렌더 구분선 색 — 아래 끝 줄, 가로 가운데 지점(띠 행은 아래 구분선 하나, #611).
 
-    모서리(border-radius)를 피해야 한다 — 둥근 모서리 부근은 배경색과
-    안티앨리어싱이 섞여 순수 테두리 색이 안 나온다(실측 확인). 좌측 변
-    중앙은 카드 높이 전체에서 곡률이 없는 안전한 지점이다.
+    진행 막대가 보이는 카드는 막대가 구분선 자리를 덮으므로 가운데가 아니라 오른쪽 끝 바로 앞을 잰다 — 막대는
+    50%라 그 자리에 없다.
     """
     img = frame.grab().toImage()
-    return img.pixelColor(0, img.height() // 2)
+    return img.pixelColor(img.width() - 2, img.height() - 1)
 
 
 @pytest.fixture(autouse=True)
@@ -305,7 +304,7 @@ class TestCardInnerWidthIsUnchanged:
     배치된 자식의 실제 자리를 본다). 폭은 요청 폭이 아니라 resize 뒤 실제 폭을 쓴다(#237).
     """
 
-    BORDER = 1  # 카드 테두리 두께(px) — #contentFrame QSS border
+    BORDER = 0  # 카드 행 좌우 테두리 두께(px) — 띠 행은 아래 구분선만 있다(#611)
 
     @classmethod
     def _inset(cls) -> int:
@@ -341,10 +340,10 @@ class TestCardInnerWidthIsUnchanged:
 
     @pytest.mark.parametrize("width", [460, 600, 900])
     def test_content_width_matches_the_baseline_budget(self, qapp, width) -> None:
-        """대기 카드의 좌우 안쪽 여백이 폭과 무관하게 테두리 1 + cardPadding이어야 한다.
+        """대기 카드의 좌우 안쪽 여백이 폭과 무관하게 cardPadding이어야 한다(띠 행 — 좌우 테두리 없음, #611).
 
-        폭 460 · 600 · 900 -> 썸네일 왼쪽 끝 = 1 + cardPadding,
-        세 줄 = 왼쪽 1 + cardPadding + cardThumbWidth + cardThumbGap, 오른쪽 끝 = 폭 − (1 + cardPadding)
+        폭 460 · 600 · 900 -> 썸네일 왼쪽 끝 = cardPadding,
+        세 줄 = 왼쪽 cardPadding + cardThumbWidth + cardThumbGap, 오른쪽 끝 = 폭 − cardPadding
         """
         self._measure(qapp, DownloadState.WAITING, width)
 

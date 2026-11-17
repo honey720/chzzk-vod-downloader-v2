@@ -54,6 +54,23 @@ def _pump() -> None:
         QApplication.processEvents()
 
 
+ACTIVE_WAIT_MS = 3000  # 창 활성을 기다리는 한도(ms) — X11 · xvfb는 활성이 비동기로 온다
+ACTIVE_STEP_MS = 10  # 창 활성을 다시 보는 간격(ms)
+
+
+def _activate(window: QWidget) -> None:
+    """창을 활성으로 만들고 활성이 될 때까지 기다린다.
+
+    활성 전에 준 초점은 창이 활성이 될 때 창 활성 까닭으로 다시 들어와 키보드 초점 종류를 잃는다.
+    """
+    window.activateWindow()
+    for _ in range(ACTIVE_WAIT_MS // ACTIVE_STEP_MS):
+        if window.isActiveWindow():
+            break
+        QTest.qWait(ACTIVE_STEP_MS)
+    assert window.isActiveWindow(), "전제: 창이 활성이다"
+
+
 def _open(button: QWidget) -> ChoiceMenu:
     """펼침 버튼의 메뉴를 실제로 열고 한 번 그린다(열 때 채운다 — aboutToShow)."""
     menu = button.menuWidget
@@ -239,6 +256,60 @@ def test_leaving_closes_the_bubble(window: VodDownloader) -> None:
     assert not _bubble().isVisible()
 
 
+def _global_rect(widget: QWidget) -> QRect:
+    return QRect(widget.mapToGlobal(QPoint(0, 0)), widget.size())
+
+
+def _move_in_window(window: VodDownloader, point: QPoint) -> None:
+    """창(QWindow)에 합성 포인터 이동을 보낸다 — 실기 커서를 옮기지 않는다."""
+    QTest.mouseMove(window.windowHandle(), point)
+    _pump()
+
+
+@pytest.mark.parametrize("animated", [True, False])
+def test_moving_from_the_add_tip_onto_the_select_button_shows_the_select_tip(
+    window: VodDownloader, qtbot, animated: bool
+) -> None:
+    """「+」 툴팁이 덮은 선택 버튼 자리로 바로 옮기면 선택 버튼 툴팁이 떠서 다 보여야 한다(#611 176h).
+
+    애니메이션 켬 · 끔, 창 폭 최소폭 + 100, URL 칸에 글(「+」 켜짐), 창 밖 → 「+」 가운데 합성 이동 -> 「+」 툴팁(아래로)이 선택 버튼과
+    겹친다, 겹친 자리 가운데로 합성 이동 -> 말풍선 대상 = 선택 버튼 · 닫히는 중 아님 · 불투명도 1까지 간다
+    """
+    import app.viewmodels.card_display as card_display
+
+    card_display.use(card_display.CardDisplay(animations=animated))
+    try:
+        # 화면 안에 들어오는 폭 — offscreen 화면은 배율 1.5면 논리 533px라 넓은 창의 말풍선은 화면 안으로 밀린다
+        window.resize(window.minimumWidth() + 100, 500)
+        window.urlInput.setText("https://chzzk.naver.com/video/1")
+        window.activateWindow()
+        qtbot.waitUntil(window.isActiveWindow, timeout=3000)
+        _move_in_window(window, QPoint(1, 1))
+        add, select = window.fetchButton, window.selectButton
+        _move_in_window(window, add.mapTo(window, add.rect().center()))
+        bubble = _bubble()
+        assert bubble.target is add and bubble.side == "below", "전제: 「+」 툴팁이 아래로 떴다"
+        overlap = bubble.globalRect().intersected(_global_rect(select))
+        assert not overlap.isEmpty(), "전제: 「+」 툴팁이 선택 버튼을 덮는다"
+        _move_in_window(window, window.mapFromGlobal(overlap.center()))
+        assert select.underMouse(), "전제: 포인터가 선택 버튼 위다"
+        assert bubble.target is select
+        assert bubble.isVisible() and not bubble.isFadingOut()
+        qtbot.waitUntil(lambda: bubble.opacity() == 1.0, timeout=2000)
+    finally:
+        card_display.use(None)
+
+
+def test_the_tip_bubble_never_takes_the_pointer() -> None:
+    """툴팁 말풍선은 창 · 위젯 모두 포인터 입력을 받지 않아야 한다 — 밑의 대상이 들어감 · 누름을 받는다(#611).
+
+    공용 말풍선 -> 창 플래그 WindowTransparentForInput · WA_TransparentForMouseEvents 둘 다 있음
+    """
+    bubble = tip_bubble.tip_bubble()
+    assert bubble.windowFlags() & Qt.WindowType.WindowTransparentForInput
+    assert bubble.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+
 def test_pressing_closes_the_bubble_until_the_pointer_leaves(window: VodDownloader) -> None:
     """대상을 누르면 말풍선이 닫히고, 나갔다 들어오기 전에는 다시 뜨지 않아야 한다."""
     target = window.stopButton
@@ -264,7 +335,7 @@ def _activate_other_window() -> QWidget:
 
 def test_the_tip_closes_when_the_window_becomes_inactive(window: VodDownloader) -> None:
     """포인터를 대상에 둔 채(나감 없이) 다른 창이 활성이 되면 말풍선이 닫혀야 한다."""
-    window.activateWindow()
+    _activate(window)
     _pump()
     _enter(window.stopButton)
     assert _bubble().isVisible(), "전제: 말풍선이 떴다"
@@ -285,7 +356,7 @@ def test_the_tip_closes_when_the_window_is_minimized(window: VodDownloader) -> N
 
 def test_an_open_menu_closes_when_the_window_becomes_inactive(window: VodDownloader) -> None:
     """정렬 메뉴가 열린 채 다른 창이 활성이 되면 메뉴가 닫혀야 한다."""
-    window.activateWindow()
+    _activate(window)
     _pump()
     menu = _open(window.sortButton)
     assert menu.isVisible(), "전제: 메뉴가 열렸다"
@@ -350,16 +421,220 @@ def test_bar_controls_are_bar_control_high(window: VodDownloader) -> None:
         assert widget.height() == theme.METRICS["barControl"], widget.objectName()
 
 
-def test_pressable_bar_controls_show_a_hand_and_take_focus_by_keyboard_only(
+def test_pressable_bar_controls_show_a_hand_and_take_focus_by_the_bar_rule(
     window: VodDownloader,
 ) -> None:
-    """누르는 바 컨트롤은 손 모양 커서이고 초점은 키보드(Tab)로만 받아야 한다 — 입력칸은 그대로다."""
+    """누르는 바 컨트롤은 손 모양 커서이고 메뉴바 · 헤더바 · 하단바 모두 누를 때도 초점을 받아야 한다.
+
+    메뉴바(「VOD 다운」 · 톱니바퀴) · 그 밖(입력칸 제외) -> StrongFocus, 입력칸 -> StrongFocus(#611 176i)
+    """
     for widget in window.barControls():
-        if widget is window.urlInput:
-            assert widget.focusPolicy() == Qt.FocusPolicy.StrongFocus
-            continue
-        assert widget.cursor().shape() == Qt.CursorShape.PointingHandCursor, widget.objectName()
-        assert widget.focusPolicy() == Qt.FocusPolicy.TabFocus, widget.objectName()
+        if widget is not window.urlInput:
+            assert widget.cursor().shape() == Qt.CursorShape.PointingHandCursor, widget.objectName()
+        assert widget.focusPolicy() == Qt.FocusPolicy.StrongFocus, widget.objectName()
+
+
+def _focus_url(window: VodDownloader) -> None:
+    """창을 활성으로 하고 URL 칸에 Tab 초점을 준다."""
+    _activate(window)
+    window.urlInput.setFocus(Qt.FocusReason.TabFocusReason)
+    _pump()
+    assert window.urlInput.hasFocus(), "전제: URL 칸에 초점"
+
+
+def _click_in_window(window: VodDownloader, widget: QWidget) -> None:
+    """그 위젯 가운데를 창(QWindow)에 합성 클릭한다 — 실기 커서를 옮기지 않는다."""
+    point = widget.mapTo(window, widget.rect().center())
+    QTest.mouseClick(
+        window.windowHandle(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point
+    )
+    _pump()
+
+
+POPUP_TRIES = 50  # 메뉴 닫기를 다시 해 보는 횟수(10ms 간격 — 0.5초)
+
+
+def _close_popup_soon() -> None:
+    """열릴 메뉴를 이벤트 루프가 돌자마자 닫는다 — 드롭다운 메뉴는 열린 동안 호출이 돌아오지 않는다.
+
+    메뉴가 끝내 열리지 않으면 `POPUP_TRIES`번(10ms 간격) 뒤 그만둔다 — 다음 테스트의 팝업을 닫지 않게.
+    """
+    from PySide6.QtCore import QTimer
+
+    def close(left: int) -> None:
+        popup = QApplication.activePopupWidget()
+        if popup is not None:
+            popup.close()
+        elif left > 0:
+            QTimer.singleShot(10, lambda: close(left - 1))
+
+    QTimer.singleShot(0, lambda: close(POPUP_TRIES))
+
+
+@pytest.mark.parametrize("name", ["saveLocationButton", "sortButton"])
+def test_pressing_a_drop_field_takes_the_focus_and_keeps_it_after_the_menu(
+    window: VodDownloader, name: str
+) -> None:
+    """URL 칸에 초점이 있을 때 드롭다운을 누르면 초점이 드롭다운으로 와서 메뉴가 닫힌 뒤에도 남아야 한다(#611).
+
+    URL 칸 Tab 초점 → 드롭다운 가운데 합성 클릭(메뉴는 열리자마자 닫음) -> 초점 = 드롭다운 · URL 칸 초점 없음,
+    keyFocus 거짓, 위 테두리 가운데 ≈ fieldEdge · ≉ accent
+    """
+    _focus_url(window)
+    widget = getattr(window, name)
+    _close_popup_soon()
+    _click_in_window(window, widget)
+    assert window.focusWidget() is widget
+    window.activateWindow()  # 메뉴가 닫힌 뒤 창 활성은 offscreen이 돌려주지 않는다 — 초점 위젯은 창이 기억한다
+    _pump()
+    assert widget.hasFocus(), "전제: 창이 다시 활성이고 초점이 드롭다운에 있다"
+    assert not window.urlInput.hasFocus()
+    assert widget.property("keyFocus") is False
+    tokens = theme.current_tokens()
+    assert _close(_top_border(widget), tokens["fieldEdge"])
+    assert not _close(_top_border(widget), tokens["accent"])
+
+
+@pytest.mark.parametrize("name", ["selectButton", "fetchButton", "chip"])
+def test_pressing_a_bar_button_takes_the_focus_without_an_accent_border(
+    window: VodDownloader, name: str
+) -> None:
+    """URL 칸에 초점이 있을 때 헤더바 버튼을 누르면 초점이 버튼으로 오고 테두리는 강조색이 아니어야 한다(#611).
+
+    창 폭 1200, URL 칸에 글을 넣고(「+」가 켜짐) Tab 초점 → 버튼(선택 · 「+」 · 둘째 상태 칩 — 접혔으면 상태
+    드롭다운) 가운데 합성 클릭(누름 동작은 끊음) -> 초점 = 버튼 · keyFocus 거짓 · 위 테두리 ≉ accent
+    """
+    window.resize(1200, 600)
+    window.urlInput.setText("https://chzzk.naver.com/video/1")
+    _focus_url(window)
+    drop = window.filterChipBar.dropButton
+    if name != "chip":
+        widget = getattr(window, name)
+    elif window.filterChipBar.isCompact():
+        widget = drop  # 글꼴이 넓으면 칩이 상태 드롭다운으로 접힌다 — 그 드롭다운을 잰다
+        _close_popup_soon()
+    else:
+        widget = list(window.filterChips.values())[1]
+    assert widget.isVisible(), "전제: 버튼이 보인다"
+    if widget is not drop:  # 드롭다운은 누름 연결이 없고 메뉴만 연다
+        widget.clicked.disconnect()  # 등록 · 선택 모드 · 칩 고르기는 이 테스트가 재는 것이 아니다
+    _click_in_window(window, widget)
+    if widget is drop:
+        window.activateWindow()  # 메뉴가 닫힌 뒤 창 활성은 offscreen이 돌려주지 않는다
+        _pump()
+    assert QApplication.focusWidget() is widget
+    assert widget.property("keyFocus") is False
+    assert not _close(_top_border(widget), theme.current_tokens()["accent"])
+
+
+def _focus_box_edge(tab: QWidget) -> QColor:
+    """메뉴 탭 초점 상자 왼쪽 변 · 세로 가운데 화소 — 상자가 없으면 바 면이다.
+
+    탭은 면이 투명이라 창을 grab해 읽는다.
+    """
+    window = tab.window()
+    image = window.grab().toImage()
+    ratio = image.devicePixelRatio()
+    box = tab.focusRect()
+    point = tab.mapTo(window, QPoint(int(box.left()), int(box.center().y())))
+    return image.pixelColor(int(point.x() * ratio), int(point.y() * ratio))
+
+
+def _disconnect_clicked(widget: QWidget) -> None:
+    """누름 연결을 끊는다 — 탭 바꾸기 · 설정 창 열기는 이 테스트가 재는 것이 아니다."""
+    try:
+        widget.clicked.disconnect()
+    except (RuntimeError, TypeError):
+        pass  # 연결이 없다
+
+
+def test_pressing_the_menu_tab_takes_the_focus_without_a_focus_box(window: VodDownloader) -> None:
+    """URL 칸에 초점이 있을 때 메뉴 탭을 누르면 초점이 탭으로 오고 초점 상자는 없어야 한다(#611 176i).
+
+    URL 칸 Tab 초점 → 「VOD 다운」 가운데 합성 클릭(누름 동작은 끊음) -> 초점 = 탭 · URL 칸 초점 없음 ·
+    keyFocus 거짓, 초점 상자 왼쪽 변 ≈ barBg · ≉ accent
+    """
+    _focus_url(window)
+    tab = window.menuDownloadButton
+    _disconnect_clicked(tab)
+    _click_in_window(window, tab)
+    assert QApplication.focusWidget() is tab
+    assert not window.urlInput.hasFocus()
+    assert tab.property("keyFocus") is False
+    tokens = theme.current_tokens()
+    assert not _close(_focus_box_edge(tab), tokens["accent"])
+    assert _close(_focus_box_edge(tab), tokens["barBg"])
+
+
+def test_keyboard_focus_on_the_menu_tab_draws_the_focus_box(window: VodDownloader) -> None:
+    """메뉴 탭이 마우스로 초점을 받은 뒤 키보드(Tab)로 다시 받으면 초점 상자가 강조색이어야 한다(#611 176i).
+
+    「VOD 다운」 합성 클릭 → 목록에 초점 → 탭에 Tab 초점 -> keyFocus 참 · 초점 상자 왼쪽 변 ≈ accent
+    """
+    _activate(window)
+    _pump()
+    tab = window.menuDownloadButton
+    _disconnect_clicked(tab)
+    _click_in_window(window, tab)
+    assert tab.property("keyFocus") is False, "전제: 마우스 초점"
+    window.listView.setFocus(Qt.FocusReason.OtherFocusReason)
+    tab.setFocus(Qt.FocusReason.TabFocusReason)
+    _pump()
+    assert tab.property("keyFocus") is True
+    assert _close(_focus_box_edge(tab), theme.current_tokens()["accent"])
+
+
+def test_pressing_the_gear_takes_the_focus_without_an_accent_border(window: VodDownloader) -> None:
+    """URL 칸에 초점이 있을 때 톱니바퀴를 누르면 초점이 톱니바퀴로 오고 테두리는 강조색이 아니어야 한다(#611 176i).
+
+    URL 칸 Tab 초점 → 톱니바퀴 가운데 합성 클릭(설정 창 열기는 끊음) -> 초점 = 톱니바퀴 · URL 칸 초점 없음 ·
+    keyFocus 거짓 · 위 테두리 ≉ accent
+    """
+    _focus_url(window)
+    gear = window.settingsButton
+    _disconnect_clicked(gear)
+    _click_in_window(window, gear)
+    assert QApplication.focusWidget() is gear
+    assert not window.urlInput.hasFocus()
+    assert gear.property("keyFocus") is False
+    assert not _close(_top_border(gear), theme.current_tokens()["accent"])
+
+
+def test_keyboard_focus_after_a_mouse_focus_draws_the_accent_border(window: VodDownloader) -> None:
+    """마우스로 초점을 받은 버튼도 키보드(Tab)로 다시 받으면 테두리가 강조색이어야 한다(#611).
+
+    선택 버튼 합성 클릭(누름 동작은 끊음) → 목록에 초점 → 선택 버튼에 Tab 초점 -> keyFocus 참 · 위 테두리 ≈ accent
+    """
+    _activate(window)
+    _pump()
+    widget = window.selectButton
+    widget.clicked.disconnect()
+    _click_in_window(window, widget)
+    assert widget.property("keyFocus") is False, "전제: 마우스 초점"
+    window.listView.setFocus(Qt.FocusReason.OtherFocusReason)
+    widget.setFocus(Qt.FocusReason.TabFocusReason)
+    _pump()
+    assert widget.property("keyFocus") is True
+    assert _close(_top_border(widget), theme.current_tokens()["accent"])
+
+
+@pytest.mark.parametrize("keyboard", [True, False])
+def test_a_menu_closing_keeps_the_focus_kind(window: VodDownloader, keyboard: bool) -> None:
+    """펼친 메뉴가 닫혀 초점이 돌아와도(PopupFocusReason) 받기 전 초점 종류가 그대로여야 한다(#611).
+
+    정렬 칸에 Tab · 마우스 초점 → FocusOut · FocusIn(PopupFocusReason) 보냄 -> keyFocus 그대로(참 · 거짓)
+    """
+    from PySide6.QtGui import QFocusEvent
+
+    _activate(window)
+    widget = window.sortButton
+    reason = Qt.FocusReason.TabFocusReason if keyboard else Qt.FocusReason.MouseFocusReason
+    widget.setFocus(reason)
+    _pump()
+    assert widget.property("keyFocus") is keyboard, "전제: 받은 초점 종류"
+    for kind in (QEvent.Type.FocusOut, QEvent.Type.FocusIn):
+        QApplication.sendEvent(widget, QFocusEvent(kind, Qt.FocusReason.PopupFocusReason))
+    assert widget.property("keyFocus") is keyboard
 
 
 def _top_border(widget: QWidget) -> QColor:
@@ -374,9 +649,7 @@ def _close(a: QColor, b: str) -> bool:
     return abs(a.red() - c.red()) + abs(a.green() - c.green()) + abs(a.blue() - c.blue()) <= 24
 
 
-@pytest.mark.parametrize(
-    "name", ["fetchButton", "menuSettingsButton", "sortButton", "selectButton"]
-)
+@pytest.mark.parametrize("name", ["fetchButton", "settingsButton", "selectButton"])
 def test_keyboard_focus_draws_an_accent_border(window: VodDownloader, name: str) -> None:
     """키보드 초점을 받은 바 컨트롤의 테두리는 강조색이어야 한다(초점 전에는 강조색이 아니다).
 
@@ -389,11 +662,32 @@ def test_keyboard_focus_draws_an_accent_border(window: VodDownloader, name: str)
     assert not _close(_top_border(widget), tokens["accent"]), (
         "전제: 초점 전에는 강조색 테두리가 아니다"
     )
-    window.activateWindow()
+    _activate(window)
     widget.setFocus(Qt.FocusReason.TabFocusReason)
     _pump()
     assert widget.hasFocus(), "전제: 초점을 받았다"
     assert _close(_top_border(widget), tokens["accent"])
+
+
+def test_keyboard_focus_draws_an_accent_bottom_on_a_drop_field(window: VodDownloader) -> None:
+    """키보드 초점을 받은 펼침 칸(입력 칸)은 아래 테두리가 강조색이어야 한다(초점 전에는 강조색이 아니다).
+
+    입력 칸 초점은 네 변 강조색 1px다(#611 176h) — 정렬 칸에 Tab 초점 -> 아래 테두리 가운데 ≈ accent
+    """
+    widget = window.sortButton
+    tokens = theme.current_tokens()
+
+    def bottom() -> QColor:
+        image = widget.grab().toImage()
+        ratio = image.devicePixelRatio()
+        return image.pixelColor(int(widget.width() / 2 * ratio), int((widget.height() - 1) * ratio))
+
+    assert not _close(bottom(), tokens["accent"]), "전제: 초점 전에는 강조색 테두리가 아니다"
+    _activate(window)
+    widget.setFocus(Qt.FocusReason.TabFocusReason)
+    _pump()
+    assert widget.hasFocus(), "전제: 초점을 받았다"
+    assert _close(bottom(), tokens["accent"])
 
 
 def test_the_list_has_focus_when_the_window_opens(qapp: QApplication) -> None:
@@ -401,30 +695,32 @@ def test_the_list_has_focus_when_the_window_opens(qapp: QApplication) -> None:
     win = VodDownloader()
     win.monitorTimer.stop()
     win.show()
-    win.activateWindow()
+    _activate(win)
     _pump()
     assert QApplication.focusWidget() is win.listView
     assert not _close(_top_border(win.menuDownloadButton), theme.current_tokens()["accent"])
 
 
-@pytest.mark.parametrize("name", ["menuDownloadButton", "menuSettingsButton"])
+@pytest.mark.parametrize("name", ["menuDownloadButton", "settingsButton"])
 def test_clicking_a_bar_control_draws_no_accent_border(
     window: VodDownloader, name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """바 컨트롤을 마우스로 누르면 초점이 옮겨 가지 않고 테두리가 강조색이 아니어야 한다(#536 — §11.5).
+    """메뉴바 컨트롤을 마우스로 누르면 초점이 그 컨트롤로 오고 테두리가 강조색이 아니어야 한다(#536 · #611 176i).
 
     누름 = QTest.mouseClick(실제 마우스 이벤트 경로 — 누름 초점 처리를 탄다), 「설정」 창 열기는 막는다
+    -> 초점 = 그 컨트롤 · keyFocus 거짓 · 위 테두리 ≉ accent
     """
     from PySide6.QtTest import QTest
 
     monkeypatch.setattr(window, "onSetting", lambda: None)
-    window.menuSettingsButton.clicked.disconnect()
+    window.settingsButton.clicked.disconnect()
     widget = getattr(window, name)
-    window.activateWindow()
+    _activate(window)
     _pump()
     QTest.mouseClick(widget, Qt.MouseButton.LeftButton)
     _pump()
-    assert QApplication.focusWidget() is not widget
+    assert QApplication.focusWidget() is widget
+    assert widget.property("keyFocus") is False
     assert not _close(_top_border(widget), theme.current_tokens()["accent"])
 
 
@@ -437,7 +733,7 @@ def test_tab_from_the_list_moves_focus_to_a_bar_control_with_an_accent_border(
     """
     from PySide6.QtTest import QTest
 
-    window.activateWindow()
+    _activate(window)
     window.listView.setFocus(Qt.FocusReason.OtherFocusReason)
     _pump()
     assert QApplication.focusWidget() is window.listView, "전제: 목록에 초점"
@@ -454,7 +750,7 @@ def test_keyboard_focus_on_the_accent_button_draws_the_focus_on_accent_border(
     button = window.downloadButton
     button.setEnabled(True)
     tokens = theme.current_tokens()
-    window.activateWindow()
+    _activate(window)
     button.setFocus(Qt.FocusReason.TabFocusReason)
     _pump()
     assert button.hasFocus(), "전제: 초점을 받았다"
@@ -492,15 +788,15 @@ def _inked(widget: QWidget, rect: QRect, color: str) -> int:
 
 
 def test_the_menu_bar_has_the_bar_face_and_a_bottom_line(window: VodDownloader) -> None:
-    """메뉴바는 높이 = 안쪽 여백 위아래 + 바 컨트롤 + 경계선 1, 빈 자리는 바 면, 맨 아래 줄은 테두리 색이어야 한다.
+    """메뉴바는 높이 = 안쪽 여백 위아래 + 바 컨트롤이고 맨 아래 줄까지 바 면이어야 한다 — 헤더바와 한 덩어리(#611).
 
-    barPadY 8 · barControl 32 -> 높이 49, 오른쪽 빈 자리 = surface, 맨 아래 줄 = border
+    barPadY 8 · barControl 32 -> 높이 48, 가운데 빈 자리 = barBg, 맨 아래 줄 = barBg(경계선 없음)
     """
     bar = window.appMenuBar
     tokens = theme.current_tokens()
-    assert bar.height() == 2 * theme.METRICS["barPadY"] + theme.METRICS["barControl"] + 1
-    assert _close(_pixel(bar, bar.width() - 4, bar.height() // 2), tokens["surface"])
-    assert _close(_pixel(bar, bar.width() // 2, bar.height() - 1), tokens["border"])
+    assert bar.height() == 2 * theme.METRICS["barPadY"] + theme.METRICS["barControl"]
+    assert _close(_pixel(bar, bar.width() // 2, bar.height() // 2), tokens["barBg"])
+    assert _close(_pixel(bar, bar.width() // 2, bar.height() - 1), tokens["barBg"])
 
 
 def test_the_header_bar_is_two_rows_high_with_a_bottom_line(window: VodDownloader) -> None:
@@ -520,37 +816,49 @@ def test_the_header_bar_is_two_rows_high_with_a_bottom_line(window: VodDownloade
 
 
 def test_an_unselected_menu_is_muted_text_without_a_face_or_border(window: VodDownloader) -> None:
-    """고르지 않은 메뉴(「설정」)는 면 · 테두리 없이 바 면 위 글만이어야 한다 — 위 테두리 · 왼쪽 안 = 바 면."""
-    button = window.menuSettingsButton
-    surface = theme.current_tokens()["surface"]
+    """메뉴바 오른쪽 끝 설정 톱니바퀴는 면 · 테두리 없이 바 면 위 그림만이어야 한다 — 위 테두리 · 왼쪽 안 = 바 면(#611)."""
+    button = window.settingsButton
+    surface = theme.current_tokens()["barBg"]
     assert not button.isChecked()
     assert _close(_pixel(button, button.width() // 2, 0), surface)
     assert _close(_pixel(button, 3, button.height() // 2), surface)
 
 
-def test_the_selected_menu_keeps_its_face_and_bold_text(window: VodDownloader) -> None:
-    """고른 메뉴(「VOD 다운」)는 버튼 면(surfaceAlt) 위 굵은 글이어야 한다."""
+def test_the_selected_menu_has_bold_text_and_no_face(window: VodDownloader) -> None:
+    """고른 메뉴(「VOD 다운」)는 면 없이 바 면(barBg) 위 굵은 글이어야 한다(밑줄 탭, #611)."""
     button = window.menuDownloadButton
     assert button.isChecked() and button.font().bold()
-    assert _close(_pixel(button, 3, button.height() // 2), theme.current_tokens()["surfaceAlt"])
+    assert _close(_pixel(button, 3, button.height() // 2), theme.current_tokens()["barBg"])
 
 
 def test_the_chosen_chip_has_the_bar_face_and_a_border_and_no_accent_fill(
     window: VodDownloader,
 ) -> None:
-    """고른 칩(전체)은 바 면 + 테두리, 고르지 않은 칩(대기)은 면 · 테두리 없이 바 면이고 칩 줄에 강조색이 없어야 한다."""
+    """고른 칩(전체)은 면 barSelected만(테두리 없음), 고르지 않은 칩(대기)은 면 · 테두리 없이 바 면이고 칩 줄에 강조색이 없어야 한다(#611)."""
     tokens = theme.current_tokens()
     window.resize(window.minimumWidth() + 900, 600)  # 칩 모양이 보이는 폭
     _pump()
     chosen, other = window.filterChips["all"], window.filterChips["waiting"]
     assert chosen.isVisible() and other.isVisible(), "전제: 칩 모양"
     assert chosen.isChecked() and not other.isChecked()
-    assert _close(_pixel(chosen, 3, chosen.height() // 2), tokens["surface"])
-    assert _close(_pixel(chosen, chosen.width() // 2, 0), tokens["border"])
-    assert _close(_pixel(other, other.width() // 2, 0), tokens["surface"])
-    assert _close(_pixel(other, 3, other.height() // 2), tokens["surface"])
+    assert _close(_pixel(chosen, 3, chosen.height() // 2), tokens["barSelected"])
+    # 맨 윗줄은 면 가장자리의 안티에일리어싱이 바 면과 섞인다 — 위 가장자리는 안쪽 2px에서 본다(176t)
+    assert _close(_pixel(chosen, chosen.width() // 2, 2), tokens["barSelected"])
+    assert _close(_pixel(other, other.width() // 2, 0), tokens["barBg"])
+    assert _close(_pixel(other, 3, other.height() // 2), tokens["barBg"])
     bar = window.filterChipBar
     assert _inked(bar, bar.rect(), tokens["accent"]) == 0
+
+
+def test_the_settings_button_has_an_accessible_name(window: VodDownloader) -> None:
+    """글 없는 톱니바퀴 버튼은 접근성 이름이 「Settings」여야 한다(툴팁은 이름 · 단축키).
+
+    번역 없는 창 -> settingsButton.text() == "", accessibleName() == "Settings", 툴팁이 "Settings"로 시작
+    """
+    button = window.settingsButton
+    assert button.text() == ""
+    assert button.accessibleName() == "Settings"
+    assert button.toolTip().startswith("Settings")
 
 
 def test_the_add_button_is_a_square_plus_with_a_shortcut_tip(window: VodDownloader) -> None:
@@ -673,7 +981,7 @@ def test_the_tip_bubble_floats_on_its_own_face(window: VodDownloader) -> None:
     ratio = image.devicePixelRatio()
     corner = image.pixelColor(int((body.left() + 3) * ratio), int(body.center().y() * ratio))
     tokens = theme.current_tokens()
-    assert not _close(QColor(tokens["tipBg"]), tokens["surface"]), (
+    assert not _close(QColor(tokens["tipBg"]), tokens["barBg"]), (
         "전제(다크): 떠 있는 면은 바 면과 다르다"
     )
     assert _close(corner, tokens["tipBg"])
