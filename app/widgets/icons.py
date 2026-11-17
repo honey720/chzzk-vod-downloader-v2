@@ -33,6 +33,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QPushButton
 
 import app.theme as theme
+from app.widgets.focus_ring import paint_lifted_ring
 
 #: 그릴 수 있는 아이콘 이름 — `IconButton.setIconName()`이 받는 어휘.
 #: folder = 완료 카드의 폴더 열기 · 헤더 저장 위치 버튼(열린 폴더 윤곽).
@@ -668,3 +669,6 @@ class IconButton(QPushButton):
         painter = QPainter(self)
         painter.drawPixmap((self.width() - size) // 2, (self.height() - size) // 2, pixmap)
         painter.end()
+        # 켠 버튼(선택 모드의 선택 버튼 — 속성 on)은 키보드 focus ring을 켠 면에서 띄워 그린다(#611 176u)
+        if self.property("on") is True:
+            paint_lifted_ring(self)

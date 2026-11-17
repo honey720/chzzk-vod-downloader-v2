@@ -2139,3 +2139,90 @@ class TestChosenFailedChipText:
         assert not chip.isChecked() and not chip.underMouse(), "전제: 안 고른 칩 · 포인터는 칩 밖"
         assert _ink_is(win, _rect(win, chip), "stateFailed"), scheme
 
+
+def _chosen_control(win: VodDownloader, name: str) -> QWidget:
+    """고른 칩(「전체」) 또는 켠 선택 버튼 — 칩 모양이 보이는 폭으로 넓히고 포인터를 창 왼쪽 위로 옮긴다."""
+    from PySide6.QtTest import QTest
+
+    win.resize(win.minimumWidth() + 900, 600)
+    QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
+    _pump()
+    if name == "selectButton":
+        win.selectButton.click()
+        _pump()
+        widget = win.selectButton
+        assert widget.property("on") is True, "전제: 선택 모드"
+    else:
+        widget = win.filterChips["all"]
+        assert widget.isChecked(), "전제: 고른 칩"
+    assert widget.isVisible() and not widget.underMouse(), "전제: 보이고 포인터는 밖"
+    return widget
+
+
+def _ring_pixels(win: VodDownloader, widget: QWidget) -> dict[str, QColor]:
+    """위젯 왼쪽 · 위 변 가운데에서 바깥 1px · 가장자리 · 1px 안 · 3px 안 화소(창 좌표에서 읽는다)."""
+    image = win.grab().toImage()
+    rect = _rect(win, widget)
+    x, y = rect.center().x(), rect.center().y()
+    return {
+        "outside": _pixel(image, rect.left() - 1, y),
+        "left_edge": _pixel(image, rect.left(), y),
+        "left_gap": _pixel(image, rect.left() + 1, y),
+        "left_face": _pixel(image, rect.left() + 3, y),
+        "top_edge": _pixel(image, x, rect.top()),
+        "top_gap": _pixel(image, x, rect.top() + 1),
+        "top_face": _pixel(image, x, rect.top() + 3),
+    }
+
+
+class TestLiftedFocusRing:
+    """고른 칩 · 켠 선택 버튼의 키보드 focus ring은 면에서 1px 띄워 바 면 위에 그린다(#611 176u)."""
+
+    @pytest.mark.parametrize("name", ["filterChip", "selectButton"])
+    def test_keyboard_focus_ring_sits_on_the_bar_face(
+        self, window, scheme: str, name: str, qtbot
+    ) -> None:
+        """키보드 초점이면 가장자리 1px는 accent, 그 안 1px는 barBg, 3px 안은 barSelected여야 하고 크기는 그대로여야 한다.
+
+        대기 카드 하나, 창 폭 = 최소폭 + 900, 고른 칩 「전체」 · 켠 선택 버튼에 Tab 초점 -> 왼쪽 · 위 변 가운데의
+        가장자리 ≈ accent, 1px 안 ≈ barBg, 3px 안 ≈ barSelected, 바깥 1px ≈ barBg, 초점 전후 위젯 크기 같음
+        """
+        win = window(DownloadState.WAITING)
+        widget = _chosen_control(win, name)
+        size = widget.size()
+        before = _ring_pixels(win, widget)
+        assert not _is(before["left_edge"], "accent"), f"전제: 초점 전 {before['left_edge'].name()}"
+        _activate_and_focus(win, widget, qtbot)
+        assert widget.property("keyFocus") is True, "전제: 키보드 초점"
+        seen = _ring_pixels(win, widget)
+        names = {key: colour.name() for key, colour in seen.items()}
+        for edge in ("left", "top"):
+            assert _is(seen[f"{edge}_edge"], "accent"), f"{scheme} {name}: {names}"
+            assert _is(seen[f"{edge}_gap"], "barBg"), f"{scheme} {name}: {names}"
+            assert _is(seen[f"{edge}_face"], "barSelected"), f"{scheme} {name}: {names}"
+        assert _is(seen["outside"], "barBg"), f"{scheme} {name}: {names}"
+        assert widget.size() == size
+
+    @pytest.mark.parametrize("name", ["filterChip", "selectButton"])
+    def test_mouse_focus_draws_no_ring(self, window, scheme: str, name: str, qtbot) -> None:
+        """마우스 초점이면 가장자리 · 1px 안이 accent · barBg가 아니라 고른 면이어야 한다.
+
+        대기 카드 하나, 창 폭 = 최소폭 + 900, 고른 칩 「전체」 · 켠 선택 버튼에 마우스 까닭 초점 -> 왼쪽 변 가운데의
+        가장자리 ≉ accent, 1px 안 ≈ barSelected
+        """
+        win = window(DownloadState.WAITING)
+        widget = _chosen_control(win, name)
+
+        def focused() -> bool:
+            if not win.isActiveWindow():
+                win.activateWindow()
+                return False
+            widget.setFocus(Qt.FocusReason.MouseFocusReason)
+            return widget.hasFocus()
+
+        qtbot.waitUntil(focused, timeout=3000)
+        _pump()
+        assert widget.property("keyFocus") is False, "전제: 마우스 초점"
+        seen = _ring_pixels(win, widget)
+        assert not _is(seen["left_edge"], "accent"), f"{scheme} {name}: {seen['left_edge'].name()}"
+        assert _is(seen["left_gap"], "barSelected"), f"{scheme} {name}: {seen['left_gap'].name()}"

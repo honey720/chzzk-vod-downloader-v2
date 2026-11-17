@@ -94,6 +94,7 @@ PAIRS = [
     ("textMuted", "barPressed", 3.0, "바 아이콘(흐린 색) ↔ 바 버튼 눌림 면 — 그림(#611 176k)"),
     ("text", "barSelected", 4.5, "고른 칩 · 켠 선택 버튼 글 ↔ 고른 면(#611 176t)"),
     ("text", "barSelected", 4.5, "고른 실패 칩 글(text) ↔ 고른 면(#611 176u)"),
+    ("accent", "barBg", 3.0, "고른 칩 · 켠 선택 버튼 focus ring ↔ 바 면(176u) — 그림"),
     ("text", "menuHover", 4.5, "메뉴 항목 이름 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "menuHover", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "surface", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 면(#536)"),

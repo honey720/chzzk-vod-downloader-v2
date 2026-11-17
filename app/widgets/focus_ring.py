@@ -152,6 +152,29 @@ class FocusHandover:
 HANDOVER = FocusHandover()  # 바 컨트롤 · 카드가 함께 쓰는 넘김 기록
 
 
+def paint_lifted_ring(widget: QWidget) -> None:
+    """고른 면 위의 키보드 focus ring을 면에서 1px 띄워 그린다 (#611 176u).
+
+    고른 칩 · 켠 선택 버튼의 면(barSelected)은 강조색과 대비가 낮아 면 위 테두리가 묻힌다. 그래서 위젯
+    가장자리 1px에 강조색 테두리, 그 안 1px에 바 면(barBg) 간격을 그린다 — 테두리 양옆이 바 면이다. 면은 간격
+    안쪽으로 줄어 보이고 위젯 크기 · 글 자리 · 이웃과의 간격은 그대로다. 면을 QSS가 칠한 뒤 부른다(QSS 테두리는
+    그 상태에서 끈다). 키보드로 받은 초점일 때만 그린다 — 마우스 초점은 강조가 없다(`KeyFocusMarker`).
+    """
+    if not widget.hasFocus() or widget.property("keyFocus") is False:
+        return
+    tokens = theme.current_tokens()
+    radius = theme.METRICS["controlRadius"]
+    painter = QPainter(widget)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    # 선 가운데가 지나는 사각형 — 바깥 테두리는 가장자리에서 0.5, 간격은 1.5 안쪽
+    for inset, token in ((0.5, "accent"), (1.5, "barBg")):
+        painter.setPen(QPen(QColor(tokens[token]), 1))
+        line = QRectF(widget.rect()).adjusted(inset, inset, -inset, -inset)
+        painter.drawRoundedRect(line, radius - inset, radius - inset)
+    painter.end()
+
+
 class KeyFocusMarker(QObject):
     """바 컨트롤이 받은 초점이 키보드로 왔는지를 `keyFocus` 동적 속성("true" · "false")으로 적는다 (#611).
 

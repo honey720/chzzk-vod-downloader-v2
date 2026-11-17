@@ -421,9 +421,10 @@ QFrame#headerFrame QPushButton#selectButton[on="true"] {
     border-color: transparent;
 }
 
-/* 눌린 모양 규칙이 초점 규칙보다 구체적이라 초점 테두리를 덮는다 — 그 뒤에 다시 건다 */
+/* 켠 선택 버튼의 키보드 focus ring은 면 바깥 1px 띄워 IconButton.paintEvent가 그린다(176u) — 강조색은 켠 면
+ * (barSelected) 위에서 묻힌다. 아래 공용 초점 규칙이 덮지 않게 더 구체적으로 테두리를 끈다 */
 QFrame#headerFrame QPushButton#selectButton[on="true"]:focus {
-    border-color: @accent;
+    border-color: transparent;
 }
 
 /* 선택 줄(#561 — 설계 §12.1 「선택 모드」): 면 · 테두리는 SelectBar가 그린다(말풍선과 같은 떠 있는 면). 안 버튼은
@@ -536,6 +537,12 @@ QFrame#headerFrame QPushButton[role="filter"]:checked:hover {
 
 QFrame#headerFrame QPushButton[role="filter"]:focus {
     border-color: @accent;
+}
+
+/* 고른 칩의 키보드 focus ring은 면 바깥 1px 띄워 그리기 코드가 그린다(app/widgets/focus_ring.py::paint_lifted_ring,
+ * 176u) — 강조색은 고른 면(barSelected) 위에서 묻힌다. 여기서는 QSS 테두리를 끈다 */
+QFrame#headerFrame QPushButton[role="filter"]:checked:focus {
+    border-color: transparent;
 }
 
 QFrame#headerFrame QPushButton[role="filter"][alert="true"] {

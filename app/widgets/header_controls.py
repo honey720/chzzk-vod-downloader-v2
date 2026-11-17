@@ -17,6 +17,7 @@ from PySide6.QtGui import (
     QFontMetricsF,
     QIcon,
     QPainter,
+    QPaintEvent,
     QPen,
 )
 from PySide6.QtWidgets import (
@@ -38,6 +39,7 @@ import app.theme as theme
 from app.viewmodels.card_order import FILTER_KEYS, SORT_KEYS
 from app.viewmodels.save_location import SaveLocations, folder_name
 from app.widgets.widget import abbreviate_path, path_display_parts
+from app.widgets.focus_ring import paint_lifted_ring
 from app.widgets.icons import STROKE, action_pixmap
 from app.widgets.tip_bubble import hide_tip, show_tip
 
@@ -768,6 +770,19 @@ CHIP_COUNT_RESERVE = 999  # 칩 폭을 잡는 숫자 — 세 자리까지 칩 ·
 CHIP_GAP = 4  # 칩 사이 간격(px) — 좁은 폭의 드롭다운 ↔ 실패 칩도 같다
 
 
+class FilterChip(QPushButton):
+    """상태 필터 칩 하나 — 고른 칩의 키보드 focus ring을 고른 면에서 띄워 그린다 (#611 176u).
+
+    면 · 글은 전역 QSS가 칠한다. 고른 칩에 키보드 초점이 오면 QSS 테두리는 꺼지고 `paint_lifted_ring`이
+    가장자리에 강조색 테두리와 바 면 간격을 그린다 — 칩 크기 · 글 자리는 그대로다.
+    """
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+        if self.isChecked():
+            paint_lifted_ring(self)
+
+
 class FilterChips(QWidget):
     """헤더바 2줄 상태 필터 — 상태별 숫자 칩(전체 · 대기 · 진행 · 일시정지 · 완료 · 실패) (#495).
 
@@ -799,7 +814,7 @@ class FilterChips(QWidget):
         self.dropButton.hide()
         layout.addWidget(self.dropButton)
         for key in FILTER_KEYS:
-            chip = QPushButton(self)
+            chip = FilterChip(self)
             chip.setObjectName(f"filterChip_{key}")
             chip.setProperty("role", "filter")
             chip.setProperty("alert", False)
