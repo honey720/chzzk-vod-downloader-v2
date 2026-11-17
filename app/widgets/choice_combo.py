@@ -5,8 +5,8 @@
 동작(호버 면 `menuHover`, 고른 항목 ✓ + 굵은 글)이다.
 """
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
-from PySide6.QtGui import QAction, QCursor, QMouseEvent, QPainter, QPaintEvent, QWheelEvent
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt
+from PySide6.QtGui import QAction, QMouseEvent, QPainter, QPaintEvent, QWheelEvent
 from PySide6.QtWidgets import QComboBox, QStyle, QStyleOptionComboBox, QWidget
 
 import app.theme as theme
@@ -61,7 +61,9 @@ class ChoiceCombo(QComboBox):
         self.menuWidget.aboutToHide.connect(self._onMenuHidden)
         self._watch = _WindowLeaveWatch(self)
         self._watched: QWidget | None = None  # 메뉴가 열린 동안 필터를 건 창
-        self._closedOver = False  # 포인터가 이 칸 위에 있을 때 메뉴가 닫혔다(한 턴만)
+        self.menuWidget.installEventFilter(self)  # 메뉴 밖 누르기가 이 칸 위인지 본다(eventFilter)
+        # 메뉴를 닫은 칸 위 누르기(시각 ms, 전역 자리) — 열 때 · 칸이 누르기를 받을 때 지운다
+        self._closingPress: tuple[int, QPoint] | None = None
         self.model().dataChanged.connect(self._syncMenuTexts)
 
     # ---- 펼치기 · 닫기 ----
@@ -86,6 +88,7 @@ class ChoiceCombo(QComboBox):
             menu.setActiveAction(active)  # 키보드가 고른 항목에서 시작한다(Qt 목록과 같다)
         self._watched = self.window()
         self._watched.installEventFilter(self._watch)
+        self._closingPress = None
         # 콤보박스 바로 밑에 띄우면 ChoiceMenu.showEvent가 menuOffset만큼 내린다(화면 끝이면 Qt가 위로 뒤집는다)
         menu.popup(self.mapToGlobal(QPoint(0, self.height())))
         self.update()
@@ -102,18 +105,31 @@ class ChoiceCombo(QComboBox):
         if self._watched is not None:
             self._watched.removeEventFilter(self._watch)
             self._watched = None
-        # 열린 메뉴 밖(이 칸 위)을 눌러 닫은 누르기를 Qt가 이 칸에 다시 보내도 메뉴를 다시 열지 않는다
-        self._closedOver = self.rect().contains(self.mapFromGlobal(QCursor.pos()))
-        QTimer.singleShot(0, self, self._forgetClose)
         self.update()
 
-    def _forgetClose(self) -> None:
-        self._closedOver = False
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """메뉴 밖을 누른 자리가 이 칸 위면 그 누르기의 시각 · 자리를 적어 둔다 (#624)."""
+        if (
+            watched is self.menuWidget
+            and event.type() == QEvent.Type.MouseButtonPress
+            and isinstance(event, QMouseEvent)
+        ):
+            spot = event.globalPosition().toPoint()
+            if self.rect().contains(self.mapFromGlobal(spot)):
+                self._closingPress = (event.timestamp(), spot)
+        return super().eventFilter(watched, event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """메뉴를 닫은 바로 그 누르기면 다시 열지 않는다 — 열린 동안 칸을 누르면 닫히기만 한다."""
-        if self._closedOver:
-            self._closedOver = False
+        """메뉴를 닫은 누르기를 Qt가 다시 보낸 것이면 메뉴를 다시 열지 않는다 (#624).
+
+        `QMenu`는 밖을 누르면 닫히고, Qt는 그 누르기를 포인터 아래 창에 다시 보낸다(`postEvent` — 시각 · 자리를
+        그대로 옮긴다). 칸이 그것을 보통 누르기로 받으면 메뉴를 다시 연다 — 펼친 채 칸을 누르면 닫히지 않았다
+        (Windows 실제 화면). 메뉴에 `WA_NoMouseReplay`를 세우는 길(Qt 콤보박스 목록)은 앞서 Esc · 코드로 메뉴를
+        닫은 뒤에는 다시 보내기를 막지 못했다(측정). 다시 온 누르기는 닫은 누르기와 시각 · 자리가 같으므로 둘을
+        비교한다 — 새 누르기는 시각이 달라 그대로 연다.
+        """
+        closing, self._closingPress = self._closingPress, None
+        if closing == (event.timestamp(), event.globalPosition().toPoint()):
             event.accept()
             return
         super().mousePressEvent(event)

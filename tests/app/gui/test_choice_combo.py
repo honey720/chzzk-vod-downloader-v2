@@ -9,8 +9,8 @@ from collections.abc import Iterator
 
 import pytest
 from pytestqt.qtbot import QtBot
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
-from PySide6.QtGui import QAction, QColor, QImage, QWheelEvent
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, Qt
+from PySide6.QtGui import QAction, QColor, QImage, QMouseEvent, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -648,3 +648,143 @@ class TestClosedLook:
         _pump()
         assert _inked(combo, combo.caretRect(), "text") > 0
         assert _not_face(combo) == []
+
+
+# ---- 펼친 채 다시 누르기 ----
+
+SPOTS = {
+    "text": QStyle.SubControl.SC_ComboBoxEditField,
+    "caret": QStyle.SubControl.SC_ComboBoxArrow,
+}  # 칸에서 누르는 자리 — 글 영역 · 꺾쇠 자리(스타일이 정한 칸의 가운데)
+
+
+class _PressLog(QObject):
+    """걸린 위젯이 받은 왼쪽 누르기의 (시각, 전역 자리)를 차례대로 적는다."""
+
+    def __init__(self, widget: QWidget) -> None:
+        super().__init__(widget)
+        self.presses: list[tuple[int, QPoint]] = []
+        widget.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
+            self.presses.append((event.timestamp(), event.globalPosition().toPoint()))
+        return False
+
+
+def _spot(combo: ChoiceCombo, spot: str) -> QPoint:
+    """칸에서 그 자리의 가운데(전역 좌표)."""
+    option = QStyleOptionComboBox()
+    combo.initStyleOption(option)
+    rect = combo.style().subControlRect(
+        QStyle.ComplexControl.CC_ComboBox, option, SPOTS[spot], combo
+    )
+    assert combo.rect().contains(rect.center()), "전제: 누를 자리가 칸 안이다"
+    return combo.mapToGlobal(rect.center())
+
+
+def _press_closed(qtbot: QtBot, combo: ChoiceCombo, spot: QPoint) -> None:
+    """닫힌 칸을 대화상자 창에 합성 누르기 · 놓기로 누른다 — 메뉴가 열려야 한다."""
+    window = combo.window().windowHandle()
+    local = window.mapFromGlobal(spot)
+    QTest.mouseMove(window, QPoint(1, 1))
+    QTest.mouseMove(window, local)
+    QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=local)
+    _pump()
+    QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=local)
+    qtbot.waitUntil(combo.menuWidget.isVisible)
+    _pump()
+
+
+def _press_open(combo: ChoiceCombo, spot: QPoint) -> _PressLog:
+    """메뉴가 열린 채 칸을 누른다 — 실제 화면처럼 누르기는 메뉴 창(팝업)이 받는다.
+
+    메뉴가 닫히면서 Qt가 그 누르기를 칸에 다시 보내지 않으면(offscreen · macOS) Qt가 다시 보낼 때와 같게
+    같은 시각 · 자리의 누르기를 대화상자 창에 `postEvent`로 보낸다. 칸이 받은 누르기 기록을 돌려준다.
+    """
+    menu = combo.menuWidget
+    menu_window = menu.windowHandle()
+    window = combo.window().windowHandle()
+    closing = _PressLog(menu)
+    received = _PressLog(combo)
+    QTest.mousePress(menu_window, Qt.MouseButton.LeftButton, pos=menu_window.mapFromGlobal(spot))
+    _pump()
+    assert len(closing.presses) == 1, "전제: 메뉴가 누르기를 받았다"
+    if not received.presses:
+        timestamp, point = closing.presses[0]
+        local = QPointF(window.mapFromGlobal(point))
+        replay = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            local,
+            local,
+            QPointF(point),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        replay.setTimestamp(timestamp)
+        QApplication.postEvent(window, replay)
+    _pump()
+    QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=window.mapFromGlobal(spot))
+    _pump()
+    assert received.presses == closing.presses, "전제: 메뉴를 닫은 누르기가 칸에 다시 왔다"
+    return received
+
+
+class TestPressWhileOpen:
+    """메뉴가 펼쳐진 채 칸을 누르면 닫히기만 한다 — Qt가 다시 보낸 누르기로 다시 열리지 않는다 (#624)."""
+
+    @pytest.mark.parametrize("spot", list(SPOTS))
+    def test_pressing_the_combo_while_open_only_closes_the_menu(
+        self, qtbot: QtBot, spot: str
+    ) -> None:
+        """메뉴가 펼쳐진 채 칸의 글 영역 · 꺾쇠 자리를 누르면 메뉴가 닫히고 다시 열리지 않아야 한다.
+
+        칸 누르기로 펼침 → 같은 자리 누르기(메뉴 창이 받음 · 칸에 다시 옴) -> 메뉴 숨김
+        """
+        _dialog, combo = _host(qtbot)
+        point = _spot(combo, spot)
+        _press_closed(qtbot, combo, point)
+        _press_open(combo, point)
+        QTest.qWait(50)  # 다시 연 메뉴가 뜰 틈
+        assert not combo.menuWidget.isVisible()
+
+    def test_next_press_opens_the_menu_again(self, qtbot: QtBot) -> None:
+        """펼친 채 눌러 닫은 뒤 칸을 한 번 더 누르면 메뉴가 열려야 한다.
+
+        펼침 → 칸 누르기(닫힘) → 칸 누르기 -> 메뉴 보임
+        """
+        _dialog, combo = _host(qtbot)
+        point = _spot(combo, "text")
+        _press_closed(qtbot, combo, point)
+        _press_open(combo, point)
+        assert not combo.menuWidget.isVisible(), "전제: 메뉴가 닫혔다"
+        _press_closed(qtbot, combo, point)
+        assert combo.menuWidget.isVisible()
+
+    @pytest.mark.parametrize("close", ["escape", "hidePopup"])
+    def test_pressing_the_combo_after_a_keyboard_or_code_close_only_closes(
+        self, qtbot: QtBot, close: str
+    ) -> None:
+        """앞서 Esc · `hidePopup`으로 메뉴를 닫았어도, 펼친 채 칸을 누르면 메뉴가 닫히고 다시 열리지 않아야 한다.
+
+        포인터를 메뉴 밖에 두고 펼침 → Esc 또는 hidePopup → 칸 누르기로 펼침 → 칸 누르기 -> 메뉴 숨김
+        """
+        dialog, combo = _host(qtbot)
+        window = dialog.windowHandle()
+        QTest.mouseMove(window, QPoint(window.width() - 2, 2))  # 펼칠 메뉴 밖
+        combo.showPopup()
+        menu = combo.menuWidget
+        qtbot.waitUntil(menu.isVisible)
+        _pump()
+        if close == "escape":
+            QTest.keyClick(menu.windowHandle(), Qt.Key.Key_Escape)
+        else:
+            combo.hidePopup()
+        qtbot.waitUntil(lambda: not menu.isVisible())
+        _pump()
+        point = _spot(combo, "text")
+        _press_closed(qtbot, combo, point)
+        _press_open(combo, point)
+        QTest.qWait(50)  # 다시 연 메뉴가 뜰 틈
+        assert not menu.isVisible()
