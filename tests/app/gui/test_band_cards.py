@@ -1873,3 +1873,82 @@ class TestLightTint:
         face = _pixel(win.grab().toImage(), rect.left() + 2, rect.center().y())
         assert _near(face, LIGHT_HOVER), face.name()
         assert face.blue() - face.red() >= BLUE_OVER_RED, face.name()
+
+
+# 고른 카드 면 — 카드 면(색조 카드면 색조 면)에 옅은 강조색을 섞은 값(#611 176o 지시 값 = 176n 4 (나))
+PICKED = {
+    "dark": {
+        DownloadState.WAITING: ("#2d3647", "#2d3647", "#35363c"),
+        DownloadState.FINISHED: ("#26383a", "#26383a", "#2d3a32"),
+        DownloadState.FAILED: ("#3b2f36", "#3b2f36", "#45312f"),
+    },
+    "light": {
+        DownloadState.WAITING: ("#ebf3fe", "#dde5ef", "#e1e2e5"),
+        DownloadState.FINISHED: ("#daf2f2", "#cde4e4", "#d0e2d6"),
+        DownloadState.FAILED: ("#ecdfe3", "#ded2d6", "#e2cdc6"),
+    },
+}  # 테마 -> 카드 상태 -> (고른 면, 고름+호버 면, 고르지 않은 호버 면)
+PICK_STATES = [DownloadState.WAITING, DownloadState.FINISHED, DownloadState.FAILED]
+BAND_CLEAR = 6  # 고른 카드 왼쪽 강조색 띠(4px) 밖에서 면을 재는 안쪽 거리(px)
+
+
+def _pick_first(win: VodDownloader) -> QRect:
+    """선택 모드를 켜고 첫 카드를 창에 합성 클릭으로 골라 그 카드 자리(창 좌표)를 돌려준다."""
+    from PySide6.QtTest import QTest
+
+    win.selectButton.click()
+    _pump()
+    assert win.listView.isSelecting(), "전제: 선택 모드다"
+    card = _card(win, 0)
+    rect = _rect(win, card)
+    QTest.mouseClick(
+        win.windowHandle(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, rect.center()
+    )
+    _pump()
+    assert card.contentFrame.isSelected(), "전제: 첫 카드를 골랐다"
+    return rect
+
+
+def _face_at(win: VodDownloader, rect: QRect) -> QColor:
+    return _pixel(win.grab().toImage(), rect.left() + BAND_CLEAR, rect.center().y())
+
+
+class TestPickedFace:
+    """고른 카드 면은 호버 면과 다른 옅은 강조색 면이고, 다크 고름+호버는 고른 면 그대로다(#611 176o)."""
+
+    @pytest.mark.parametrize("scheme", ["dark", "light"], indirect=True)
+    @pytest.mark.parametrize("state", PICK_STATES, ids=lambda s: s.name)
+    def test_picked_face_is_the_accent_mix(self, window, scheme: str, state: DownloadState) -> None:
+        """포인터가 밖에 있는 고른 카드 면 화소가 그 테마 · 상태의 고른 면 값이고 호버 면 값이 아니어야 한다.
+
+        카드 하나(대기 · 완료 · 실패), 선택 모드, 합성 클릭으로 고름 -> 포인터 (1, 1) -> 카드 왼쪽 안쪽 6px ·
+        세로 가운데 ≈ PICKED 고른 면(채널마다 1 이내), ≉ 호버 면
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(state)
+        rect = _pick_first(win)
+        QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
+        _pump()
+        assert not _card(win, 0).isHovered(), "전제: 호버가 꺼졌다"
+        picked, _picked_hover, hover = PICKED[scheme][state]
+        face = _face_at(win, rect)
+        assert _near(face, picked), f"{scheme} {state.name}: {face.name()}"
+        assert not _near(face, hover), f"{scheme} {state.name}: {face.name()}"
+
+    @pytest.mark.parametrize("scheme", ["dark", "light"], indirect=True)
+    @pytest.mark.parametrize("state", PICK_STATES, ids=lambda s: s.name)
+    def test_picked_and_hovered_face(self, window, scheme: str, state: DownloadState) -> None:
+        """포인터가 위에 있는 고른 카드 면 화소가 고름+호버 값이어야 한다 — 다크는 고른 면과 같은 값이다.
+
+        카드 하나(대기 · 완료 · 실패), 선택 모드, 합성 클릭으로 고름 -> 합성 포인터 이동((1, 1) -> 카드 가운데)
+        -> 카드 왼쪽 안쪽 6px · 세로 가운데 ≈ PICKED 고름+호버 면(채널마다 1 이내), ≉ 호버 면
+        """
+        win = window(state)
+        rect = _pick_first(win)
+        _hover(win, _card(win, 0))
+        assert _card(win, 0).isHovered(), "전제: 호버가 켜졌다"
+        _picked, picked_hover, hover = PICKED[scheme][state]
+        face = _face_at(win, rect)
+        assert _near(face, picked_hover), f"{scheme} {state.name}: {face.name()}"
+        assert not _near(face, hover), f"{scheme} {state.name}: {face.name()}"

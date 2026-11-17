@@ -104,7 +104,7 @@ class CardFace(QFrame):
         return self._selected
 
     def setSelected(self, on: bool, animate: bool = False) -> None:
-        """고른 행 표시를 켜고 끈다 — 행 바탕 한 단계(QSS `picked`)와 왼쪽 강조색 띠. 줄 배치는 그대로다.
+        """고른 행 표시를 켜고 끈다 — 고른 면(QSS `picked`, 옅은 강조색)과 왼쪽 강조색 띠. 줄 배치는 그대로다.
 
         바탕은 늘 바로 바뀐다. `animate`면 띠가 행 세로 가운데에서 위아래로 자라고(`BAND_GROW_MS`) 풀 때
         줄어든다(`BAND_SHRINK_MS`) — 목록이 카드 한 장만 바뀔 때 넘긴다(#611).
@@ -205,8 +205,9 @@ class CardFace(QFrame):
             self.update()
 
     def _step(self) -> str:
-        """바탕의 호버 단계 — "Hover" · "" (QSS 바탕 규칙과 같은 차례, 고른 행은 호버 단계)."""
-        return "Hover" if self.property("hover") is True or self._selected else ""
+        """바탕 단계 — "" · "Hover" · "Picked" · "PickedHover" (QSS 바탕 규칙과 같은 차례, #611 176o)."""
+        hovered = "Hover" if self.property("hover") is True else ""
+        return ("Picked" + hovered) if self._selected else hovered
 
     def _washColor(self) -> QColor:
         """모션 동안 칠하는 색조 — 지금 호버 단계의 색조(QSS 색조 규칙과 같은 토큰, #571)."""
@@ -221,7 +222,7 @@ class CardFace(QFrame):
             name = "cardTintFinished" if tint == "finished" else "cardTintFailed"
             ground = QColor(tokens[name + step])
         else:
-            ground = QColor(tokens["card" + step + "Bg"])  # cardBg · cardHoverBg
+            ground = QColor(tokens["card" + step + "Bg"])  # cardBg · cardHoverBg · cardPicked…Bg
         if self._washToken:
             ground = mix(ground, self._washColor(), self._wash / 255)
         return ground

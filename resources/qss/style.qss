@@ -183,18 +183,33 @@ QLabel#thumbnailLabel {
     background-color: @cardTintFailedHover;
 }
 
-/* 고른 행(선택 모드, #611 — 설계 §13): 행 바탕 한 단계(호버와 같은 색). 왼쪽 강조색 띠는 카드 면이 그린다.
- * `picked`는 app/widgets/contentItemWidget.py::CardFace.setSelected가 심는다. */
+/* 고른 행(선택 모드, #611 — 설계 §13): 카드 면(색조 카드면 색조 면)에 옅은 강조색을 섞은 면 — 호버 회색과
+ * 색으로 갈린다(#611 176o). 고름+호버는 라이트만 한 단계 더 어둡고, 다크는 고른 면 그대로다(theme.py
+ * `_picked_faces`). 왼쪽 강조색 띠는 카드 면이 그린다. `picked`는
+ * app/widgets/contentItemWidget.py::CardFace.setSelected가 심는다. 속성 둘 규칙은 같은 수의 호버 규칙보다
+ * 뒤에 두어 이기게 한다 */
 #contentFrame[picked="true"] {
-    background-color: @cardHoverBg;
+    background-color: @cardPickedBg;
+}
+
+#contentFrame[picked="true"][hover="true"] {
+    background-color: @cardPickedHoverBg;
 }
 
 #contentFrame[tint="finished"][picked="true"] {
-    background-color: @cardTintFinishedHover;
+    background-color: @cardTintFinishedPicked;
+}
+
+#contentFrame[tint="finished"][picked="true"][hover="true"] {
+    background-color: @cardTintFinishedPickedHover;
 }
 
 #contentFrame[tint="failed"][picked="true"] {
-    background-color: @cardTintFailedHover;
+    background-color: @cardTintFailedPicked;
+}
+
+#contentFrame[tint="failed"][picked="true"][hover="true"] {
+    background-color: @cardTintFailedPickedHover;
 }
 
 /* 색조 위 상태 글 — 같은 색상의 밝기만 옮겨 4.5를 지키는 색(theme.py `…OnTint`) */
