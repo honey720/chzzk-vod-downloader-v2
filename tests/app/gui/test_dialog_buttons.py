@@ -584,6 +584,63 @@ MOUSE_OPENED = {"focus": True, "keyFocus": False, "accent edge": False}  # 마�
 class TestOpeningFocusFollowsTheInput:
     """대화상자가 열리며 받은 첫 초점은 창을 연 입력의 종류를 따른다(#622 188c)."""
 
+    def test_second_confirm_box_follows_the_key_that_closed_the_first(
+        self, qtbot: QtBot, tmp_path, scheme: str
+    ) -> None:
+        """마우스로 연 첫 확인 창을 Space로 닫으면 이어 뜬 확인 창의 Cancel에 ring이 있어야 한다.
+
+        메인 창에 합성 클릭(마지막 입력 = 마우스), 가린 카드 확인 창 -> 「Delete」에 Tab 까닭 초점 ·
+        그 창(QWindow)에 Space -> 이어 뜬 중지 · 삭제 확인 창 Cancel == KEY_OPENED (#623 리뷰)
+        """
+        win, _item, held = _busy_window(tmp_path)
+        _activate(qtbot, win)
+        _park(win)
+        QTest.mouseClick(win.windowHandle(), Qt.MouseButton.LeftButton, pos=QPoint(1, 1))
+        _pump()
+        boxes: list[QMessageBox] = []
+        seen: dict[str, object] = {}
+        failures: list[BaseException] = []
+        finished: list[bool] = []  # 테스트가 끝나면 찾기를 멈춘다 — 뒤 테스트의 창을 닫지 않게
+
+        def run() -> None:
+            if finished:
+                return
+            box = QApplication.activeModalWidget()
+            if not isinstance(box, QMessageBox) or box in boxes:
+                QTimer.singleShot(10, run)
+                return
+            boxes.append(box)
+            try:
+                _activate(qtbot, box)
+                if len(boxes) == 1:
+                    remove = next(
+                        b
+                        for b in box.buttons()
+                        if b is not box.button(QMessageBox.StandardButton.Cancel)
+                    )
+                    remove.setFocus(Qt.FocusReason.TabFocusReason)
+                    qtbot.waitUntil(remove.hasFocus, timeout=ACTIVE_WAIT_MS)
+                    QTimer.singleShot(10, run)
+                    QTest.keyClick(box.windowHandle(), Qt.Key.Key_Space)
+                    return
+                seen.update(_opening_focus(box))
+            except BaseException as error:  # 실패를 exec 밖으로 옮긴다
+                failures.append(error)
+            QTest.keyClick(box, Qt.Key.Key_Escape)
+
+        QTimer.singleShot(0, run)
+        try:
+            if view_module.confirm_hidden_delete(win, 2, 1):
+                view_module.confirm_stop_and_delete(win, 2, 1)
+            _pump()
+        finally:
+            finished.append(True)
+        if failures:
+            raise failures[0]
+        assert len(boxes) == 2, "두 확인 창이 차례로 떠야 한다"
+        assert seen == KEY_OPENED, scheme
+        held.clear()
+
     def test_delete_key_opens_the_confirm_box_with_a_ring_on_cancel(
         self, qtbot: QtBot, tmp_path, scheme: str
     ) -> None:

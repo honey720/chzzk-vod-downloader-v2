@@ -196,7 +196,27 @@ class _InputKind(QObject):
                 watched.setProperty(_LAST_INPUT_KEY, keyboard)
         elif kind == QEvent.Type.Show and watched.isWidgetType() and watched.isWindow():
             self._attach(watched)
+        elif kind == QEvent.Type.Hide and watched.isWidgetType() and watched.isWindow():
+            self._handBack(watched)
         return False
+
+    @staticmethod
+    def _handBack(window: QWidget) -> None:
+        """닫히는 대화상자가 마지막으로 받은 입력의 종류를 부모 창에 넘긴다.
+
+        대화상자 안의 키 입력은 그 대화상자의 `QWindow`에만 적힌다. 넘기지 않으면 이어서 여는 창(가린 카드
+        확인 뒤의 중지 · 삭제 확인)이 부모 창에 남은 옛 종류를 읽는다(#622 PR 리뷰).
+        """
+        parent = window.parentWidget()
+        if parent is None:
+            return
+        source = window.windowHandle()
+        target = parent.window().windowHandle()
+        if source is None or target is None or target.property(_LAST_INPUT_KEY) is None:
+            return
+        keyboard = source.property(_LAST_INPUT_KEY)
+        if isinstance(keyboard, bool):
+            target.setProperty(_LAST_INPUT_KEY, keyboard)
 
 
 def track_input(window: QWidget) -> None:
