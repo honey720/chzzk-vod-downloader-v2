@@ -407,10 +407,11 @@ LIGHT_TINTED = {
     "cardSelectedBg": "#e4e4e7",  # 176p까지의 호버 면 값이 고른 카드 면이 됐다(#611 176q)
     "rowHoverBg": "#e4e4e7",
 }
-LIGHT_KEPT = {
-    "barHover": "#c2c5c9",
-    "barPressed": "#b8bbc1",
-}  # 이미 푸른 회색이라 그대로 둔 바 버튼 면
+# 바 버튼 면 셋 — 고른 면은 176k ~ 176u의 호버 면 값, 호버 · 눌림은 그 값에서 파생한 값(오너 결정 2026-11-17, #611 176v)
+BAR_FACES = {
+    "dark": {"barSelected": "#4c5159", "barHover": "#43474f", "barPressed": "#474c54"},
+    "light": {"barSelected": "#c2c5c9", "barHover": "#d0d3d6", "barPressed": "#c9cccf"},
+}
 
 
 @pytest.mark.parametrize("token", LIGHT_TINTED)
@@ -424,10 +425,16 @@ def test_light_ground_is_the_blue_grey(token: str) -> None:
     assert int(value[5:7], 16) > int(value[1:3], 16), value
 
 
-@pytest.mark.parametrize("token", LIGHT_KEPT)
-def test_light_bar_button_faces_are_kept(token: str) -> None:
-    """라이트 barHover · barPressed는 바뀌지 않아야 한다 — #c2c5c9 · #b8bbc1."""
-    assert theme.LIGHT[token].lower() == LIGHT_KEPT[token]
+@pytest.mark.parametrize("scheme", BAR_FACES)
+def test_bar_button_faces_are_the_chosen_values(scheme: str) -> None:
+    """바 버튼 고른 면 · 호버 · 눌림 면은 정한 값이어야 한다.
+
+    다크 barSelected #4c5159 · barHover #43474f · barPressed #474c54,
+    라이트 #c2c5c9 · #d0d3d6 · #c9cccf (#611 176v)
+    """
+    table = SCHEMES[scheme]
+    got = {token: table[token].lower() for token in BAR_FACES[scheme]}
+    assert got == BAR_FACES[scheme]
 
 
 def _lab(color: str) -> tuple[float, float, float]:
@@ -672,7 +679,10 @@ def test_field_edge_hover_differs_from_the_focus_edge(scheme: str) -> None:
     assert gap >= FOCUS_GAP_MIN, f"{scheme}: {gap:.2f}"
 
 
-BAR_SELECTED_MIN = 6.7  # 고른 칩 면 ↔ 바 호버 면 ΔE00 하한 — 한 단계(지시문 176t)
+BAR_HOVER_GAP = (3.3, 3.6)  # 바 호버 면 ↔ 고른 칩 면 ΔE00 범위 — 반 단계(약 3.35, 지시문 176v)
+DARK_OLD_BAR_HOVER = (
+    "#383c44"  # 176k 전 다크 바 버튼 호버 면(surfaceHover) — 약하다고 한 값(지시문 176v)
+)
 DARK_THUMB_MIN = 3.0  # 다크 썸네일 자리표시 ↔ 카드 평소 면 ΔE00 하한 — 지시문 176s
 
 
@@ -688,15 +698,37 @@ def test_dark_thumbnail_placeholder_stands_apart_from_the_card_face() -> None:
 
 
 @pytest.mark.parametrize("scheme", SCHEMES)
-def test_bar_selected_is_one_step_beyond_the_hover_face(scheme: str) -> None:
-    """고른 칩 면은 바 호버 면과 ΔE00 6.7 이상이고 바 면과는 호버 면보다 멀어야 한다(#611 176t).
+def test_bar_hover_is_half_a_step_short_of_the_chosen_face(scheme: str) -> None:
+    """바 호버 면은 고른 칩 면과 ΔE00 3.3 ~ 3.6 떨어져야 한다(#611 176v).
 
-    ΔE00(barHover, barSelected) >= 6.7, ΔE00(barBg, barSelected) > ΔE00(barBg, barHover)
+    3.3 <= ΔE00(barHover, barSelected) <= 3.6
     """
     table = SCHEMES[scheme]
-    step = _de00(table["barHover"], table["barSelected"])
-    assert step >= BAR_SELECTED_MIN, f"{scheme}: {step:.2f}"
-    assert _de00(table["barBg"], table["barSelected"]) > _de00(table["barBg"], table["barHover"])
+    gap = _de00(table["barHover"], table["barSelected"])
+    low, high = BAR_HOVER_GAP
+    assert low <= gap <= high, f"{scheme}: {gap:.2f}"
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+def test_bar_faces_go_rest_hover_pressed_chosen(scheme: str) -> None:
+    """바 면에서의 거리는 평소 < 호버 < 눌림 < 고른 면 차례여야 한다(#611 176v).
+
+    ΔE00(barBg, ·): barHover < barPressed < barSelected, barHover > 0
+    """
+    table = SCHEMES[scheme]
+    gaps = [
+        _de00(table["barBg"], table[name]) for name in ("barHover", "barPressed", "barSelected")
+    ]
+    assert 0 < gaps[0] < gaps[1] < gaps[2], f"{scheme}: {[round(g, 2) for g in gaps]}"
+
+
+def test_dark_bar_hover_is_stronger_than_the_old_hover() -> None:
+    """다크 바 호버 면은 바 면에서 옛 호버 값(#383c44)보다 멀어야 한다(#611 176v).
+
+    ΔE00(barBg, barHover) > ΔE00(barBg, #383c44)
+    """
+    table = theme.DARK
+    assert _de00(table["barBg"], table["barHover"]) > _de00(table["barBg"], DARK_OLD_BAR_HOVER)
 
 
 @pytest.mark.parametrize(("scheme", "lighter"), [("dark", True), ("light", False)])

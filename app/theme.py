@@ -201,11 +201,10 @@ DARK = {
     "fieldBg": "#2f3239",
     "surfaceHover": "#383c44",
     "surfacePressed": "#282b31",
-    # 바(메뉴바 · 헤더바 · 하단바 · 선택 줄) 위 동작 버튼의 호버 · 눌림 면 — surfaceHover · surfacePressed에서 바 면
-    # 반대쪽(다크 밝게)으로 ΔE00 한 단계(FIELD_STEP_DE00) 더. 바 면이 카드 면보다 어두워 카드 호버 면으로는
-    # 안 보였다(대비 1.42, #611 176k). 색상 · 채도는 원래 토큰 그대로(OKLab 밝기만)
-    "barHover": "#4c5159",
-    "barPressed": "#3d4147",
+    # 고른 칩 · 켠 선택 버튼 면 — 176k ~ 176u의 바 버튼 호버 면 값이다. 그 위 한 단계 더 간 #60636c는 너무
+    # 밝았다(오너 칩 실기 2026-11-17, #611 176v). 바 버튼 호버 · 눌림 면(barHover · barPressed)은 이 값과
+    # 바 면에서 파생한다(`_bar_faces`)
+    "barSelected": "#4c5159",
     "menuHover": "#2c2f35",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 2.9, #536)
     "rowHoverBg": "#242629",  # 창 바탕 위 목록 행(구간 행) 호버 띠 — 창 바탕에서 밝게 한 단계(ΔE00 약 3.2, #586)
     "shadow": "#000000",  # 말풍선 그림자 — 그릴 때 불투명도를 낮춰 쓴다(#536)
@@ -294,10 +293,9 @@ LIGHT = {
     "fieldBg": "#ffffff",
     "surfaceHover": "#e1e4e9",
     "surfacePressed": "#d5d9df",
-    # 바 위 동작 버튼의 호버 · 눌림 면 — 다크와 같은 규칙(라이트는 어둡게). 회색 바 면 위에서 surfaceHover는
-    # 대비 1.12였다(#611 176k)
-    "barHover": "#c2c5c9",
-    "barPressed": "#b8bbc1",
+    # 고른 칩 · 켠 선택 버튼 면 — 다크와 같은 규칙: 176k ~ 176u의 바 버튼 호버 면 값. 그 위 한 단계 더 간
+    # #aaacb2는 너무 어두웠다(오너 칩 실기 2026-11-17, #611 176v)
+    "barSelected": "#c2c5c9",
     "menuHover": "#f0f1f3",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 3.0, #536)
     "rowHoverBg": "#e4e4e7",  # 창 바탕 위 목록 행(구간 행) 호버 띠 — 창 바탕에서 어둡게 한 단계(ΔE00 약 3.2, #586)
     "shadow": "#000000",  # 말풍선 그림자 — 그릴 때 불투명도를 낮춰 쓴다(#536)
@@ -375,9 +373,11 @@ FIELD_STEP_DE00 = 6.7
 # 입력 칸 호버 테두리 ↔ 평소 테두리 ΔE00 — 두 단계. 한 단계로는 호버가 잘 안 보였다(오너 재실기 2026-11-17,
 # #611 176s)
 FIELD_HOVER_DE00 = 2 * FIELD_STEP_DE00
-# 고른 칩 · 켠 선택 버튼 면(barSelected) ↔ 바 호버 면(barHover) ΔE00 — 호버에서 한 단계 더 가 바 면에서 두 단계가
-# 된다. 카드처럼 「평소 < 호버 < 선택」이다(오너 재실기 2026-11-17, #611 176t)
-BAR_SELECTED_DE00 = FIELD_STEP_DE00
+# 바 버튼 호버 면(barHover) ↔ 고른 면(barSelected) ΔE00 — 반 단계. 카드처럼 「평소 < 호버 < 선택」이고, 호버는
+# 고른 면 쪽에 붙는다(오너 칩 실기 2026-11-17, #611 176v — 176t의 한 단계는 고른 면이 너무 진했다)
+BAR_HOVER_DE00 = FIELD_STEP_DE00 / 2
+# 바 버튼 눌림 면(barPressed)의 자리 — 호버 면 → 고른 면 OKLab 직선 위 비율(0.5 = 가운데, #611 176v)
+BAR_PRESSED_SHARE = 0.5
 
 # ---- 선택 모드의 체크 원(#561) ----
 # 정수 px가 아닌 값이라 METRICS(QSS에 "Npx"로 들어간다)에 두지 않는다
@@ -578,22 +578,28 @@ def _field_hover(edge: str, face: str) -> str:
     return moved
 
 
-def _bar_selected(table: dict) -> None:
-    """고른 칩 · 켠 선택 버튼 면(`barSelected`)을 표에 더한다 — 바 호버 면에서 바 면과 멀어지는 쪽으로 한 단계.
+def _bar_faces(table: dict) -> None:
+    """바 버튼 호버 · 눌림 면(`barHover` · `barPressed`)을 바 면 · 고른 면에서 셈해 표에 더한다.
 
-    밝기는 OKLab에서 `barHover`부터 ΔE00 `BAR_SELECTED_DE00`만큼 옮긴다(다크 밝게 · 라이트 어둡게). 색상각 ·
-    채도는 `border`의 것을 쓴다. 바 면 · 호버 면이 바뀌면 따라온다(#611 176t).
+    호버 면은 바 면 → 고른 면 OKLab 직선 위에서 고른 면과 ΔE00 `BAR_HOVER_DE00`(반 단계) 떨어진 첫 지점이다
+    — 고른 면에서 바 면 쪽으로 걸어 처음 닿는 자리. 눌림 면은 호버 면 → 고른 면 직선의 `BAR_PRESSED_SHARE`
+    지점이다. 바 면 · 고른 면이 바뀌면 따라온다(#611 176v).
     """
-    bar_l = _oklab(table["barBg"])[0]
-    hover_l = _oklab(table["barHover"])[0]
-    _, a, b = _oklab(table["border"])
-    direction = 1.0 if hover_l > bar_l else -1.0
-    step = 0.0
-    moved = table["barHover"]
-    while step < 1.0 and delta_e00(table["barHover"], moved) < BAR_SELECTED_DE00:
-        step += 0.001
-        moved = _from_oklab((hover_l + direction * step, a, b))
-    table["barSelected"] = moved
+    bar, chosen = _oklab(table["barBg"]), _oklab(table["barSelected"])
+
+    def along(share: float) -> str:
+        return _from_oklab(tuple(b + (c - b) * share for b, c in zip(bar, chosen, strict=True)))
+
+    share = 1.0
+    hover = table["barSelected"]
+    while share > 0.0 and delta_e00(table["barSelected"], hover) < BAR_HOVER_DE00:
+        share -= 0.0005
+        hover = along(share)
+    table["barHover"] = hover
+    near = _oklab(hover)
+    table["barPressed"] = _from_oklab(
+        tuple(h + (c - h) * BAR_PRESSED_SHARE for h, c in zip(near, chosen, strict=True))
+    )
 
 
 def _card_hover(table: dict, scheme: str) -> None:
@@ -663,8 +669,8 @@ _card_tints(DARK, "dark")
 _card_tints(LIGHT, "light")
 DARK["fieldEdgeHover"] = _field_hover(DARK["fieldEdge"], DARK["fieldBg"])
 LIGHT["fieldEdgeHover"] = _field_hover(LIGHT["fieldEdge"], LIGHT["fieldBg"])
-_bar_selected(DARK)
-_bar_selected(LIGHT)
+_bar_faces(DARK)
+_bar_faces(LIGHT)
 
 #: 카드 상태 이름 — 파이썬(`setProperty`)과 QSS(`[state="..."]`)가 공유하는 어휘.
 #: 상태 아이콘·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서
