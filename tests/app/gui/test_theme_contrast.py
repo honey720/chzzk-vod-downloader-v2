@@ -28,17 +28,54 @@ PAIRS = [
     ("stateFinished", "cardBg", 4.5, "완료 상태 글 ↔ 카드"),
     ("stateFailed", "cardBg", 4.5, "실패 상태 글 ↔ 카드"),
     ("stateFailed", "barBg", 4.5, "실패 칩 글 ↔ 헤더바(칩 면 없음 — #536 · #611)"),
-    ("text", "cardHoverBg", 4.5, "본문 글 ↔ 호버 카드(#611 176m)"),
-    ("textMuted", "cardHoverBg", 4.5, "흐린 글(카드 정보) ↔ 호버 카드(#611 176m)"),
-    ("stateWaiting", "cardHoverBg", 4.5, "대기 상태 글 ↔ 호버 카드(#611 176m)"),
-    ("stateRunning", "cardHoverBg", 4.5, "받는 중 상태 글 ↔ 호버 카드(#611 176m)"),
-    ("statePaused", "cardHoverBg", 4.5, "일시정지 상태 글 ↔ 호버 카드(#611 176m)"),
-    ("textMuted", "cardTintFinishedHover", 4.5, "흐린 글 ↔ 호버한 완료 카드(#611 176m)"),
-    ("textMuted", "cardTintFailedHover", 4.5, "흐린 글 ↔ 호버한 실패 카드(#611 176m)"),
-    ("stateFinishedOnTint", "cardTintFinished", 4.5, "완료 상태 글 ↔ 완료 카드(#554)"),
-    ("stateFinishedOnTint", "cardTintFinishedHover", 4.5, "완료 상태 글 ↔ 호버한 완료 카드(#554)"),
-    ("stateFailedOnTint", "cardTintFailed", 4.5, "실패 상태 글 ↔ 실패 카드(#554)"),
-    ("stateFailedOnTint", "cardTintFailedHover", 4.5, "실패 상태 글 ↔ 호버한 실패 카드(#554)"),
+    ("text", "cardHoverBg", 4.5, "본문 글 ↔ 반 단계 호버 카드(#611 176m · 176q)"),
+    ("textMuted", "cardHoverBg", 4.5, "흐린 글(카드 정보) ↔ 반 단계 호버 카드(#611 176m · 176q)"),
+    ("stateWaiting", "cardHoverBg", 4.5, "대기 상태 글 ↔ 반 단계 호버 카드(#611 176m · 176q)"),
+    ("stateRunning", "cardHoverBg", 4.5, "받는 중 상태 글 ↔ 반 단계 호버 카드(#611 176m · 176q)"),
+    ("statePaused", "cardHoverBg", 4.5, "일시정지 상태 글 ↔ 반 단계 호버 카드(#611 176m · 176q)"),
+    ("text", "cardSelectedBg", 4.5, "본문 글 ↔ 한 단계 고른 카드(#611 176q)"),
+    ("textMuted", "cardSelectedBg", 4.5, "흐린 글(카드 정보) ↔ 한 단계 고른 카드(#611 176q)"),
+    ("stateWaiting", "cardSelectedBg", 4.5, "대기 상태 글 ↔ 한 단계 고른 카드(#611 176q)"),
+    ("stateRunning", "cardSelectedBg", 4.5, "받는 중 상태 글 ↔ 한 단계 고른 카드(#611 176q)"),
+    ("statePaused", "cardSelectedBg", 4.5, "일시정지 상태 글 ↔ 한 단계 고른 카드(#611 176q)"),
+    ("text", "cardTintFinished", 4.5, "본문 글 ↔ 완료 카드(#554 · #611 176q)"),
+    ("textMuted", "cardTintFinished", 4.5, "흐린 글 ↔ 완료 카드(#554 · #611 176q)"),
+    ("stateFinishedOnTint", "cardTintFinished", 4.5, "완료 상태 글 ↔ 완료 카드(#554 · #611 176q)"),
+    ("text", "cardTintFinishedHover", 4.5, "본문 글 ↔ 호버한 완료 카드(#554 · #611 176q)"),
+    ("textMuted", "cardTintFinishedHover", 4.5, "흐린 글 ↔ 호버한 완료 카드(#554 · #611 176q)"),
+    (
+        "stateFinishedOnTint",
+        "cardTintFinishedHover",
+        4.5,
+        "완료 상태 글 ↔ 호버한 완료 카드(#554 · #611 176q)",
+    ),
+    ("text", "cardTintFinishedSelected", 4.5, "본문 글 ↔ 고른 완료 카드(#554 · #611 176q)"),
+    ("textMuted", "cardTintFinishedSelected", 4.5, "흐린 글 ↔ 고른 완료 카드(#554 · #611 176q)"),
+    (
+        "stateFinishedOnTint",
+        "cardTintFinishedSelected",
+        4.5,
+        "완료 상태 글 ↔ 고른 완료 카드(#554 · #611 176q)",
+    ),
+    ("text", "cardTintFailed", 4.5, "본문 글 ↔ 실패 카드(#554 · #611 176q)"),
+    ("textMuted", "cardTintFailed", 4.5, "흐린 글 ↔ 실패 카드(#554 · #611 176q)"),
+    ("stateFailedOnTint", "cardTintFailed", 4.5, "실패 상태 글 ↔ 실패 카드(#554 · #611 176q)"),
+    ("text", "cardTintFailedHover", 4.5, "본문 글 ↔ 호버한 실패 카드(#554 · #611 176q)"),
+    ("textMuted", "cardTintFailedHover", 4.5, "흐린 글 ↔ 호버한 실패 카드(#554 · #611 176q)"),
+    (
+        "stateFailedOnTint",
+        "cardTintFailedHover",
+        4.5,
+        "실패 상태 글 ↔ 호버한 실패 카드(#554 · #611 176q)",
+    ),
+    ("text", "cardTintFailedSelected", 4.5, "본문 글 ↔ 고른 실패 카드(#554 · #611 176q)"),
+    ("textMuted", "cardTintFailedSelected", 4.5, "흐린 글 ↔ 고른 실패 카드(#554 · #611 176q)"),
+    (
+        "stateFailedOnTint",
+        "cardTintFailedSelected",
+        4.5,
+        "실패 상태 글 ↔ 고른 실패 카드(#554 · #611 176q)",
+    ),
     ("text", "barBg", 4.5, "바 글 ↔ 바 면(#611 176i)"),
     ("textMuted", "barBg", 4.5, "바 흐린 글(안 고른 탭 · 하단 글) ↔ 바 면(#611 176i)"),
     ("text", "fieldBg", 4.5, "입력 칸 글 ↔ 칸 면(#611 176i)"),
@@ -388,3 +425,135 @@ def test_light_ground_is_the_blue_grey(token: str) -> None:
 def test_light_bar_button_faces_are_kept(token: str) -> None:
     """라이트 barHover · barPressed는 바뀌지 않아야 한다 — #c2c5c9 · #b8bbc1."""
     assert theme.LIGHT[token].lower() == LIGHT_KEPT[token]
+
+
+def _lab(color: str) -> tuple[float, float, float]:
+    """sRGB 16진 색의 CIE L*a*b*(D65) — 제품의 변환을 쓰지 않는다."""
+
+    def linear(channel: int) -> float:
+        c = channel / 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (linear(int(color[i : i + 2], 16)) for i in (1, 3, 5))
+    x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
+    y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+
+    def f(t: float) -> float:
+        return t ** (1 / 3) if t > (6 / 29) ** 3 else t / (3 * (6 / 29) ** 2) + 4 / 29
+
+    return 116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))
+
+
+def _de00_lab(one: tuple[float, float, float], two: tuple[float, float, float]) -> float:
+    """두 L*a*b* 사이 CIEDE2000 색 차(Sharma 2005 식)."""
+    l1, a1, b1 = one
+    l2, a2, b2 = two
+    c_bar = (math.hypot(a1, b1) + math.hypot(a2, b2)) / 2
+    g = 0.5 * (1 - math.sqrt(c_bar**7 / (c_bar**7 + 25**7)))
+    a1p, a2p = a1 * (1 + g), a2 * (1 + g)
+    c1p, c2p = math.hypot(a1p, b1), math.hypot(a2p, b2)
+    h1p = math.degrees(math.atan2(b1, a1p)) % 360 if c1p else 0.0
+    h2p = math.degrees(math.atan2(b2, a2p)) % 360 if c2p else 0.0
+    dlp, dcp = l2 - l1, c2p - c1p
+    if c1p * c2p == 0:
+        dhp = 0.0
+    elif abs(h2p - h1p) <= 180:
+        dhp = h2p - h1p
+    else:
+        dhp = h2p - h1p - 360 if h2p > h1p else h2p - h1p + 360
+    dbig_h = 2 * math.sqrt(c1p * c2p) * math.sin(math.radians(dhp / 2))
+    lbp, cbp = (l1 + l2) / 2, (c1p + c2p) / 2
+    if c1p * c2p == 0:
+        hbp = h1p + h2p
+    elif abs(h1p - h2p) <= 180:
+        hbp = (h1p + h2p) / 2
+    else:
+        hbp = (h1p + h2p + 360) / 2 if h1p + h2p < 360 else (h1p + h2p - 360) / 2
+    t = (
+        1
+        - 0.17 * math.cos(math.radians(hbp - 30))
+        + 0.24 * math.cos(math.radians(2 * hbp))
+        + 0.32 * math.cos(math.radians(3 * hbp + 6))
+        - 0.20 * math.cos(math.radians(4 * hbp - 63))
+    )
+    sl = 1 + 0.015 * (lbp - 50) ** 2 / math.sqrt(20 + (lbp - 50) ** 2)
+    sc = 1 + 0.045 * cbp
+    sh = 1 + 0.015 * cbp * t
+    rt = (
+        -2
+        * math.sqrt(cbp**7 / (cbp**7 + 25**7))
+        * math.sin(math.radians(60 * math.exp(-(((hbp - 275) / 25) ** 2))))
+    )
+    return math.sqrt(
+        (dlp / sl) ** 2 + (dcp / sc) ** 2 + (dbig_h / sh) ** 2 + rt * (dcp / sc) * (dbig_h / sh)
+    )
+
+
+def _de00(one: str, two: str) -> float:
+    return _de00_lab(_lab(one), _lab(two))
+
+
+def test_de00_helper_matches_known_values() -> None:
+    """ΔE00 도우미가 Sharma 시험 짝 · 같은 색에서 알려진 값이어야 한다.
+
+    (50, 2.6772, −79.7751) ↔ (50, 0, −82.7485) = 2.0425, (50, 2.5, 0) ↔ (73, 25, −18) = 27.1492,
+    같은 색 = 0
+    """
+    assert _de00_lab((50, 2.6772, -79.7751), (50, 0, -82.7485)) == pytest.approx(2.0425, abs=1e-4)
+    assert _de00_lab((50, 2.5, 0), (73, 25, -18)) == pytest.approx(27.1492, abs=1e-4)
+    assert _de00("#2b2d33", "#2b2d33") == 0
+
+
+CARD_FACES = [
+    ("cardBg", "cardHoverBg", "cardSelectedBg"),
+    ("cardTintFinished", "cardTintFinishedHover", "cardTintFinishedSelected"),
+    ("cardTintFailed", "cardTintFailedHover", "cardTintFailedSelected"),
+]  # (평소 면, 호버 면, 선택 면) — 중립 · 완료 · 실패 카드
+HALF_STEP = (1.2, 2.0)  # 호버 면 ↔ 평소 면 ΔE00 허용 범위 — 반 단계 약 1.5, 16진 반올림 폭 포함
+ONE_STEP = 2.8  # 선택 면 ↔ 평소 면 ΔE00 하한 — 한 단계 약 3.0(완료 · 실패 색조는 2.9 안팎)
+DARK_SELECTED_MIN = 3.0  # 다크 중립 선택 면 ↔ 평소 면 ΔE00 하한 — 지시문 176q
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize(("rest", "hover", "selected"), CARD_FACES)
+def test_card_hover_is_half_a_step_and_selected_one_step(
+    scheme: str, rest: str, hover: str, selected: str
+) -> None:
+    """카드 호버 면은 평소 면에서 반 단계, 선택 면은 한 단계여야 하고 호버 ≠ 선택이어야 한다(#611 176q).
+
+    ΔE00(평소, 호버) 1.2 ~ 2.0, ΔE00(평소, 선택) >= 2.8, ΔE00(평소, 호버) < ΔE00(평소, 선택),
+    호버 ≠ 선택(16진 값)
+    """
+    table = SCHEMES[scheme]
+    half = _de00(table[rest], table[hover])
+    one = _de00(table[rest], table[selected])
+    assert HALF_STEP[0] <= half <= HALF_STEP[1], f"{scheme} {hover}: {half:.2f}"
+    assert one >= ONE_STEP, f"{scheme} {selected}: {one:.2f}"
+    assert half < one
+    assert table[hover].lower() != table[selected].lower()
+
+
+def test_dark_selected_card_is_at_least_three_from_the_rest_face() -> None:
+    """다크 중립 선택 면은 평소 면과 ΔE00 3.0 이상 떨어져야 한다(#611 176q).
+
+    ΔE00(cardBg, cardSelectedBg) >= 3.0
+    """
+    step = _de00(theme.DARK["cardBg"], theme.DARK["cardSelectedBg"])
+    assert step >= DARK_SELECTED_MIN, f"{step:.2f}"
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize(("rest", "hover", "selected"), CARD_FACES)
+def test_card_faces_take_no_accent(scheme: str, rest: str, hover: str, selected: str) -> None:
+    """호버 · 선택 면은 평소 면보다 강조색(파랑) 쪽으로 더 기울지 않아야 한다 — 중립 면(#611 176q).
+
+    (파랑 − 빨강)(호버 · 선택) − (파랑 − 빨강)(평소) <= 3(푸른 회색 기운 · 16진 반올림 폭)
+    """
+    table = SCHEMES[scheme]
+
+    def lean(value: str) -> int:
+        return int(value[5:7], 16) - int(value[1:3], 16)
+
+    for face in (hover, selected):
+        assert lean(table[face]) - lean(table[rest]) <= 3, f"{scheme} {face}: {table[face]}"
