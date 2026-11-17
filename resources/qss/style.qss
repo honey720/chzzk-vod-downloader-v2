@@ -345,14 +345,15 @@ QPushButton[role="subtle"]:disabled {
 }
 
 /* ---------- 대화상자 버튼 (#622 — Windows 11 표준 대화상자 버튼) ----------
- * 설정 · 편집 · 구간 · 확인 창 안의 버튼. 보조 버튼은 입력 칸 면(fieldBg) + 옅은 1px 테두리(border), 호버 · 눌림은
- * 테두리를 그대로 두고 면만 한 단계씩(dialogButtonHover · dialogButtonPressed). 주 동작(role="primary")은 위
+ * 설정 · 편집 · 구간 · 확인 창 안의 버튼. 보조 버튼은 면 dialogButton(다크 = 입력 칸 면, 라이트 = 바탕보다 어두운
+ * 회색 — app/theme.py) + 옅은 1px 테두리(border), 호버 · 눌림은 테두리를 그대로 두고 면만 한 단계씩
+ * (dialogButtonHover · dialogButtonPressed). 주 동작(role="primary")은 위
  * 강조색 채움 규칙 그대로다 — 속성 선택자가 더 구체적이라 아래 규칙이 덮지 않는다. 본 창 바 버튼 · 카드 버튼은
  * 대화상자 밖이라 이 절과 무관하다.
  * 키보드로 받은 초점에만 강조색 테두리를 그린다 — `keyFocus`는 app/widgets/focus_ring.py::KeyFocusMarker가 창마다
  * 버튼에 심는다("true"일 때만 그린다). 강조색 채움 버튼은 채움과 3.0 이상인 focusOnAccent(본 창 ▶와 같다) */
 QDialog QPushButton {
-    background-color: @fieldBg;
+    background-color: @dialogButton;
     border-color: @border;
 }
 

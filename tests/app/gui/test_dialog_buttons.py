@@ -1,6 +1,6 @@
 """대화상자 버튼 — Windows 11 표준 모양 · 주 동작 · 키보드 focus ring (#622).
 
-설정 · 편집 · 구간 · 확인 창 안의 버튼을 실제 전역 QSS로 그려 화소로 잰다. 보조 버튼은 면 fieldBg · 테두리
+설정 · 편집 · 구간 · 확인 창 안의 버튼을 실제 전역 QSS로 그려 화소로 잰다. 보조 버튼은 면 dialogButton · 테두리
 border, 호버 · 눌림은 면만 한 단계씩, 주 동작은 강조색 채움이다. 강조색 테두리는 키보드로 받은 초점에만 있다.
 """
 
@@ -27,6 +27,7 @@ from app.views.dialog import SettingDialog
 from app.views.mainWindow import VodDownloader
 from app.views.section_dialog import SectionDeleteButton
 from tests.app.gui.card_helpers import hold_style
+from tests.app.gui.test_card_c3 import _de00
 from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 이름으로 쓴다
     _destroy_windows,
     _make_item,
@@ -39,8 +40,11 @@ from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 �
 SLACK = 24  # 색이 같다고 보는 한도 — 세 채널 차의 합(테두리 안티앨리어싱)
 ACTIVE_WAIT_MS = 3000  # 창 활성 · 호버를 기다리는 한도(ms) — X11 · xvfb는 활성이 비동기로 온다
 FACE_INSET = 3  # 면을 읽는 자리 — 왼쪽 테두리에서 안쪽으로(px), 글자에 닿지 않는다
-# 테마마다 기대하는 호버 · 눌림 면 — 평소 면(fieldBg)에서 한 단계 · 두 단계(#622 오너 결정, 188 보고 3절 B)
-STEPS = {"dark": ("surfaceHover", "surfacePressed"), "light": ("surfaceAlt", "surfaceHover")}
+# 테마마다 기대하는 평소 · 호버 · 눌림 면 값(#622 오너 결정 — 다크 188b, 라이트 188c 회색 단계)
+FACES = {
+    "dark": ("#2f3239", "#383c44", "#282b31"),
+    "light": ("#eceef1", "#e1e4e9", "#d5d9df"),
+}
 WINDOWS = ("setting", "edit", "section")  # 버튼 상자가 있는 창 — 확인 창은 따로 잰다
 
 
@@ -207,36 +211,47 @@ def opened(
 
 
 class TestTokens:
-    """대화상자 버튼 호버 · 눌림 토큰은 평소 면에서 한 단계 · 두 단계다(#622 B)."""
+    """대화상자 보조 버튼 평소 · 호버 · 눌림 토큰은 고른 값이다(#622 B · 188c)."""
 
     @pytest.mark.parametrize("name", ["dark", "light"])
-    def test_hover_and_pressed_tokens_are_the_chosen_steps(self, name: str) -> None:
-        """두 테마의 dialogButtonHover · dialogButtonPressed가 고른 단계 토큰과 같아야 한다.
+    def test_face_tokens_are_the_chosen_values(self, name: str) -> None:
+        """두 테마의 dialogButton · dialogButtonHover · dialogButtonPressed가 고른 값이어야 한다.
 
-        다크 -> surfaceHover · surfacePressed, 라이트 -> surfaceAlt · surfaceHover
+        다크 -> #2f3239 · #383c44 · #282b31, 라이트 -> #eceef1 · #e1e4e9 · #d5d9df
         """
         table = {"dark": theme.DARK, "light": theme.LIGHT}[name]
-        hover, pressed = STEPS[name]
-        assert table["dialogButtonHover"] == table[hover]
-        assert table["dialogButtonPressed"] == table[pressed]
+        faces = (table["dialogButton"], table["dialogButtonHover"], table["dialogButtonPressed"])
+        assert faces == FACES[name]
+
+    def test_light_idle_face_is_darker_than_the_window_and_apart_from_it(self) -> None:
+        """라이트 보조 버튼 평소 면은 창 바탕보다 어둡고 ΔE00가 창 바탕과 2.5 이상 · 그룹 상자 면과 3.5 이상이어야 한다.
+
+        라이트 dialogButton ↔ windowBg · surface -> ΔE00 >= 2.5 · >= 3.5, 밝기 < windowBg
+        """
+        face = QColor(theme.LIGHT["dialogButton"])
+        window = QColor(theme.LIGHT["windowBg"])
+        group = QColor(theme.LIGHT["surface"])
+        assert _de00(face, window) >= 2.5, f"창 바탕과 {_de00(face, window):.2f}"
+        assert _de00(face, group) >= 3.5, f"그룹 상자 면과 {_de00(face, group):.2f}"
+        assert face.lightnessF() < window.lightnessF()
 
 
 @pytest.mark.parametrize("name", WINDOWS)
 class TestSecondaryButton:
-    """보조 버튼(Cancel)은 면 fieldBg · 테두리 border, 호버 · 눌림은 면만 한 단계씩이다."""
+    """보조 버튼(Cancel)은 면 dialogButton · 테두리 border, 호버 · 눌림은 면만 한 단계씩이다."""
 
     def test_idle_face_is_the_field_face_with_a_border(
         self, opened, scheme: str, name: str
     ) -> None:
-        """평소 Cancel의 면은 fieldBg, 가장자리는 border여야 한다.
+        """평소 Cancel의 면은 dialogButton, 가장자리는 border여야 한다.
 
-        창을 열고 포인터는 창 왼쪽 위, 초점은 다른 곳 -> 왼쪽 변 가운데 가장자리 ≈ border, 3px 안 ≈ fieldBg
+        창을 열고 포인터는 창 왼쪽 위, 초점은 다른 곳 -> 왼쪽 변 가운데 가장자리 ≈ border, 3px 안 ≈ dialogButton
         """
         dialog, cancel, _primary = opened(name)
         _park(dialog)
         assert not cancel.hasFocus() and not cancel.underMouse(), "전제: 초점 · 포인터 없음"
         edge, face = _edge_and_face(cancel)
-        assert _is(face, "fieldBg"), f"{scheme} {name}: 면 {face.name()}"
+        assert _is(face, "dialogButton"), f"{scheme} {name}: 면 {face.name()}"
         assert _is(edge, "border"), f"{scheme} {name}: 가장자리 {edge.name()}"
 
     def test_hover_steps_the_face_and_keeps_the_border(
@@ -274,9 +289,9 @@ class TestSecondaryButton:
     def test_keyboard_focus_draws_an_accent_edge(
         self, opened, qtbot: QtBot, scheme: str, name: str
     ) -> None:
-        """키보드 초점을 받은 Cancel의 가장자리는 accent, 면은 fieldBg 그대로여야 하고 크기는 그대로여야 한다.
+        """키보드 초점을 받은 Cancel의 가장자리는 accent, 면은 dialogButton 그대로여야 하고 크기는 그대로여야 한다.
 
-        Cancel에 Tab 까닭 초점 -> 가장자리 ≈ accent, 면 ≈ fieldBg, 초점 전후 크기 같음
+        Cancel에 Tab 까닭 초점 -> 가장자리 ≈ accent, 면 ≈ dialogButton, 초점 전후 크기 같음
         """
         dialog, cancel, _primary = opened(name)
         _park(dialog)
@@ -284,7 +299,7 @@ class TestSecondaryButton:
         _key_focus(qtbot, cancel)
         edge, face = _edge_and_face(cancel)
         assert _is(edge, "accent"), f"{scheme} {name}: 가장자리 {edge.name()}"
-        assert _is(face, "fieldBg"), f"{scheme} {name}: 면 {face.name()}"
+        assert _is(face, "dialogButton"), f"{scheme} {name}: 면 {face.name()}"
         assert cancel.size() == size
 
 
@@ -354,18 +369,18 @@ class TestEveryButtonIsWatched:
 
 
 class TestSectionRowDelete:
-    """구간 창 행 ✕는 상자(면 fieldBg · 테두리 border)이고 키보드 초점에 강조색 테두리다."""
+    """구간 창 행 ✕는 상자(면 dialogButton · 테두리 border)이고 키보드 초점에 강조색 테두리다."""
 
     def test_row_delete_is_a_field_box(self, opened, scheme: str) -> None:
-        """행 ✕의 면은 fieldBg, 가장자리는 border여야 한다.
+        """행 ✕의 면은 dialogButton, 가장자리는 border여야 한다.
 
-        구간 창에 행 둘 -> 첫 행 ✕ 면 ≈ fieldBg, 가장자리 ≈ border
+        구간 창에 행 둘 -> 첫 행 ✕ 면 ≈ dialogButton, 가장자리 ≈ border
         """
         dialog, _cancel, _primary = opened("section")
         _park(dialog)
         delete = [b for b in dialog.findChildren(SectionDeleteButton) if b.isVisible()][0]
         edge, face = _edge_and_face(delete)
-        assert _is(face, "fieldBg"), f"{scheme}: 면 {face.name()}"
+        assert _is(face, "dialogButton"), f"{scheme}: 면 {face.name()}"
         assert _is(edge, "border"), f"{scheme}: 가장자리 {edge.name()}"
 
     def test_row_delete_keyboard_focus_draws_an_accent_edge(
@@ -436,9 +451,9 @@ class TestConfirmBox:
         return stop, box.button(QMessageBox.StandardButton.Cancel)
 
     def test_both_buttons_are_secondary(self, qtbot: QtBot, scheme: str) -> None:
-        """두 버튼 모두 role이 없고 면 fieldBg · 가장자리 border여야 하며 기본 버튼은 Cancel이어야 한다.
+        """두 버튼 모두 role이 없고 면 dialogButton · 가장자리 border여야 하며 기본 버튼은 Cancel이어야 한다.
 
-        확인 창, 포인터는 창 왼쪽 위 -> 두 버튼 role None, 면 ≈ fieldBg, 가장자리 ≈ border, 기본 = Esc = Cancel
+        확인 창, 포인터는 창 왼쪽 위 -> 두 버튼 role None, 면 ≈ dialogButton, 가장자리 ≈ border, 기본 = Esc = Cancel
         """
         seen: dict[str, object] = {}
 
@@ -451,7 +466,7 @@ class TestConfirmBox:
             for label, button in (("stop", stop), ("cancel", cancel)):
                 seen[f"{label} role"] = button.property("role")
                 edge, face = _edge_and_face(button)
-                seen[f"{label} face"] = _is(face, "fieldBg") or face.name()
+                seen[f"{label} face"] = _is(face, "dialogButton") or face.name()
                 seen[f"{label} edge"] = _is(edge, "border") or edge.name()
 
         self._ask(check)
@@ -485,9 +500,9 @@ class TestConfirmBox:
         assert seen == {"focus": True, "keyFocus": False, "edge": True}, scheme
 
     def test_keyboard_focus_on_stop_draws_an_accent_edge(self, qtbot: QtBot, scheme: str) -> None:
-        """키보드 초점을 받은 「Stop and delete」의 가장자리는 accent, 면은 fieldBg여야 한다.
+        """키보드 초점을 받은 「Stop and delete」의 가장자리는 accent, 면은 dialogButton이어야 한다.
 
-        확인 창, 「Stop and delete」에 Tab 까닭 초점 -> 가장자리 ≈ accent, 면 ≈ fieldBg
+        확인 창, 「Stop and delete」에 Tab 까닭 초점 -> 가장자리 ≈ accent, 면 ≈ dialogButton
         """
         seen: dict[str, object] = {}
 
@@ -497,7 +512,7 @@ class TestConfirmBox:
             _key_focus(qtbot, stop)
             edge, face = _edge_and_face(stop)
             seen["edge"] = _is(edge, "accent") or edge.name()
-            seen["face"] = _is(face, "fieldBg") or face.name()
+            seen["face"] = _is(face, "dialogButton") or face.name()
 
         self._ask(check)
         assert seen == {"edge": True, "face": True}, scheme
