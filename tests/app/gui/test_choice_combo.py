@@ -480,13 +480,15 @@ class TestWindowLeft:
     ) -> None:
         """창의 활성 · 상태 변화는 메뉴가 열린 동안에만 `close_floats_if_left(창)`을 불러야 한다.
 
-        펼침 → 창에 ActivationChange · WindowStateChange -> 부른 창 [창, 창]
+        펼침 → 기록 비움 → 창에 ActivationChange · WindowStateChange -> 부른 창 [창, 창]
         메뉴 닫음 → 같은 두 이벤트 -> 부른 창 [창, 창] 그대로
         """
         calls: list[QWidget] = []
         monkeypatch.setattr(choice_combo_module, "close_floats_if_left", calls.append)
         dialog, combo = _host(qtbot)
         menu = _open(qtbot, combo)
+        _pump()
+        calls.clear()  # macOS는 펼칠 때 대화상자에 실제 ActivationChange가 온다 — 보낸 이벤트만 센다
         for kind in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
             QApplication.sendEvent(dialog, QEvent(kind))
         assert calls == [dialog, dialog]
