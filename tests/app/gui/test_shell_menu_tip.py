@@ -335,7 +335,7 @@ def _activate_other_window() -> QWidget:
 
 def test_the_tip_closes_when_the_window_becomes_inactive(window: VodDownloader) -> None:
     """포인터를 대상에 둔 채(나감 없이) 다른 창이 활성이 되면 말풍선이 닫혀야 한다."""
-    window.activateWindow()
+    _activate(window)
     _pump()
     _enter(window.stopButton)
     assert _bubble().isVisible(), "전제: 말풍선이 떴다"
@@ -356,7 +356,7 @@ def test_the_tip_closes_when_the_window_is_minimized(window: VodDownloader) -> N
 
 def test_an_open_menu_closes_when_the_window_becomes_inactive(window: VodDownloader) -> None:
     """정렬 메뉴가 열린 채 다른 창이 활성이 되면 메뉴가 닫혀야 한다."""
-    window.activateWindow()
+    _activate(window)
     _pump()
     menu = _open(window.sortButton)
     assert menu.isVisible(), "전제: 메뉴가 열렸다"
@@ -436,7 +436,7 @@ def test_pressable_bar_controls_show_a_hand_and_take_focus_by_the_bar_rule(
 
 def _focus_url(window: VodDownloader) -> None:
     """창을 활성으로 하고 URL 칸에 Tab 초점을 준다."""
-    window.activateWindow()
+    _activate(window)
     window.urlInput.setFocus(Qt.FocusReason.TabFocusReason)
     _pump()
     assert window.urlInput.hasFocus(), "전제: URL 칸에 초점"
@@ -571,7 +571,7 @@ def test_keyboard_focus_on_the_menu_tab_draws_the_focus_box(window: VodDownloade
 
     「VOD 다운」 합성 클릭 → 목록에 초점 → 탭에 Tab 초점 -> keyFocus 참 · 초점 상자 왼쪽 변 ≈ accent
     """
-    window.activateWindow()
+    _activate(window)
     _pump()
     tab = window.menuDownloadButton
     _disconnect_clicked(tab)
@@ -605,7 +605,7 @@ def test_keyboard_focus_after_a_mouse_focus_draws_the_accent_border(window: VodD
 
     선택 버튼 합성 클릭(누름 동작은 끊음) → 목록에 초점 → 선택 버튼에 Tab 초점 -> keyFocus 참 · 위 테두리 ≈ accent
     """
-    window.activateWindow()
+    _activate(window)
     _pump()
     widget = window.selectButton
     widget.clicked.disconnect()
@@ -695,7 +695,7 @@ def test_the_list_has_focus_when_the_window_opens(qapp: QApplication) -> None:
     win = VodDownloader()
     win.monitorTimer.stop()
     win.show()
-    win.activateWindow()
+    _activate(win)
     _pump()
     assert QApplication.focusWidget() is win.listView
     assert not _close(_top_border(win.menuDownloadButton), theme.current_tokens()["accent"])
@@ -715,7 +715,7 @@ def test_clicking_a_bar_control_draws_no_accent_border(
     monkeypatch.setattr(window, "onSetting", lambda: None)
     window.settingsButton.clicked.disconnect()
     widget = getattr(window, name)
-    window.activateWindow()
+    _activate(window)
     _pump()
     QTest.mouseClick(widget, Qt.MouseButton.LeftButton)
     _pump()
@@ -733,7 +733,7 @@ def test_tab_from_the_list_moves_focus_to_a_bar_control_with_an_accent_border(
     """
     from PySide6.QtTest import QTest
 
-    window.activateWindow()
+    _activate(window)
     window.listView.setFocus(Qt.FocusReason.OtherFocusReason)
     _pump()
     assert QApplication.focusWidget() is window.listView, "전제: 목록에 초점"
@@ -750,7 +750,7 @@ def test_keyboard_focus_on_the_accent_button_draws_the_focus_on_accent_border(
     button = window.downloadButton
     button.setEnabled(True)
     tokens = theme.current_tokens()
-    window.activateWindow()
+    _activate(window)
     button.setFocus(Qt.FocusReason.TabFocusReason)
     _pump()
     assert button.hasFocus(), "전제: 초점을 받았다"
