@@ -426,8 +426,11 @@ class TestConfirmBox:
     def _ask(self, check: Callable[[QMessageBox], None]) -> None:
         """실제 `confirm_stop_and_delete`를 띄우고, 뜬 동안 `check(box)`를 부른 뒤 Esc로 닫는다."""
         failures: list[BaseException] = []
+        finished: list[bool] = []  # 테스트가 끝나면 찾기를 멈춘다 — 뒤 테스트의 창을 닫지 않게
 
         def run() -> None:
+            if finished:
+                return
             box = QApplication.activeModalWidget()
             if not isinstance(box, QMessageBox):
                 QTimer.singleShot(10, run)
@@ -439,7 +442,10 @@ class TestConfirmBox:
             QTest.keyClick(box, Qt.Key.Key_Escape)
 
         QTimer.singleShot(0, run)
-        assert view_module.confirm_stop_and_delete(None) is False
+        try:
+            assert view_module.confirm_stop_and_delete(None) is False
+        finally:
+            finished.append(True)
         if failures:
             raise failures[0]
 
@@ -532,8 +538,11 @@ def _while_asking(
     """`open_()`이 띄운 확인 창이 뜬 동안 `check(box)`를 부른 뒤 Esc로 닫는다 — 뜨지 않았으면 실패다."""
     failures: list[BaseException] = []
     asked: list[bool] = []
+    finished: list[bool] = []  # 테스트가 끝나면 찾기를 멈춘다 — 뒤 테스트의 창을 닫지 않게
 
     def run() -> None:
+        if finished:
+            return
         box = QApplication.activeModalWidget()
         if not isinstance(box, QMessageBox):
             QTimer.singleShot(10, run)
@@ -547,8 +556,11 @@ def _while_asking(
         QTest.keyClick(box, Qt.Key.Key_Escape)
 
     QTimer.singleShot(0, run)
-    open_()
-    _pump()
+    try:
+        open_()
+        _pump()
+    finally:
+        finished.append(True)
     assert asked, "확인 창이 뜨지 않았다"
     if failures:
         raise failures[0]
