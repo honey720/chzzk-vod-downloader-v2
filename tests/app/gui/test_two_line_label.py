@@ -257,13 +257,15 @@ def test_tip_when_elided_tooltip_goes_away_when_widened(tip_label) -> None:
 def test_tip_when_elided_single_sentence_tooltip_only_when_cut(tip_label) -> None:
     """잘렸을 때만 툴팁인 라벨에 문장 하나만 넣으면 그 줄이 잘렸을 때만 툴팁이 있어야 한다.
 
-    setText(HEAD), 폭 = HEAD의 한 줄 폭 -> 툴팁 ""; 폭 = HEAD의 한 줄 폭 − 1 -> 툴팁 == HEAD
+    setText(HEAD), 폭 = WHOLE의 한 줄 폭 -> 보이는 글 == HEAD · 툴팁 "";
+    폭 = HEAD의 한 줄 폭 − 1 -> 툴팁 == HEAD
     """
     tip_label.setText(HEAD)
-    _set_width(tip_label, _width_of(tip_label, HEAD))
-    fit_tip = tip_label.toolTip()
+    # HEAD 폭과 꼭 같은 폭에서는 macOS의 elidedText가 말줄임한다 — 넉넉한 WHOLE 폭에서 잰다
+    _set_width(tip_label, _width_of(tip_label, WHOLE))
+    fit_shown, fit_tip = shown(tip_label), tip_label.toolTip()
 
     _set_width(tip_label, _width_of(tip_label, HEAD) - 1)
 
-    assert fit_tip == ""
+    assert (fit_shown, fit_tip) == (HEAD, "")
     assert tip_label.toolTip() == HEAD
