@@ -1338,7 +1338,7 @@ def test_no_length_or_sum_is_shown_before_the_frame_rate_is_known(
 
 
 class TestLengthTipBubbles:
-    """길이 · 합계 툴팁은 앱의 말풍선으로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (inbox 159i)."""
+    """길이 · 합계 툴팁은 앱의 말풍선으로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (inbox 159i · 지연은 #629)."""
 
     @pytest.fixture(autouse=True)
     def _hide_bubble(self) -> Iterator[None]:
@@ -1349,15 +1349,16 @@ class TestLengthTipBubbles:
     def test_length_and_sum_show_milliseconds_in_the_bubble(
         self, qtbot: QtBot, tmp_path: Path, basis: type
     ) -> None:
-        """길이 글 · 합계 글에 들어가면 밀리초 툴팁이 말풍선으로 떠야 한다.
+        """길이 글 · 합계 글에 들어가면 글 지연 뒤에 밀리초 툴팁이 말풍선으로 떠야 한다.
 
-        60fps · 3600초, 행 A · B -> 첫 행 길이에 들어감: 말풍선 "00:10:00.000", 합계에 들어감: 말풍선
-        "00:11:00.000", 둘 다 Qt 툴팁 안 뜸
+        60fps · 3600초, 행 A · B -> 첫 행 길이에 들어감: 지연 뒤 말풍선 "00:10:00.000", 합계에 들어감:
+        지연 뒤 말풍선 "00:11:00.000", 둘 다 Qt 툴팁 안 뜸
         """
         dialog = _editor(qtbot, tmp_path, basis, [A, B])
         seen = []
         for widget in (dialog._rows[0].infoLabel, dialog.sumLabel):
             enter(widget)
+            qtbot.waitUntil(lambda w=widget: bubble_text_for(w) is not None, timeout=3000)
             seen.append((bubble_text_for(widget), qt_tooltip_shown(widget)))
 
         assert seen == [("00:10:00.000", False), ("00:11:00.000", False)]
