@@ -173,3 +173,99 @@ def test_width_asked_is_small_at_least_and_the_joined_line_at_best(qapp) -> None
     assert long.minimumSizeHint().width() == short.minimumSizeHint().width()
     assert long.minimumSizeHint().width() < plain.minimumSizeHint().width()
     assert long.sizeHint().width() >= _width_of(long, WHOLE)
+
+
+# ================================================================ 잘렸을 때만 툴팁 (#626)
+
+
+@pytest.fixture
+def tip_label(qapp) -> Iterator[TwoLineLabel]:
+    """잘렸을 때만 툴팁을 다는(tip_when_elided) 라벨 — 보이는 위젯 안에 놓이고 두 문장은 HEAD · TAIL."""
+    host = QWidget()
+    host.resize(4000, 200)
+    made = TwoLineLabel(host, tip_when_elided=True)
+    made.setLines(HEAD, TAIL)
+    host.show()
+    QApplication.processEvents()
+    yield made
+    host.hide()
+
+
+def test_tip_when_elided_one_line_has_no_tooltip(tip_label) -> None:
+    """잘렸을 때만 툴팁인 라벨이 한 줄에 다 들어가면 툴팁이 없어야 한다.
+
+    폭 = WHOLE의 한 줄 폭 -> 보이는 글 == WHOLE, 툴팁 == ""
+    """
+    _set_width(tip_label, _width_of(tip_label, WHOLE))
+
+    assert shown(tip_label) == WHOLE
+    assert tip_label.toolTip() == ""
+
+
+def test_tip_when_elided_two_whole_lines_have_no_tooltip(tip_label) -> None:
+    """잘렸을 때만 툴팁인 라벨이 두 줄로 나뉘어도 다 보이면 툴팁이 없어야 한다.
+
+    폭 = TAIL의 한 줄 폭 -> 보이는 글 == HEAD + 줄바꿈 + TAIL, 툴팁 == ""
+    """
+    _set_width(tip_label, _width_of(tip_label, TAIL))
+
+    assert shown(tip_label) == HEAD + "\n" + TAIL
+    assert tip_label.toolTip() == ""
+
+
+def test_tip_when_elided_cut_second_line_has_whole_tooltip(tip_label) -> None:
+    """잘렸을 때만 툴팁인 라벨의 둘째 줄이 말줄임되면 툴팁이 두 문장을 이은 글이어야 한다.
+
+    폭 = TAIL의 한 줄 폭 − 1 -> 보이는 글이 "…"로 끝난다, 툴팁 == WHOLE
+    """
+    _set_width(tip_label, _width_of(tip_label, TAIL) - 1)
+
+    assert shown(tip_label).endswith("…")
+    assert tip_label.toolTip() == WHOLE
+
+
+def test_tip_when_elided_first_line_wider_than_label_has_whole_tooltip(tip_label) -> None:
+    """잘렸을 때만 툴팁인 라벨의 첫 문장이 폭보다 넓으면 둘째 줄이 들어가도 툴팁이 있어야 한다.
+
+    setLines(TAIL, HEAD) — 첫 문장이 더 길다, 폭 = TAIL의 한 줄 폭 − 1
+    -> 보이는 글 == TAIL + 줄바꿈 + HEAD("…" 없음), 툴팁 == TAIL + " · " + HEAD
+    """
+    tip_label.setLines(TAIL, HEAD)
+
+    _set_width(tip_label, _width_of(tip_label, TAIL) - 1)
+
+    assert shown(tip_label) == TAIL + "\n" + HEAD
+    assert tip_label.toolTip() == TAIL + " · " + HEAD
+
+
+def test_tip_when_elided_tooltip_goes_away_when_widened(tip_label) -> None:
+    """잘렸을 때만 툴팁인 라벨을 말줄임된 뒤 넓혀 다 보이게 하면 툴팁이 없어져야 한다.
+
+    폭을 TAIL의 폭 − 1로 줄였다가 WHOLE의 폭으로 넓힘
+    -> 줄였을 때 툴팁 == WHOLE, 넓힌 뒤 보이는 글 == WHOLE · 툴팁 == ""
+    """
+    _set_width(tip_label, _width_of(tip_label, TAIL) - 1)
+    cut_tip = tip_label.toolTip()
+
+    _set_width(tip_label, _width_of(tip_label, WHOLE))
+
+    assert cut_tip == WHOLE  # 전제: 줄였을 때는 툴팁이 있었다
+    assert shown(tip_label) == WHOLE
+    assert tip_label.toolTip() == ""
+
+
+def test_tip_when_elided_single_sentence_tooltip_only_when_cut(tip_label) -> None:
+    """잘렸을 때만 툴팁인 라벨에 문장 하나만 넣으면 그 줄이 잘렸을 때만 툴팁이 있어야 한다.
+
+    setText(HEAD), 폭 = WHOLE의 한 줄 폭 -> 보이는 글 == HEAD · 툴팁 "";
+    폭 = HEAD의 한 줄 폭 − 1 -> 툴팁 == HEAD
+    """
+    tip_label.setText(HEAD)
+    # HEAD 폭과 꼭 같은 폭에서는 macOS의 elidedText가 말줄임한다 — 넉넉한 WHOLE 폭에서 잰다
+    _set_width(tip_label, _width_of(tip_label, WHOLE))
+    fit_shown, fit_tip = shown(tip_label), tip_label.toolTip()
+
+    _set_width(tip_label, _width_of(tip_label, HEAD) - 1)
+
+    assert (fit_shown, fit_tip) == (HEAD, "")
+    assert tip_label.toolTip() == HEAD
