@@ -9,8 +9,8 @@ from collections.abc import Iterator
 
 import pytest
 from pytestqt.qtbot import QtBot
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
-from PySide6.QtGui import QAction, QColor, QImage, QWheelEvent
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, Qt
+from PySide6.QtGui import QAction, QColor, QImage, QKeyEvent, QMouseEvent, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -648,3 +648,260 @@ class TestClosedLook:
         _pump()
         assert _inked(combo, combo.caretRect(), "text") > 0
         assert _not_face(combo) == []
+
+
+# ---- 펼친 채 다시 누르기 ----
+
+SPOTS = {
+    "text": QStyle.SubControl.SC_ComboBoxEditField,
+    "caret": QStyle.SubControl.SC_ComboBoxArrow,
+}  # 칸에서 누르는 자리 — 글 영역 · 꺾쇠 자리(스타일이 정한 칸의 가운데)
+
+
+class _PressLog(QObject):
+    """걸린 위젯이 받은 왼쪽 누르기의 (시각, 전역 자리)를 차례대로 적는다."""
+
+    def __init__(self, widget: QWidget) -> None:
+        super().__init__(widget)
+        self.presses: list[tuple[int, QPoint]] = []
+        widget.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
+            self.presses.append((event.timestamp(), event.globalPosition().toPoint()))
+        return False
+
+
+def _spot(combo: ChoiceCombo, spot: str) -> QPoint:
+    """칸에서 그 자리의 가운데(전역 좌표)."""
+    option = QStyleOptionComboBox()
+    combo.initStyleOption(option)
+    rect = combo.style().subControlRect(
+        QStyle.ComplexControl.CC_ComboBox, option, SPOTS[spot], combo
+    )
+    assert combo.rect().contains(rect.center()), "전제: 누를 자리가 칸 안이다"
+    return combo.mapToGlobal(rect.center())
+
+
+def _press_closed(qtbot: QtBot, combo: ChoiceCombo, spot: QPoint) -> None:
+    """닫힌 칸을 대화상자 창에 합성 누르기 · 놓기로 누른다 — 메뉴가 열려야 한다."""
+    window = combo.window().windowHandle()
+    local = window.mapFromGlobal(spot)
+    QTest.mouseMove(window, QPoint(1, 1))
+    QTest.mouseMove(window, local)
+    QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=local)
+    _pump()
+    QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=local)
+    qtbot.waitUntil(combo.menuWidget.isVisible)
+    _pump()
+
+
+def _press_open(combo: ChoiceCombo, spot: QPoint) -> _PressLog:
+    """메뉴가 열린 채 칸을 누른다 — 실제 화면처럼 누르기는 메뉴 창(팝업)이 받는다.
+
+    메뉴가 닫히면서 Qt가 그 누르기를 칸에 다시 보내지 않으면(offscreen · macOS) Qt가 다시 보낼 때와 같게
+    같은 시각 · 자리의 누르기를 대화상자 창에 `postEvent`로 보낸다. 칸이 받은 누르기 기록을 돌려준다.
+    """
+    menu = combo.menuWidget
+    menu_window = menu.windowHandle()
+    window = combo.window().windowHandle()
+    closing = _PressLog(menu)
+    received = _PressLog(combo)
+    QTest.mousePress(menu_window, Qt.MouseButton.LeftButton, pos=menu_window.mapFromGlobal(spot))
+    _pump()
+    assert len(closing.presses) == 1, "전제: 메뉴가 누르기를 받았다"
+    if not received.presses:
+        timestamp, point = closing.presses[0]
+        local = QPointF(window.mapFromGlobal(point))
+        replay = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            local,
+            local,
+            QPointF(point),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        replay.setTimestamp(timestamp)
+        QApplication.postEvent(window, replay)
+    _pump()
+    QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=window.mapFromGlobal(spot))
+    _pump()
+    assert received.presses == closing.presses, "전제: 메뉴를 닫은 누르기가 칸에 다시 왔다"
+    return received
+
+
+class TestPressWhileOpen:
+    """메뉴가 펼쳐진 채 칸을 누르면 닫히기만 한다 — Qt가 다시 보낸 누르기로 다시 열리지 않는다 (#624)."""
+
+    @pytest.mark.parametrize("spot", list(SPOTS))
+    def test_pressing_the_combo_while_open_only_closes_the_menu(
+        self, qtbot: QtBot, spot: str
+    ) -> None:
+        """메뉴가 펼쳐진 채 칸의 글 영역 · 꺾쇠 자리를 누르면 메뉴가 닫히고 다시 열리지 않아야 한다.
+
+        칸 누르기로 펼침 → 같은 자리 누르기(메뉴 창이 받음 · 칸에 다시 옴) -> 메뉴 숨김
+        """
+        _dialog, combo = _host(qtbot)
+        point = _spot(combo, spot)
+        _press_closed(qtbot, combo, point)
+        _press_open(combo, point)
+        QTest.qWait(50)  # 다시 연 메뉴가 뜰 틈
+        assert not combo.menuWidget.isVisible()
+
+    def test_next_press_opens_the_menu_again(self, qtbot: QtBot) -> None:
+        """펼친 채 눌러 닫은 뒤 칸을 한 번 더 누르면 메뉴가 열려야 한다.
+
+        펼침 → 칸 누르기(닫힘) → 칸 누르기 -> 메뉴 보임
+        """
+        _dialog, combo = _host(qtbot)
+        point = _spot(combo, "text")
+        _press_closed(qtbot, combo, point)
+        _press_open(combo, point)
+        assert not combo.menuWidget.isVisible(), "전제: 메뉴가 닫혔다"
+        _press_closed(qtbot, combo, point)
+        assert combo.menuWidget.isVisible()
+
+    @pytest.mark.parametrize("close", ["escape", "hidePopup"])
+    def test_pressing_the_combo_after_a_keyboard_or_code_close_only_closes(
+        self, qtbot: QtBot, close: str
+    ) -> None:
+        """앞서 Esc · `hidePopup`으로 메뉴를 닫았어도, 펼친 채 칸을 누르면 메뉴가 닫히고 다시 열리지 않아야 한다.
+
+        포인터를 메뉴 밖에 두고 펼침 → Esc 또는 hidePopup → 칸 누르기로 펼침 → 칸 누르기 -> 메뉴 숨김
+        """
+        dialog, combo = _host(qtbot)
+        window = dialog.windowHandle()
+        QTest.mouseMove(window, QPoint(window.width() - 2, 2))  # 펼칠 메뉴 밖
+        combo.showPopup()
+        menu = combo.menuWidget
+        qtbot.waitUntil(menu.isVisible)
+        _pump()
+        if close == "escape":
+            QTest.keyClick(menu.windowHandle(), Qt.Key.Key_Escape)
+        else:
+            combo.hidePopup()
+        qtbot.waitUntil(lambda: not menu.isVisible())
+        _pump()
+        point = _spot(combo, "text")
+        _press_closed(qtbot, combo, point)
+        _press_open(combo, point)
+        QTest.qWait(50)  # 다시 연 메뉴가 뜰 틈
+        assert not menu.isVisible()
+
+
+# ---- 펼친 메뉴의 F4 · Space ----
+
+REPEATS = 3  # 누른 채 반복되는 키 이벤트 수
+
+
+def _hold(combo: ChoiceCombo, key: Qt.Key) -> None:
+    """누른 채 반복되는 키(`isAutoRepeat`)를 보낸다 — 메뉴가 열려 있으면 메뉴가, 닫혀 있으면 칸이 받는다."""
+    for _ in range(REPEATS):
+        target = combo.menuWidget if combo.menuWidget.isVisible() else combo
+        repeat = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier, "", True)
+        QApplication.sendEvent(target, repeat)
+        _pump()
+
+
+class TestMenuKeys:
+    """펼친 메뉴에서 F4는 닫고 Space는 Enter처럼 고른다 — Windows 콤보박스와 같다 (#624)."""
+
+    def test_f4_closes_and_keeps_the_value(self, qtbot: QtBot) -> None:
+        """펼친 메뉴에서 ↑로 강조를 옮긴 뒤 F4를 누르면 메뉴가 닫히고 값은 그대로여야 한다.
+
+        지금 값 2 → 펼침 → ↑ → F4 -> 메뉴 닫힘, 값 2, 시그널 없음
+        """
+        _dialog, combo = _host(qtbot)
+        seen = _record(combo)
+        menu = _open(qtbot, combo)
+        QTest.keyClick(menu, Qt.Key.Key_Up)
+        assert menu.activeAction() is _action(menu, 1), "전제: ↑가 강조를 옮겼다"
+        QTest.keyClick(menu.windowHandle(), Qt.Key.Key_F4)
+        qtbot.waitUntil(lambda: not menu.isVisible())
+        _pump()
+        assert combo.currentIndex() == START
+        assert seen == []
+
+    def test_space_chooses_another_highlighted_row(self, qtbot: QtBot) -> None:
+        """펼친 메뉴에서 ↑ 뒤 Space는 Enter와 같이 그 줄을 고르고 시그널을 한 번씩 내야 한다.
+
+        지금 값 2 → ↑ → Space
+        -> currentIndexChanged(1) · currentTextChanged(sleep) · activated(1) · textActivated(sleep)
+        """
+        _dialog, combo = _host(qtbot)
+        seen = _record(combo)
+        menu = _open(qtbot, combo)
+        QTest.keyClick(menu, Qt.Key.Key_Up)
+        QTest.keyClick(menu.windowHandle(), Qt.Key.Key_Space)
+        qtbot.waitUntil(lambda: not menu.isVisible())
+        _pump()
+        assert seen == [
+            "currentIndexChanged(1)",
+            "currentTextChanged(sleep)",
+            "activated(1)",
+            "textActivated(sleep)",
+        ]
+
+    def test_space_on_the_current_row_matches_enter(self, qtbot: QtBot) -> None:
+        """강조가 지금 값에 있을 때 Space는 Enter와 같은 시그널을 내고 메뉴를 닫아야 한다.
+
+        지금 값 2 → 펼침(강조 2) → Space, 새 칸에서 같은 순서로 Enter -> 두 기록이 같고
+        activated(2) · textActivated(shutdown)
+        """
+        logs: list[list[str]] = []
+        for key in (Qt.Key.Key_Space, Qt.Key.Key_Return):
+            _dialog, combo = _host(qtbot)
+            seen = _record(combo)
+            menu = _open(qtbot, combo)
+            QTest.keyClick(menu.windowHandle(), key)
+            qtbot.waitUntil(lambda menu=menu: not menu.isVisible())
+            _pump()
+            logs.append(seen)
+        assert logs[0] == logs[1] == ["activated(2)", "textActivated(shutdown)"]
+
+    @pytest.mark.parametrize("key", [Qt.Key.Key_Up, Qt.Key.Key_Down], ids=["alt_up", "alt_down"])
+    def test_alt_arrow_still_closes_and_keeps_the_value(self, qtbot: QtBot, key: Qt.Key) -> None:
+        """펼친 메뉴에서 Alt+↑ · Alt+↓를 누르면 메뉴가 닫히고 값은 그대로여야 한다.
+
+        지금 값 2 → 펼침 → Alt+↑ 또는 Alt+↓ -> 메뉴 닫힘, 값 2, currentIndexChanged 없음
+        """
+        _dialog, combo = _host(qtbot)
+        seen = _record(combo)
+        menu = _open(qtbot, combo)
+        QTest.keyClick(menu.windowHandle(), key, Qt.KeyboardModifier.AltModifier)
+        qtbot.waitUntil(lambda: not menu.isVisible())
+        _pump()
+        assert combo.currentIndex() == START
+        assert [s for s in seen if s.startswith("currentIndexChanged")] == []
+
+    @pytest.mark.parametrize("key", [Qt.Key.Key_F4, Qt.Key.Key_Space], ids=["f4", "space"])
+    def test_held_key_does_not_toggle_the_menu_while_open(self, qtbot: QtBot, key: Qt.Key) -> None:
+        """닫힌 칸에서 F4 · Space로 연 뒤 그 키가 누른 채 반복되면 메뉴는 열린 채이고 값은 그대로여야 한다.
+
+        칸에 키 → 메뉴 보임 → 반복 3번(메뉴가 받음) -> 메뉴 보임, 값 2, 시그널 없음
+        """
+        _dialog, combo = _host(qtbot)
+        seen = _record(combo)
+        QTest.keyClick(combo, key)
+        qtbot.waitUntil(combo.menuWidget.isVisible)
+        _hold(combo, key)
+        QTest.qWait(50)  # 닫힌 메뉴가 사라질 틈
+        assert combo.menuWidget.isVisible()
+        assert combo.currentIndex() == START
+        assert seen == []
+
+    @pytest.mark.parametrize("key", [Qt.Key.Key_F4, Qt.Key.Key_Space], ids=["f4", "space"])
+    def test_held_key_does_not_reopen_after_closing(self, qtbot: QtBot, key: Qt.Key) -> None:
+        """펼친 메뉴를 F4 · Space로 닫은 뒤 그 키가 누른 채 반복되면 메뉴가 다시 열리지 않아야 한다.
+
+        펼침 → 키(닫힘) → 반복 3번(칸이 받음) -> 메뉴 숨김
+        """
+        _dialog, combo = _host(qtbot)
+        menu = _open(qtbot, combo)
+        QTest.keyClick(menu.windowHandle(), key)
+        qtbot.waitUntil(lambda: not menu.isVisible())
+        _pump()
+        _hold(combo, key)
+        QTest.qWait(50)  # 다시 연 메뉴가 뜰 틈
+        assert not menu.isVisible()
