@@ -114,12 +114,13 @@ class CardEditDialog(QDialog):
         item = self._item
         root = QVBoxLayout(self)
 
-        self.titleLabel = ElidingLabel(self)
+        # 머리 두 줄의 툴팁은 잘렸을 때만 단다 — 보이는 글을 되풀이하지 않는다(카드 글과 같다, #626)
+        self.titleLabel = ElidingLabel(self, tip_when_elided=True)
         self.titleLabel.setObjectName("cardEditTitle")
         self.titleLabel.setText(item.title)
         root.addWidget(self.titleLabel)
         # 말줄임 라벨 — 채널 이름이 길어도 창 최소폭(`_fitMinimumWidth`)을 늘리지 않는다(#555)
-        self.metaLabel = ElidingLabel(self)
+        self.metaLabel = ElidingLabel(self, tip_when_elided=True)
         self.metaLabel.setObjectName("cardEditMeta")
         root.addWidget(self.metaLabel)
 

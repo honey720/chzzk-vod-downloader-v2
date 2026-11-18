@@ -748,6 +748,88 @@ class TestWaitingHint:
         assert not dialog.waitHintLabel.isVisible()
 
 
+LONG_TITLE = "긴 제목 견본 " * 20  # 창 처음 폭에서 잘리는 지어낸 제목
+LONG_CHANNEL = "긴 채널 이름 견본 " * 12  # 창 처음 폭에서 정보 줄을 자르는 지어낸 채널 이름
+HEADER_LABELS = ("titleLabel", "metaLabel")  # 편집 창 머리 두 줄 — 제목 · 정보 줄
+
+
+def _header_item(tmp_path, name: str, long: bool) -> ContentItem:
+    """머리 줄 `name`의 글이 긴(또는 짧은) 대기 카드 — 제목 줄은 제목, 정보 줄은 채널 이름으로 늘린다."""
+    item = _make_item(str(tmp_path), title=LONG_TITLE if long and name == "titleLabel" else "제목")
+    if long and name == "metaLabel":
+        item.channel_name = LONG_CHANNEL
+    return item
+
+
+def _resize_dialog(dialog: CardEditDialog, width: int) -> None:
+    """편집 창을 `width`로 놓고 실제 폭이 요청과 같은지 단언한다."""
+    dialog.resize(width, dialog.height())
+    _pump()
+    assert dialog.width() == width, f"요청 폭 {width} · 실제 {dialog.width()} — 클램프됐다"
+
+
+class TestHeaderTips:
+    """편집 창 머리 두 줄(제목 · 정보 줄)은 잘렸을 때만 툴팁을 단다 — 카드 글과 같다 (#626)."""
+
+    @pytest.fixture(autouse=True)
+    def _hide_bubble(self) -> Iterator[None]:
+        tip_bubble.hide_tip()
+        yield
+        tip_bubble.hide_tip()
+
+    @pytest.mark.parametrize("name", HEADER_LABELS)
+    def test_unclipped_text_has_no_tip(self, qtbot, tmp_path, name: str) -> None:
+        """머리 줄 글이 잘리지 않았으면 툴팁이 없고 들어가도 말풍선이 뜨지 않아야 한다.
+
+        제목 「제목」 · 채널 「채널」 · 창 처음 폭 -> 툴팁 "", 들어감 -> 말풍선 없음
+        """
+        item = _header_item(tmp_path, name, long=False)
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        label = getattr(dialog, name)
+        assert shown(label) == label.text(), "전제: 글이 잘리지 않았다"
+        assert label.toolTip() == ""
+        enter(label)
+        assert bubble_text_for(label) is None
+
+    @pytest.mark.parametrize("name", HEADER_LABELS)
+    def test_clipped_text_tips_the_full_text(self, qtbot, tmp_path, name: str) -> None:
+        """머리 줄 글이 잘렸으면 툴팁이 전체 글이고 들어가면 그 글이 말풍선으로 떠야 한다.
+
+        긴 제목 · 긴 채널 이름(지어낸 글) · 창 처음 폭 -> 툴팁 = 전체 글, 들어감 -> 말풍선 글 = 전체 글
+        """
+        item = _header_item(tmp_path, name, long=True)
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        label = getattr(dialog, name)
+        assert shown(label) != label.text(), "전제: 글이 잘렸다"
+        assert label.toolTip() == label.text()
+        enter(label)
+        assert bubble_text_for(label) == label.text()
+
+    @pytest.mark.parametrize("name", HEADER_LABELS)
+    def test_tip_follows_clipping_as_the_dialog_resizes(self, qtbot, tmp_path, name: str) -> None:
+        """창을 넓혀 잘림이 풀리면 툴팁이 없어지고 다시 좁혀 잘리면 전체 글 툴팁이 돌아와야 한다.
+
+        긴 글 · 창 폭 = 처음 폭 - 라벨 폭 + 글 폭 + 8 -> 잘림 없음 · 툴팁 "",
+        창 처음 폭으로 되돌림 -> 잘림 · 툴팁 = 전체 글
+        """
+        item = _header_item(tmp_path, name, long=True)
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        label = getattr(dialog, name)
+        narrow = dialog.width()
+        assert shown(label) != label.text(), "전제: 처음 폭에서 글이 잘렸다"
+        full = label.fontMetrics().horizontalAdvance(label.text())
+        # 창 폭에서 라벨 바깥 몫은 그대로 두고 라벨에 글 폭 + 여유(8 — sizeHint의 +4보다 넉넉히)를 준다
+        _resize_dialog(dialog, narrow - label.width() + full + 8)
+        assert shown(label) == label.text(), "전제: 넓힌 창에서 글이 다 보인다"
+        assert label.toolTip() == ""
+        _resize_dialog(dialog, narrow)
+        assert shown(label) != label.text(), "전제: 되돌린 폭에서 글이 다시 잘렸다"
+        assert label.toolTip() == label.text()
+
+
 class TestTipBubbles:
     """편집 창 · 구간 창의 툴팁은 말풍선으로 바로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (#550 inbox 128)."""
 
