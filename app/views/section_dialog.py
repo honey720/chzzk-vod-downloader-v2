@@ -92,6 +92,7 @@ from app.viewmodels.section_edit import (
     SectionEditViewModel,
 )
 from app.widgets.eliding_label import ElidingLabel, TwoLineLabel
+from app.widgets.focus_ring import watch_dialog_buttons
 from app.widgets.icons import IconButton
 from app.widgets.scroll_padding import ScrollBarPadding
 from app.widgets.tip_bubble import install_tips
@@ -548,6 +549,8 @@ class SectionEditDialog(QDialog):
         self.setModal(True)
         self.setupUi()
         self.retranslateUi()
+        # 키보드 초점에만 버튼 테두리(#622) — 나중에 만드는 행의 ✕는 _rebuildRows가 건다
+        self._keyFocus = watch_dialog_buttons(self)
         viewmodel.stateChanged.connect(self._onStateChanged)
         viewmodel.rowsReset.connect(self._rebuildRows)
         viewmodel.validated.connect(self._refresh)
@@ -812,6 +815,7 @@ class SectionEditDialog(QDialog):
             row.handle.dragMoved.connect(self._dragMove)
             row.handle.dropped.connect(self._dropAt)
             row.deleteButton.clicked.connect(lambda _=False, r=index: self._onDeleteOrClear(r))
+            self._keyFocus.watch(row.deleteButton)
             row.hoverChanged.connect(lambda on, r=row: self._onRowHover(r, on))
             self._rowLayout.insertWidget(index, row)
             # 바로 보이게 한다 — 레이아웃은 아직 안 보인 행을 건너뛰어, 그대로면 옮긴 행의 자리를

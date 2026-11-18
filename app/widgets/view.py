@@ -15,7 +15,7 @@ from PySide6.QtGui import (
     QColor,
 )
 import app.theme as theme
-from app.widgets.focus_ring import FocusRing
+from app.widgets.focus_ring import FocusRing, watch_dialog_buttons
 from app.widgets.narrow_steps import RETURN_SLACK
 from app.widgets.overlay_scrollbar import OverlayScrollBar
 from app.widgets.step_scroll import StepScroller
@@ -87,6 +87,7 @@ def confirm_stop_and_delete(parent: QWidget, total: int = 1, working: int = 1) -
     cancel = box.addButton(QMessageBox.StandardButton.Cancel)
     box.setDefaultButton(cancel)
     box.setEscapeButton(cancel)
+    watch_dialog_buttons(box)  # 두 버튼 모두 보조 버튼 — 키보드 초점에만 테두리(#622)
     box.exec()
     return box.clickedButton() is stop
 
@@ -110,6 +111,7 @@ def confirm_hidden_delete(parent: QWidget, total: int, hidden: int) -> bool:
     cancel = box.addButton(QMessageBox.StandardButton.Cancel)
     box.setDefaultButton(cancel)
     box.setEscapeButton(cancel)
+    watch_dialog_buttons(box)  # 두 버튼 모두 보조 버튼 — 키보드 초점에만 테두리(#622)
     box.exec()
     return box.clickedButton() is remove
 

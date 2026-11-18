@@ -9,8 +9,8 @@ from collections.abc import Iterator
 
 import pytest
 from pytestqt.qtbot import QtBot
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QAction, QWheelEvent
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
+from PySide6.QtGui import QAction, QColor, QImage, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,7 +27,7 @@ import app.theme as theme
 import CVDv2 as main_module
 import app.widgets.choice_combo as choice_combo_module
 from app.widgets.choice_combo import ChoiceCombo
-from app.widgets.header_controls import ChoiceMenu
+from app.widgets.header_controls import CARET_GAP, CARET_WIDTH, ChoiceMenu, DropButton
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 
 ITEMS = ("none", "sleep", "shutdown")  # 설정 창 「다운로드 뒤 동작」과 같은 세 줄
@@ -497,3 +497,154 @@ class TestWindowLeft:
         for kind in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
             QApplication.sendEvent(dialog, QEvent(kind))
         assert calls == [dialog, dialog]
+
+
+# ---- 닫힌 칸 모양 — 입력 칸 규칙(헤더 드롭다운과 같다, #622) ----
+
+
+def _closed_host(qtbot: QtBot) -> tuple[QDialog, ChoiceCombo, DropButton]:
+    """칸과 헤더 드롭다운(`DropButton`)이 함께 든 대화상자 — 칸 초점은 다른 버튼으로 뺀다."""
+    dialog, combo = _host(qtbot)
+    drop = DropButton("", dialog)
+    drop.setFullText("A")
+    dialog.layout().addWidget(drop)
+    dialog.otherButton.setFocus()
+    # 합성 이동 — 포인터를 칸 밖에 둔다. 두 자리를 지나 실제 이동을 만든다: 앞 테스트가 같은 자리에 둔 포인터로
+    # 한 번만 옮기면 뒤의 호버가 오지 않았다(이 파일 실측)
+    QTest.mouseMove(dialog.windowHandle(), QPoint(2, 2))
+    QTest.mouseMove(dialog.windowHandle(), QPoint(1, 1))
+    _pump()
+    assert not combo.hasFocus() and not combo.underMouse(), "전제: 칸은 평소 상태다"
+    return dialog, combo, drop
+
+
+def _arrow_rect(combo: ChoiceCombo) -> QRect:
+    option = QStyleOptionComboBox()
+    combo.initStyleOption(option)
+    return combo.style().subControlRect(
+        QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxArrow, combo
+    )
+
+
+def _edit_rect(combo: ChoiceCombo) -> QRect:
+    option = QStyleOptionComboBox()
+    combo.initStyleOption(option)
+    return combo.style().subControlRect(
+        QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxEditField, combo
+    )
+
+
+def _at(image: QImage, x: int, y: int) -> QColor:
+    """논리 좌표 (x, y)의 화소 — `grab()` 이미지는 장치 화소라 배율을 곱해 읽는다."""
+    ratio = image.devicePixelRatio()
+    return image.pixelColor(int(x * ratio), int(y * ratio))
+
+
+def _not_face(combo: ChoiceCombo) -> list[tuple[int, int, str]]:
+    """글 칸 오른쪽 끝부터 오른쪽 둥근 모서리 앞까지(꺾쇠 칸 제외)에서 칸 면(fieldBg)이 아닌 화소."""
+    image = combo.grab().toImage()
+    face = QColor(theme.current_tokens()["fieldBg"]).rgb()
+    caret = combo.caretRect()
+    edge = 3  # 위 · 아래 테두리와 둥근 모서리를 피하는 안쪽 줄 수(px)
+    found: list[tuple[int, int, str]] = []
+    corner = theme.METRICS["radius"]  # 오른쪽 둥근 모서리는 재지 않는다 — 꺾쇠 칸은 그 안쪽이다
+    for x in range(_edit_rect(combo).right() + 1, combo.width() - 1 - corner):
+        for y in range(edge, combo.height() - edge):
+            if caret.contains(x, y):
+                continue
+            colour = _at(image, x, y)
+            if colour.rgb() != face:
+                found.append((x, y, colour.name()))
+    return found
+
+
+def _inked(widget: QWidget, rect: QRect, token: str) -> int:
+    """그 칸 안에서 토큰 색에 가까운(채널마다 24 이내) 화소 수."""
+    image = widget.grab().toImage()
+    want = QColor(theme.current_tokens()[token])
+    count = 0
+    for x in range(rect.left(), rect.right() + 1):
+        for y in range(rect.top(), rect.bottom() + 1):
+            got = _at(image, x, y)
+            if (
+                abs(got.red() - want.red()) <= 24
+                and abs(got.green() - want.green()) <= 24
+                and abs(got.blue() - want.blue()) <= 24
+            ):
+                count += 1
+    return count
+
+
+def _caret_pixels(widget: QWidget, rect: QRect) -> list[str]:
+    image = widget.grab().toImage()
+    return [
+        _at(image, x, y).name()
+        for y in range(rect.top(), rect.bottom() + 1)
+        for x in range(rect.left(), rect.right() + 1)
+    ]
+
+
+class TestClosedLook:
+    """닫힌 칸의 안쪽 여백 · 꺾쇠 · 꺾쇠 칸이 헤더 드롭다운과 같다."""
+
+    def test_text_starts_after_the_field_padding(self, qtbot: QtBot) -> None:
+        """글 칸 왼쪽 끝은 테두리 1 + fieldPadX여야 한다.
+
+        fieldPadX 10 -> SC_ComboBoxEditField.left() == 11
+        """
+        _dialog, combo, _drop = _closed_host(qtbot)
+        assert _edit_rect(combo).left() == 1 + theme.METRICS["fieldPadX"]
+
+    def test_text_ends_before_the_caret_like_the_header(self, qtbot: QtBot) -> None:
+        """글 칸 오른쪽 끝은 칸 폭 − (테두리 1 + fieldPadX + CARET_WIDTH + CARET_GAP)이어야 한다.
+
+        fieldPadX 10, CARET_WIDTH 10, CARET_GAP 6 -> 글 칸 right() + 1 == 칸 폭 − 27
+        """
+        _dialog, combo, _drop = _closed_host(qtbot)
+        reserved = 1 + theme.METRICS["fieldPadX"] + CARET_WIDTH + CARET_GAP
+        assert _edit_rect(combo).right() + 1 == combo.width() - reserved
+
+    def test_caret_sits_at_the_right_inner_end_like_the_header(self, qtbot: QtBot) -> None:
+        """꺾쇠는 한 변 CARET_WIDTH이고 오른쪽 끝이 칸 오른쪽 안쪽 끝(fieldPadX 안)이어야 하며, 헤더 드롭다운도 같아야 한다.
+
+        칸 · DropButton 각각 -> caretRect.width() == 10, (폭 − 2) − caretRect.right() == fieldPadX,
+        높이 가운데
+        """
+        _dialog, combo, drop = _closed_host(qtbot)
+        for widget in (combo, drop):
+            caret = widget.caretRect()
+            assert caret.width() == CARET_WIDTH and caret.height() == CARET_WIDTH
+            assert (widget.width() - 2) - caret.right() == theme.METRICS["fieldPadX"]
+            assert caret.top() == (widget.height() - CARET_WIDTH) // 2
+
+    def test_caret_is_drawn_like_the_header_chevron(self, qtbot: QtBot) -> None:
+        """평소 꺾쇠 칸의 화소는 헤더 드롭다운 꺾쇠 칸의 화소와 같고 흐린 글 색이 있어야 한다.
+
+        평소(초점 · 포인터 없음) -> 칸 꺾쇠 10×10 화소 == DropButton 꺾쇠 10×10 화소, textMuted 화소 > 0
+        """
+        _dialog, combo, drop = _closed_host(qtbot)
+        assert not drop.underMouse(), "전제: 헤더 칸도 평소 상태다"
+        assert _inked(combo, combo.caretRect(), "textMuted") > 0
+        assert _caret_pixels(combo, combo.caretRect()) == _caret_pixels(drop, drop.caretRect())
+
+    def test_caret_room_has_no_divider(self, qtbot: QtBot) -> None:
+        """글 칸 오른쪽 끝부터 오른쪽 테두리 앞까지는 꺾쇠 말고 칸 면만 있어야 한다(구분선 없음).
+
+        평소 -> 꺾쇠 칸을 뺀 그 사이 화소가 모두 fieldBg
+        """
+        _dialog, combo, _drop = _closed_host(qtbot)
+        assert _arrow_rect(combo).left() > _edit_rect(combo).right(), "전제: 화살표 칸이 글 칸 뒤다"
+        assert _not_face(combo) == []
+
+    def test_hover_lights_only_the_caret(self, qtbot: QtBot) -> None:
+        """포인터가 꺾쇠 위에 오면 꺾쇠는 본문 글 색이 되고 꺾쇠 칸에 호버 면이 없어야 한다.
+
+        창에 합성 포인터 이동(꺾쇠 가운데) -> underMouse, 꺾쇠 칸에 text 화소 > 0,
+        꺾쇠를 뺀 꺾쇠 칸 화소가 모두 fieldBg
+        """
+        dialog, combo, _drop = _closed_host(qtbot)
+        QTest.mouseMove(dialog.windowHandle(), combo.mapTo(dialog, combo.caretRect().center()))
+        qtbot.waitUntil(combo.underMouse)  # 전제: 포인터가 칸 위다
+        _pump()
+        assert _inked(combo, combo.caretRect(), "text") > 0
+        assert _not_face(combo) == []

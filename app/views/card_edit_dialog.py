@@ -42,6 +42,7 @@ from app.viewmodels.section_edit import SectionEditViewModel, keep_section_head
 from app.views.section_dialog import SectionEditDialog
 from app.widgets.choice_combo import ChoiceCombo
 from app.widgets.eliding_label import ElidingLabel, PathLabel
+from app.widgets.focus_ring import watch_dialog_buttons
 from app.widgets.tip_bubble import install_tips
 from app.widgets.widget import path_display_parts
 from core.media.representations import file_tag
@@ -212,6 +213,7 @@ class CardEditDialog(QDialog):
         for button in self.findChildren(QPushButton):
             button.setAutoDefault(False)
             button.setDefault(False)
+        self._keyFocus = watch_dialog_buttons(self)  # 키보드 초점에만 버튼 테두리(#622)
         self._fitMinimumWidth()
 
     def _fitMinimumWidth(self) -> None:

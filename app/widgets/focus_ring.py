@@ -3,6 +3,7 @@
 카드 목록의 focus ring은 키보드 초점이 있는 행 안쪽 가장자리에 그리는 고리 하나다(`FocusRing`). 바
 컨트롤은 받은 초점이 키보드로 왔을 때만 강조색 테두리를 그린다(`KeyFocusMarker`). 초점을 쥔 위젯이 꺼지거나
 숨어서 Qt가 초점을 저절로 넘기면 받은 쪽은 그 전 초점의 종류를 이어받는다(`FocusHandover`) — 둘이 같은 판단을 쓴다.
+대화상자가 열리며 받는 첫 초점도 넘겨받은 초점이다 — 창을 연 입력(키보드 · 마우스)의 종류를 따른다(`track_input`).
 
 카드 목록은 띠다(설계 §13) — 행끼리 붙어 있어 행 바깥에 고리를 띄울 자리가 없고, 바깥에 그리면 이웃 행을
 덮는다. 그래서 고리는 행 안쪽 가장자리(구분선 위)에 굵기 `focusRingWidth`로 그린다. 초점 표시는 카드가 아니라
@@ -11,7 +12,7 @@
 
 from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QPushButton, QWidget
 
 import app.theme as theme
 
@@ -151,6 +152,93 @@ class FocusHandover:
 
 HANDOVER = FocusHandover()  # 바 컨트롤 · 카드가 함께 쓰는 넘김 기록
 
+# 키보드 입력 — 창이 이것을 마지막으로 받았으면 그 창에서 연 대화상자의 첫 초점은 키보드 초점이다
+_KEY_INPUT = (QEvent.Type.KeyPress, QEvent.Type.KeyRelease)
+# 마우스 입력 — 마지막 입력을 마우스로 되돌린다
+_POINTER_INPUT = (
+    QEvent.Type.MouseButtonPress,
+    QEvent.Type.MouseButtonRelease,
+    QEvent.Type.MouseButtonDblClick,
+)
+
+
+# 창(`QWindow`)의 동적 속성 — 그 창이 마지막으로 받은 입력이 키보드였는지. 없으면 아직 지켜보지 않는 창
+_LAST_INPUT_KEY = "lastInputWasKey"
+
+
+class _InputKind(QObject):
+    """창(`QWindow`)이 마지막으로 받은 입력이 키보드인지 그 창의 동적 속성으로 적는다 (#622 188c).
+
+    창의 `QWindow`에 건다 — 키 · 마우스 이벤트는 위젯에 배달되기 전에 이곳을 지난다. 단축키(`QShortcut`)도 키 누름이
+    먼저 지난다. 앱 전체 필터가 아니라 창 하나에 하나다. `QWindow`는 창이 처음 보일 때 생기므로 그때 붙는다.
+
+    상태를 이 객체의 파이썬 속성에 두지 않는다 — 파이썬 쪽 참조가 없는 창(테스트가 버린 메인 창)에서는 이 객체의
+    파이썬 래퍼가 새로 만들어져 속성 없이 이벤트를 받는다. 필터는 받은 이벤트와 그 대상만 본다.
+    """
+
+    def __init__(self, window: QWidget) -> None:
+        super().__init__(window)
+        window.installEventFilter(self)
+        self._attach(window)
+
+    def _attach(self, window: QWidget) -> None:
+        handle = window.windowHandle()
+        if handle is not None and handle.property(_LAST_INPUT_KEY) is None:
+            handle.setProperty(_LAST_INPUT_KEY, False)
+            handle.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """입력이면 그 `QWindow`에 종류를 적고, 창이 보이면 `QWindow`에 붙는다."""
+        kind = event.type()
+        if kind in _KEY_INPUT or kind in _POINTER_INPUT:
+            keyboard = kind in _KEY_INPUT
+            if watched.isWindowType() and watched.property(_LAST_INPUT_KEY) is not keyboard:
+                watched.setProperty(_LAST_INPUT_KEY, keyboard)
+        elif kind == QEvent.Type.Show and watched.isWidgetType() and watched.isWindow():
+            self._attach(watched)
+        elif kind == QEvent.Type.Hide and watched.isWidgetType() and watched.isWindow():
+            self._handBack(watched)
+        return False
+
+    @staticmethod
+    def _handBack(window: QWidget) -> None:
+        """닫히는 대화상자가 마지막으로 받은 입력의 종류를 부모 창에 넘긴다.
+
+        대화상자 안의 키 입력은 그 대화상자의 `QWindow`에만 적힌다. 넘기지 않으면 이어서 여는 창(가린 카드
+        확인 뒤의 중지 · 삭제 확인)이 부모 창에 남은 옛 종류를 읽는다(#622 PR 리뷰).
+        """
+        parent = window.parentWidget()
+        if parent is None:
+            return
+        source = window.windowHandle()
+        target = parent.window().windowHandle()
+        if source is None or target is None or target.property(_LAST_INPUT_KEY) is None:
+            return
+        keyboard = source.property(_LAST_INPUT_KEY)
+        if isinstance(keyboard, bool):
+            target.setProperty(_LAST_INPUT_KEY, keyboard)
+
+
+def track_input(window: QWidget) -> None:
+    """그 창이 받는 입력의 종류를 적기 시작한다 — 이 창에서 여는 대화상자가 첫 초점 종류를 읽는다 (#622 188c).
+
+    메인 창은 만들 때, 대화상자는 `watch_dialog_buttons`가 건다. 다시 불러도 하나만 건다.
+    """
+    if window.findChild(_InputKind, "", Qt.FindChildOption.FindDirectChildrenOnly) is None:
+        _InputKind(window)
+
+
+def opened_by_keyboard(dialog: QWidget) -> bool:
+    """대화상자를 연 입력이 키보드인지 — 부모 창이 마지막으로 받은 입력으로 정한다 (#622 188c).
+
+    부모가 없거나 부모 창이 입력을 적지 않으면 거짓(마우스로 연 것과 같다).
+    """
+    parent = dialog.parentWidget()
+    if parent is None:
+        return False
+    handle = parent.window().windowHandle()
+    return handle is not None and handle.property(_LAST_INPUT_KEY) is True
+
 
 def paint_lifted_ring(widget: QWidget) -> None:
     """고른 면 위의 키보드 focus ring을 면에서 1px 띄워 그린다 (#611 176u).
@@ -187,6 +275,25 @@ class KeyFocusMarker(QObject):
     위젯마다 건다(`watch`) — 앱 전체 필터가 아니다.
     """
 
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        # 지켜보는 창이 열리는 중 — 이 동안 받은 초점은 창을 연 입력의 종류를 따른다(#622)
+        self._opening = False
+        self._openedByKey = False  # 지금 열리는 창을 키보드로 열었는지(#622 188c)
+
+    def watch_opening(self, window: QWidget) -> None:
+        """창이 열릴 때 받는 첫 초점이 창을 연 입력의 종류를 따르게 한다 (#622 · 188c).
+
+        `QDialog`는 보일 때 초점 위젯에 Tab 까닭의 초점 들어옴을 스스로 보낸다(키를 누르지 않아도). 그래서 창의
+        보임(Show)부터 그 이벤트 루프 턴이 끝날 때까지 받은 초점은 Tab 까닭으로 치지 않고, 창을 연 입력으로 정한다
+        (`opened_by_keyboard`) — Delete · Enter · 단축키로 연 확인 창의 기본 버튼에는 focus ring이 있고, 마우스로
+        연 창에는 없다. 저절로 넘어간 초점이 그 전 종류를 이어받는 규칙(`FocusHandover`)을 창 열림에 쓴 것이다.
+        """
+        window.installEventFilter(self)
+
+    def _endOpening(self) -> None:
+        self._opening = False
+
     def watch(self, widget: QWidget) -> None:
         """그 위젯의 초점 들어옴 · 나감을 지켜본다 — 처음에는 키보드 초점이 아닌 것으로 둔다.
 
@@ -199,6 +306,12 @@ class KeyFocusMarker(QObject):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         kind = event.type()
+        if kind == QEvent.Type.Show and watched.isWidgetType() and watched.isWindow():
+            if not self._opening:
+                self._opening = True
+                self._openedByKey = opened_by_keyboard(watched)
+                QTimer.singleShot(0, self._endOpening)
+            return False
         if kind not in (QEvent.Type.FocusIn, QEvent.Type.FocusOut) or not watched.isWidgetType():
             return False
         reason = event.reason()
@@ -207,6 +320,8 @@ class KeyFocusMarker(QObject):
             if reason in _KEEP_REASONS:
                 return False
             keyboard = False
+        elif self._opening:
+            keyboard = self._openedByKey
         else:
             inherited = HANDOVER.arrived(watched, reason)
             if inherited is not None:
@@ -219,3 +334,18 @@ class KeyFocusMarker(QObject):
             watched.setProperty("keyFocus", keyboard)
             theme.repolish(watched)
         return False
+
+
+def watch_dialog_buttons(dialog: QWidget) -> KeyFocusMarker:
+    """대화상자 안 버튼 모두에 키보드 초점 표시를 건다 — 그 창의 `KeyFocusMarker`를 돌려준다 (#622).
+
+    지금 있는 버튼(`QPushButton`과 그 하위)만 건다. 나중에 만드는 버튼(구간 창의 행 ✕)은 만드는 쪽이 돌려받은
+    marker로 `watch`한다. 걸지 않은 버튼은 `keyFocus`가 없어 focus ring이 없다(마우스 누름에 테두리가 생기는
+    쪽으로 새지 않는다). marker는 대화상자의 자식이라 창과 함께 사라진다.
+    """
+    marker = KeyFocusMarker(dialog)
+    marker.watch_opening(dialog)
+    track_input(dialog)  # 이 창에서 여는 창(편집 창의 구간 창)이 첫 초점 종류를 읽는다
+    for button in dialog.findChildren(QPushButton):
+        marker.watch(button)
+    return marker

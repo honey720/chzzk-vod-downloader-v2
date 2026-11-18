@@ -100,6 +100,12 @@ PAIRS = [
     ("textMuted", "surface", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 면(#536)"),
     ("focusOnAccent", "windowBg", 3.0, "카드 focus ring ↔ 창 바탕(카드 사이) — 그림(#561)"),
     ("pickMarkRing", "accent", 3.0, "고른 체크 원의 테두리 ↔ 강조색 채움 — 그림(#561)"),
+    ("text", "dialogButton", 4.5, "대화상자 보조 버튼 글 ↔ 평소 면(#622)"),
+    ("text", "dialogButtonHover", 4.5, "대화상자 보조 버튼 글 ↔ 호버 면(#622)"),
+    ("text", "dialogButtonPressed", 4.5, "대화상자 보조 버튼 글 ↔ 눌림 면(#622)"),
+    ("accent", "windowBg", 3.0, "대화상자 버튼 focus ring ↔ 창 바탕(#622)"),
+    ("accent", "surface", 3.0, "대화상자 버튼 focus ring ↔ 설정 창 그룹 상자 면(#622)"),
+    ("focusOnAccent", "windowBg", 3.0, "대화상자 주 동작 focus ring ↔ 창 바탕(#622)"),
 ]
 
 # 면 색 — 오너 결정(2026-11-07): 테마 색 이식에서 바꾸지 않는다. 앱의 지금 값 그대로

@@ -5,11 +5,13 @@
 동작(호버 면 `menuHover`, 고른 항목 ✓ + 굵은 글)이다.
 """
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
-from PySide6.QtGui import QAction, QCursor, QMouseEvent, QWheelEvent
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
+from PySide6.QtGui import QAction, QCursor, QMouseEvent, QPainter, QPaintEvent, QWheelEvent
 from PySide6.QtWidgets import QComboBox, QStyle, QStyleOptionComboBox, QWidget
 
-from app.widgets.header_controls import MENU_SEP, ChoiceMenu
+import app.theme as theme
+from app.widgets.header_controls import CARET_WIDTH, MENU_SEP, ChoiceMenu
+from app.widgets.icons import action_pixmap
 from app.widgets.tip_bubble import close_floats_if_left
 
 # 메뉴 줄 글을 닫힌 칸 글과 따로 줄 때 쓰는 항목 역할 — 값은 `이름\x1f흐린 글`(`ChoiceMenu` 항목 글과 같은 꼴).
@@ -163,6 +165,43 @@ class ChoiceCombo(QComboBox):
         super().initStyleOption(option)
         if self.menuWidget.isVisible():
             option.state |= QStyle.StateFlag.State_On
+
+    def caretRect(self) -> QRect:
+        """꺾쇠를 그리는 칸(콤보박스 좌표) — 스타일의 화살표 칸 오른쪽 끝에 붙이고 높이 가운데에 둔다.
+
+        화살표 칸 자리는 전역 QSS(`QComboBox::drop-down`)가 정한다 — 칸 오른쪽 안쪽 여백 앞이라 헤더
+        드롭다운(`DropButton.caretRect`)과 같은 자리다(#622).
+        """
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        arrow = self.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxArrow, self
+        )
+        return QRect(
+            arrow.right() + 1 - CARET_WIDTH,
+            (self.height() - CARET_WIDTH) // 2,
+            CARET_WIDTH,
+            CARET_WIDTH,
+        )
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        """Qt 콤보박스를 그린 뒤 헤더 드롭다운과 같은 꺾쇠를 그린다 (#622).
+
+        색도 헤더와 같다 — 평소 흐린 글, 포인터가 오르거나 메뉴가 열린 동안 본문 글, 꺼지면 꺼진 글.
+        토큰은 그릴 때마다 읽는다(실행 중 테마 전환).
+        """
+        super().paintEvent(event)
+        tokens = theme.current_tokens()
+        if not self.isEnabled():
+            caret = "textDisabled"
+        elif self.underMouse() or self.isPopupVisible():
+            caret = "text"
+        else:
+            caret = "textMuted"
+        pixmap = action_pixmap("chevron_down", tokens[caret], CARET_WIDTH, self.devicePixelRatioF())
+        painter = QPainter(self)
+        painter.drawPixmap(self.caretRect().topLeft(), pixmap)
+        painter.end()
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         """초점이 있을 때만 휠로 값을 바꾼다 — 없으면 부모에게 넘긴다."""
