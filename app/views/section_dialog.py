@@ -631,8 +631,8 @@ class SectionEditDialog(QDialog):
         # 구간 길이의 합이 영상보다 길다는 알림 — 「+ 구간 추가」 오른쪽의 남는 자리를 쓴다. 글이
         # 없어도 그 자리를 차지해, 알림이 생기고 사라져도 행 영역과 버튼이 움직이지 않는다. 알림은
         # 두 문장이다(무슨 일인지 · 숫자) — 들어가면 한 줄로 잇고, 좁으면 두 줄로 나눠 숫자
-        # 쪽만 줄인다. 전체 글은 늘 툴팁에 있다(TwoLineLabel)
-        self.totalLabel = TwoLineLabel(self)
+        # 쪽만 줄인다. 전체 글은 다 보이지 않을 때만 툴팁에 있다(TwoLineLabel, #626)
+        self.totalLabel = TwoLineLabel(self, tip_when_elided=True)
         self.totalLabel.setObjectName("sectionTotalLabel")
         under.addWidget(self.totalLabel, 1)
         # 구간 길이의 합("합계 11:20:16:30") — 「+ 구간 추가」 줄의 오른쪽 끝. 행의 길이 표기와

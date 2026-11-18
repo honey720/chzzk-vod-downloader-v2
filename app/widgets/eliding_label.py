@@ -200,8 +200,9 @@ class TwoLineLabel(ElidingLabel):
     숫자를 잘랐다.
 
     보이는 순서는 ① 한 줄 — 두 문장을 ``JOINER``로 잇는다 → ② 두 줄 — 문장마다 한 줄 →
-    ③ 둘째 줄만 말줄임이다. 첫 줄은 어느 단계에서도 줄이지 않는다. 툴팁은 어느 단계에서나
-    두 문장을 이은 전체 글이다(``ElidingLabel``과 같다).
+    ③ 둘째 줄만 말줄임이다. 첫 줄은 어느 단계에서도 줄이지 않는다. 툴팁은 두 문장을 이은
+    전체 글이다. ``tip_when_elided``이면 글이 다 보이지 않을 때(③ 말줄임, 또는 첫 줄이 폭보다
+    넓을 때)만 단다 — ② 두 줄로 나눠도 다 보이면 툴팁이 없다(#626).
 
     높이는 글이 없어도 늘 두 줄만큼을 청한다 — 글이 생기고 사라져도, 한 줄에서 두 줄로 바뀌어도
     줄의 높이가 움직이지 않는다. 폭은 ``ElidingLabel``과 같다(최소는 작게, 바라는 폭은 한 줄로
@@ -211,10 +212,11 @@ class TwoLineLabel(ElidingLabel):
     JOINER = " · "  # 한 줄일 때 두 문장을 잇는 글
     LINES = 2  # 청하는 높이의 줄 수
 
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
+    def __init__(self, parent=None, tip_when_elided: bool = False) -> None:
+        super().__init__(parent, tip_when_elided=tip_when_elided)
         self._head = ""
         self._tail = ""
+        self._cut = False  # 보이는 글에 두 문장이 다 들어가지 않았는지(isElided)
         self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
     def setLines(self, head: str, tail: str) -> None:
@@ -238,6 +240,10 @@ class TwoLineLabel(ElidingLabel):
     def _linesHeight(self) -> int:
         return QFontMetrics(self.font()).lineSpacing() * self.LINES
 
+    def isElided(self) -> bool:
+        """두 문장이 다 보이지 않는지 돌려준다 — 두 줄로 나눈 것은 잘린 것이 아니다."""
+        return self._cut
+
     def _applyElide(self, force: bool = False) -> None:
         width = self.width()
         if not force and width == self._last_elide_width:
@@ -247,8 +253,10 @@ class TwoLineLabel(ElidingLabel):
         whole = self._full_text
         if not self._tail:
             shown = metrics.elidedText(whole, self._elide_mode, width)  # 문장 하나 — 기본 말줄임
+            cut = shown != whole
         elif metrics.horizontalAdvance(whole) <= width:
             shown = whole  # ① 한 줄
+            cut = False
         else:
             # ② 두 줄 — 둘째 줄이 넘치면 ③ 그 줄만 줄인다. 첫 줄은 그대로 둔다.
             # 들어가는지는 한 줄로 이을지를 정할 때와 같은 잣대(글의 폭)로 직접 견준다 —
@@ -257,5 +265,9 @@ class TwoLineLabel(ElidingLabel):
             if metrics.horizontalAdvance(tail) > width:
                 tail = metrics.elidedText(tail, self._elide_mode, width)
             shown = self._head + "\n" + tail
+            # 첫 줄은 줄이지 않으므로 폭보다 넓으면 라벨 끝에서 잘려 보인다 — 그것도 잘린 것이다
+            cut = tail != self._tail or metrics.horizontalAdvance(self._head) > width
+        self._cut = cut
         if shown != QLabel.text(self):
             QLabel.setText(self, shown)
+        self._syncElidedTip()

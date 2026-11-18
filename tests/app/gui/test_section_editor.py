@@ -4256,7 +4256,7 @@ def test_total_notice_too_wide_for_one_line_is_split_into_its_two_sentences(
     60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝. 알림 라벨의 폭을 전체 글의 한 줄 폭으로
     맞춘 뒤 1px 줄임
     -> 한 줄 폭일 때: 보이는 글 == 두 문장을 " · "로 이은 한 줄
-    -> 1px 줄인 뒤: 보이는 글 == 첫 문장 + 줄바꿈 + 둘째 문장("…" 없음), 툴팁 == 전체 글
+    -> 1px 줄인 뒤: 보이는 글 == 첫 문장 + 줄바꿈 + 둘째 문장("…" 없음), 툴팁 없음(#626)
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -4271,7 +4271,57 @@ def test_total_notice_too_wide_for_one_line_is_split_into_its_two_sentences(
 
     assert fitting == whole
     assert shown(dialog.totalLabel) == TOTAL_HEAD + "\n" + numbers
-    assert dialog.totalLabel.toolTip() == whole
+    assert dialog.totalLabel.toolTip() == ""
+
+
+def test_total_notice_that_fits_on_one_line_has_no_tooltip(qtbot, tmp_path, basis) -> None:
+    """합 알림이 한 줄에 다 들어가면 툴팁이 없어야 한다.
+
+    60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝. 알림 라벨 폭 = 전체 글의 한 줄 폭
+    -> 보이는 글 == 전체 글, 툴팁 == ""
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("", "00:10:00:00"), ("00:04:00:00", ""), ("00:01:00:00", "")])
+    whole = TOTAL_OVER.format("02:05:00:00", "01:00:00:00")
+
+    _set_notice_width(dialog, _notice_width(dialog, whole))
+
+    assert dialog.totalLabel.isVisible()
+    assert shown(dialog.totalLabel) == whole
+    assert dialog.totalLabel.toolTip() == ""
+
+
+def test_total_notice_label_tooltip_follows_whether_it_is_cut(qtbot, tmp_path, basis) -> None:
+    """구간 창의 합 알림 라벨은 다 보이지 않을 때만 전체 글을 툴팁으로 달아야 한다.
+
+    60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝. 알림 라벨에 둘째 문장을 지금 라벨
+    폭보다 넓게 넣고(창의 최소 폭 때문에 실제 알림으로는 잘리는 폭이 나오지 않는다), 창을 그
+    전체 글의 한 줄 폭까지 넓힘
+    -> 넣었을 때 보이는 글에 "…", 툴팁 == 두 문장을 " · "로 이은 글
+    -> 넓힌 뒤 보이는 글 == 전체 글, 툴팁 == ""
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("", "00:10:00:00"), ("00:04:00:00", ""), ("00:01:00:00", "")])
+    label = dialog.totalLabel
+    numbers = TOTAL_NUMBERS.format("02:05:00:00", "01:00:00:00")
+    tail = " · ".join([numbers] * 3)  # 둘째 문장을 세 번 이어 라벨 폭보다 넓게
+    whole = TOTAL_HEAD + " · " + tail
+    assert _notice_width(dialog, tail) > label.width()  # 전제: 둘째 문장이 라벨보다 넓다
+    label.setLines(TOTAL_HEAD, tail)
+    _pump()
+    cut_shown, cut_tip = shown(label), label.toolTip()
+
+    _set_notice_width(dialog, _notice_width(dialog, whole))
+
+    assert "…" in cut_shown
+    assert cut_tip == whole
+    assert label.isVisible()
+    assert shown(label) == whole
+    assert label.toolTip() == ""
 
 
 def test_buttons_stay_where_they_are_when_the_total_notice_takes_two_lines(
