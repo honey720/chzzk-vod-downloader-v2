@@ -6,8 +6,8 @@
 """
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt
-from PySide6.QtGui import QAction, QMouseEvent, QPainter, QPaintEvent, QWheelEvent
-from PySide6.QtWidgets import QComboBox, QStyle, QStyleOptionComboBox, QWidget
+from PySide6.QtGui import QAction, QKeyEvent, QMouseEvent, QPainter, QPaintEvent, QWheelEvent
+from PySide6.QtWidgets import QApplication, QComboBox, QStyle, QStyleOptionComboBox, QWidget
 
 import app.theme as theme
 from app.widgets.header_controls import CARET_WIDTH, MENU_SEP, ChoiceMenu
@@ -17,6 +17,14 @@ from app.widgets.tip_bubble import close_floats_if_left
 # 메뉴 줄 글을 닫힌 칸 글과 따로 줄 때 쓰는 항목 역할 — 값은 `이름\x1f흐린 글`(`ChoiceMenu` 항목 글과 같은 꼴).
 # 없으면 메뉴 줄은 항목 글(DisplayRole) 하나다. UserRole은 항목 값(`addItem`의 data)이 쓴다
 MENU_TEXT_ROLE = Qt.ItemDataRole.UserRole + 1
+
+# 닫힌 칸에서 메뉴를 여는 키 (키, 보조 키) — Qt 콤보박스와 같다. 누른 채 반복되면 열기 · 닫기를 되풀이하지 않게 삼킨다
+_OPEN_KEYS = (
+    (Qt.Key.Key_F4, Qt.KeyboardModifier.NoModifier),
+    (Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier),
+    (Qt.Key.Key_Down, Qt.KeyboardModifier.AltModifier),
+    (Qt.Key.Key_Up, Qt.KeyboardModifier.AltModifier),
+)
 
 
 class _WindowLeaveWatch(QObject):
@@ -42,7 +50,7 @@ class ChoiceCombo(QComboBox):
     고르면 Qt 콤보박스가 목록에서 고를 때와 같은 차례로 시그널을 낸다 — 다른 값이면
     `currentIndexChanged` → `currentTextChanged` → `activated` → `textActivated`, 같은 값이면
     `activated` → `textActivated`만(Qt 6.11 측정). 호버는 메뉴 강조만 옮기고 값을 바꾸지 않는다. Esc ·
-    바깥 누르기로 닫으면 값이 그대로다.
+    F4 · 바깥 누르기로 닫으면 값이 그대로다. 펼친 채 Space는 Enter와 같이 강조된 항목을 고른다(#624).
 
     휠은 초점이 있을 때만 값을 바꾼다 — 초점 없는 칸 위의 휠은 부모(스크롤)에게 넘긴다(설계 §4). 초점은
     누르기 · Tab으로만 받는다(`StrongFocus`) — Qt 기본(`WheelFocus`)이면 휠이 초점을 주면서 값을 바꾼다.
@@ -108,16 +116,49 @@ class ChoiceCombo(QComboBox):
         self.update()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """메뉴 밖을 누른 자리가 이 칸 위면 그 누르기의 시각 · 자리를 적어 둔다 (#624)."""
-        if (
-            watched is self.menuWidget
-            and event.type() == QEvent.Type.MouseButtonPress
-            and isinstance(event, QMouseEvent)
-        ):
-            spot = event.globalPosition().toPoint()
-            if self.rect().contains(self.mapFromGlobal(spot)):
-                self._closingPress = (event.timestamp(), spot)
+        """메뉴 밖 누르기 · 펼친 메뉴의 F4 · Space를 칸의 규칙대로 받는다 (#624).
+
+        - 메뉴 밖을 누른 자리가 이 칸 위면 그 누르기의 시각 · 자리를 적어 둔다(`mousePressEvent`)
+        - F4는 메뉴를 닫는다(값 그대로 — Esc와 같다). Windows 콤보박스처럼 F4가 열기 · 닫기를 번갈아 한다
+        - Space는 Enter와 같은 길로 강조된 항목을 고르고 닫는다. `QMenu`는 스타일이 허락할 때만
+          Space로 고르는데(`SH_Menu_SpaceActivatesItem`) 이 앱 스타일은 허락하지 않아 Space가 아무것도 안 했다
+        - 두 키 모두 누른 채 반복되는 것은 삼킨다 — 닫은 뒤 반복이 칸에 가 다시 열지 않게(`keyPressEvent`)
+
+        헤더 드롭다운(`DropButton`)도 `ChoiceMenu`를 쓰지만 F4로 열지 않는 버튼이라 이 규칙을 걸지 않는다.
+        """
+        if watched is self.menuWidget:
+            if event.type() == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
+                spot = event.globalPosition().toPoint()
+                if self.rect().contains(self.mapFromGlobal(spot)):
+                    self._closingPress = (event.timestamp(), spot)
+            elif event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent):
+                if self._menuKey(event):
+                    return True
         return super().eventFilter(watched, event)
+
+    def _menuKey(self, event: QKeyEvent) -> bool:
+        """펼친 메뉴에 온 F4 · Space를 처리하고 처리했으면 참을 돌려준다."""
+        if event.modifiers() != Qt.KeyboardModifier.NoModifier:
+            return False
+        if event.key() == Qt.Key.Key_F4:
+            if not event.isAutoRepeat():
+                self.hidePopup()
+            return True
+        if event.key() == Qt.Key.Key_Space:
+            if not event.isAutoRepeat():
+                enter = QKeyEvent(
+                    QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier
+                )
+                QApplication.sendEvent(self.menuWidget, enter)
+            return True
+        return False
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """여는 키가 누른 채 반복된 것은 삼킨다 — 메뉴를 닫은 키의 반복이 다시 열지 않게 (#624)."""
+        if event.isAutoRepeat() and (event.key(), event.modifiers()) in _OPEN_KEYS:
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """메뉴를 닫은 누르기를 Qt가 다시 보낸 것이면 메뉴를 다시 열지 않는다 (#624).
