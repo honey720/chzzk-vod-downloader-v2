@@ -137,15 +137,18 @@ def _at_width(win: VodDownloader, width: int) -> None:
 def _os_min_width(win: VodDownloader) -> int:
     """표시된 창을 1px로 요청해 OS가 허용하는 최소 창 폭을 잰다(#630).
 
-    첫 클램프 직후 값이 달라질 수 있어 연달아 잰 두 값이 같을 때만 돌려준다. 네 번 안에 같아지지
-    않으면 테스트를 실패시킨다.
+    위젯 폭은 OS 클램프를 늦게 반영하거나 반영하지 않아 창 핸들 폭을 읽는다. 첫 클램프 직후 값이
+    달라질 수 있어 연달아 잰 두 값이 같을 때만 돌려주고, 네 번 안에 같아지지 않으면 테스트를
+    실패시킨다.
     """
+    handle = win.windowHandle()
+    assert handle is not None, "전제: 표시된 창이어야 창 핸들 폭을 잴 수 있다"
     readings: list[int] = []
     for _ in range(4):
         win.resize(1, win.height())
         QApplication.processEvents()
         QApplication.processEvents()
-        readings.append(win.width())
+        readings.append(handle.geometry().width())
         if len(readings) >= 2 and readings[-1] == readings[-2]:
             return readings[-1]
     pytest.fail(f"OS 최소 창 폭 측정값이 네 번 안에 안정되지 않았다: {readings}")
