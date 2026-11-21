@@ -134,6 +134,23 @@ def _at_width(win: VodDownloader, width: int) -> None:
     )
 
 
+def _os_min_width(win: VodDownloader) -> int:
+    """표시된 창을 1px로 요청해 OS가 허용하는 최소 창 폭을 잰다(#630).
+
+    첫 클램프 직후 값이 달라질 수 있어 연달아 잰 두 값이 같을 때만 돌려준다. 네 번 안에 같아지지
+    않으면 잴 수 없는 환경으로 보고 건너뛴다.
+    """
+    previous = None
+    for _ in range(4):
+        win.resize(1, win.height())
+        QApplication.processEvents()
+        QApplication.processEvents()
+        if win.width() == previous:
+            return previous
+        previous = win.width()
+    pytest.skip("OS 최소 창 폭이 측정마다 달라 잴 수 없다")
+
+
 def _in_window(win, w) -> QRect:
     """위젯의 창 좌표계 사각형."""
     return QRect(w.mapTo(win, QPoint(0, 0)), w.size())
@@ -588,7 +605,10 @@ class TestHorizontalScrollIsOnlyASafetyNet:
     def test_scrollbar_appears_only_when_the_window_is_forced_narrower_than_the_content(
         self,
     ) -> None:
-        """OS가 창을 콘텐츠보다 좁게 만드는 상황(접근성 배율로 콘텐츠 최소가 화면보다 큰 경우)."""
+        """OS가 창을 콘텐츠보다 좁게 만드는 상황(접근성 배율로 콘텐츠 최소가 화면보다 큰 경우).
+
+        OS 최소 창 폭은 DPI 지표마다 달라 재서 목표 폭의 하한으로 쓴다(#630).
+        """
         win = _window(cards=3)
         win.show()
         QApplication.processEvents()
@@ -596,11 +616,21 @@ class TestHorizontalScrollIsOnlyASafetyNet:
         win.setMinimumWidth(
             0
         )  # 창 최소폭 바닥을 걷어내야 그 아래로 내려갈 수 있다 — 화면이 작은 상황의 대역
+        os_floor = _os_min_width(win)
         # 콘텐츠 최소폭은 좁은 폭 모양(#529)을 따른다 — 창 최소폭의 절반으로 끝까지 줄인 모양을 만든 뒤에
         # 읽고, 그보다 120px 좁게 놓는다
-        _at_width(win, floor // 2)
+        _at_width(win, max(floor // 2, os_floor))
+        if not (
+            win.saveLocationButton.isCompact()
+            and win.filterChipBar.isCompact()
+            and win.sortButton.isCompact()
+        ):
+            pytest.skip(f"OS 최소 창 폭 {os_floor}px에서는 좁은 폭 모양(#529)에 들어가지 못한다")
         content_min = win.contentColumn.minimumSizeHint().width()
-        _at_width(win, content_min - 120)
+        target = max(content_min - 120, os_floor)
+        if target >= content_min:
+            pytest.skip(f"OS 최소 창 폭 {os_floor}px이 콘텐츠 최소폭 {content_min}px 이상이다")
+        _at_width(win, target)
         assert win.contentColumn.minimumSizeHint().width() == content_min, "전제: 모양이 그대로다"
         hbar = win.windowScrollArea.horizontalScrollBar()
         assert hbar.isVisible(), (
