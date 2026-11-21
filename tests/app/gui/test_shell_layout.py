@@ -138,17 +138,17 @@ def _os_min_width(win: VodDownloader) -> int:
     """표시된 창을 1px로 요청해 OS가 허용하는 최소 창 폭을 잰다(#630).
 
     첫 클램프 직후 값이 달라질 수 있어 연달아 잰 두 값이 같을 때만 돌려준다. 네 번 안에 같아지지
-    않으면 잴 수 없는 환경으로 보고 건너뛴다.
+    않으면 테스트를 실패시킨다.
     """
-    previous = None
+    readings: list[int] = []
     for _ in range(4):
         win.resize(1, win.height())
         QApplication.processEvents()
         QApplication.processEvents()
-        if win.width() == previous:
-            return previous
-        previous = win.width()
-    pytest.skip("OS 최소 창 폭이 측정마다 달라 잴 수 없다")
+        readings.append(win.width())
+        if len(readings) >= 2 and readings[-1] == readings[-2]:
+            return readings[-1]
+    pytest.fail(f"OS 최소 창 폭 측정값이 네 번 안에 안정되지 않았다: {readings}")
 
 
 def _in_window(win, w) -> QRect:
@@ -634,11 +634,14 @@ class TestHorizontalScrollIsOnlyASafetyNet:
         assert is_narrow, f"전제: 창 {win.width()}px에서 좁은 폭 모양(#529)이어야 한다"
         content_min = win.contentColumn.minimumSizeHint().width()
         scroll_goal = content_min - 120
-        if os_floor >= content_min:
+        if os_floor > 1 and os_floor >= content_min:  # 1px 요청이 올려졌으면 OS가 막은 것이다
             pytest.skip(
                 f"OS 최소 창 폭 {os_floor}px이 목표 {scroll_goal}px을 올려 "
                 f"콘텐츠 최소폭 {content_min}px보다 좁게 놓지 못한다"
             )
+        assert content_min > os_floor, (
+            f"전제: 콘텐츠 최소폭 {content_min}px이 창 바닥 {os_floor}px보다 커야 한다"
+        )
         _at_width(win, max(scroll_goal, os_floor))
         assert win.contentColumn.minimumSizeHint().width() == content_min, "전제: 모양이 그대로다"
         hbar = win.windowScrollArea.horizontalScrollBar()
