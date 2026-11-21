@@ -619,18 +619,27 @@ class TestHorizontalScrollIsOnlyASafetyNet:
         os_floor = _os_min_width(win)
         # 콘텐츠 최소폭은 좁은 폭 모양(#529)을 따른다 — 창 최소폭의 절반으로 끝까지 줄인 모양을 만든 뒤에
         # 읽고, 그보다 120px 좁게 놓는다
-        _at_width(win, max(floor // 2, os_floor))
-        if not (
+        narrow_goal = floor // 2
+        _at_width(win, max(narrow_goal, os_floor))
+        is_narrow = (
             win.saveLocationButton.isCompact()
             and win.filterChipBar.isCompact()
             and win.sortButton.isCompact()
-        ):
-            pytest.skip(f"OS 최소 창 폭 {os_floor}px에서는 좁은 폭 모양(#529)에 들어가지 못한다")
+        )
+        if not is_narrow and os_floor > narrow_goal:
+            pytest.skip(
+                f"OS 최소 창 폭 {os_floor}px이 목표 {narrow_goal}px을 올려 "
+                "좁은 폭 모양(#529)에 들어가지 못한다"
+            )
+        assert is_narrow, f"전제: 창 {win.width()}px에서 좁은 폭 모양(#529)이어야 한다"
         content_min = win.contentColumn.minimumSizeHint().width()
-        target = max(content_min - 120, os_floor)
-        if target >= content_min:
-            pytest.skip(f"OS 최소 창 폭 {os_floor}px이 콘텐츠 최소폭 {content_min}px 이상이다")
-        _at_width(win, target)
+        scroll_goal = content_min - 120
+        if os_floor >= content_min:
+            pytest.skip(
+                f"OS 최소 창 폭 {os_floor}px이 목표 {scroll_goal}px을 올려 "
+                f"콘텐츠 최소폭 {content_min}px보다 좁게 놓지 못한다"
+            )
+        _at_width(win, max(scroll_goal, os_floor))
         assert win.contentColumn.minimumSizeHint().width() == content_min, "전제: 모양이 그대로다"
         hbar = win.windowScrollArea.horizontalScrollBar()
         assert hbar.isVisible(), (
