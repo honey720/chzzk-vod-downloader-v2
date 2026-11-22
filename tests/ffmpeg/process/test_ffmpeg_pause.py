@@ -306,18 +306,25 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
 
     일하는 명령을 일시정지 없이 한 번(기준), 띄운 지 0.5초 뒤부터 1.5초 동안 일시정지하며 한 번
     -> 일시정지 중 두 시점(0.4초 뒤 · 끝나기 0.1초 전)에 프로세스가 살아 있고 출력 파일 크기가 같다
-    -> 진행을 받는 실행: 그 두 시점 사이에 진행 알림이 없다
+    -> 진행을 받는 실행: 그 두 시점 사이에 받은 진행 알림의 출력 시각이 많아야 한 값이다(나아가지 않는다)
     -> 종료 코드 0, 걸린 시간 >= 1.5초, 결과 파일의 바이트 == 기준 파일의 바이트
     -> 일시정지하는 실행이 max(120초, 6 × D + 10초) 안에 돌아온다 — D는 기준이 걸린 시간(넘기면 poll 기록 · 스택 · ffmpeg 상태를 남기고 실패, #458 · #505)
+
+    진행 알림의 시각은 ffmpeg가 쓴 때가 아니라 우리가 파이프에서 읽은 때다. 멈추기 바로 앞에 쓴 진행 한
+    묶음은 파이프에 남았다가 바쁜 러너(macOS)에서 「0.4초 뒤」보다 늦게 읽힐 수 있다(PR #625 CI — 그 사이
+    알림 1건). 멈춘 ffmpeg는 새 묶음을 쓰지 않으므로 그 사이 알림은 그 한 묶음뿐이고 출력 시각이 같다.
+    멈추지 않았다면 그 1초 동안 진행 묶음이 0.5초마다 와 출력 시각이 두 값 이상이 된다
     """
     plain, paused_output = str(tmp_path / "plain.mp4"), str(tmp_path / "paused.mp4")
     began = time.perf_counter()
     assert run_ffmpeg(_work(plain), timeout=300).returncode == 0
     alone = time.perf_counter() - began
     pause = _Pause()
-    reports: list[float] = []
+    reports: list[tuple[float, float]] = []  # (읽은 시각, 알린 출력 시각)
     extra = (
-        {"on_out_time": lambda seconds: reports.append(time.perf_counter())} if reporting else {}
+        {"on_out_time": lambda seconds: reports.append((time.perf_counter(), seconds))}
+        if reporting
+        else {}
     )
 
     def observe(name: str) -> None:
@@ -349,7 +356,7 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
         "전제: 일시정지 중에 프로세스가 살아 있다(아직 끝나지 않았다)"
     )
     assert size_early == size_late and size_early > 0
-    assert [at for at in reports if at_early < at < at_late] == []
+    assert len({seconds for at, seconds in reports if at_early < at < at_late}) <= 1, reports
     assert done.returncode == 0 and took >= PAUSE_FOR
     with open(plain, "rb") as wanted, open(paused_output, "rb") as made:
         assert made.read() == wanted.read()
