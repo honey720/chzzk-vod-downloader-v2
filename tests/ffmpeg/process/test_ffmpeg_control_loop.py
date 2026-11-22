@@ -129,25 +129,42 @@ def test_a_stop_during_pause_ends_the_run(
 
 
 def test_the_timeout_still_applies_after_a_pause(
-    tmp_path: Path, launched: list[subprocess.Popen]
+    tmp_path: Path, launched: list[subprocess.Popen], polls: list[float]
 ) -> None:
     """일시정지했다 풀어도 제한 시간은 듣고, 끝나기까지 걸린 시간에는 일시정지한 시간이 더해져야 한다.
 
-    제한 2초 · 일하는 명령(20초 분량) · 뜨자마자 1초 일시정지 -> FFmpegTimeoutError, 걸린 시간 ≥ 2 + 1초
+    제한 2초 · 일하는 명령(20초 분량) · 뜨자마자 1초 일시정지 -> FFmpegTimeoutError,
+    확인이 일시정지를 본 시간(처음 「멈춤」 답 ~ 그 뒤 처음 「풀림」 답) >= 0.5초,
+    첫 확인 ~ 끝낸 확인 >= 2초 + 그 시간
+
+    시각은 모두 확인하는 스레드 쪽에서 잰다. 테스트 스레드가 뜬 것을 본 때 · 일시정지를 켜고 끈 때로 재면,
+    바쁜 러너(macOS)에서 확인이 늦게 돈 만큼 멈춰 둔 시간이 짧아져 고정 여유(0.2초)를 넘긴다(PR #627 CI
+    2.78초 < 2.8초)
     """
     paused = threading.Event()
+    answers: list[tuple[float, bool]] = []  # 확인이 일시정지 요청을 읽은 (시각, 답)
+
+    def should_pause() -> bool:
+        answer = paused.is_set()
+        answers.append((time.monotonic(), answer))
+        return answer
+
     output = str(tmp_path / "out.mp4")
-    run = _Run(_work(output), timeout=2, should_pause=paused.is_set)
+    run = _Run(_work(output), timeout=2, should_pause=should_pause)
     _wait_until(lambda: _working(launched, output) is not None, "일하는 ffmpeg가 뜨지 않았다")
-    begun = time.monotonic()
     paused.set()
     held = time.monotonic()
     _wait_until(lambda: time.monotonic() - held >= 1.0, "1초가 지나지 않았다")
     paused.clear()
     _wait_until(run.finished, "제한 시간이 지나도 끝나지 않았다")
     assert isinstance(run.error, FFmpegTimeoutError)
-    # 제한 시간은 프로세스를 띄운 직후부터 센다 — 뜬 것을 본 시각(begun)이 조금 늦을 수 있어 0.2초를 덜어 준다
-    assert time.monotonic() - begun >= 2.0 + 1.0 - 0.2
+    suspended = next(at for at, answer in answers if answer)
+    resumed = next(at for at, answer in answers if at > suspended and not answer)
+    stood = resumed - suspended
+    assert stood >= 0.5, "전제: 확인이 일시정지를 0.5초 넘게 보았다"
+    # 제한 시각은 첫 확인 바로 앞(_Control을 만들 때)부터 2초이고, 멈춰 둔 만큼 늦춰진다. 끝낸 확인은 그 시각을
+    # 넘긴 확인이다. 확인 기록(polls)은 확인이 시각을 읽기 조금 앞에 적혀 0.02초를 덜어 준다
+    assert polls[-1] - polls[0] >= 2.0 + stood - 0.02
 
 
 def test_a_check_that_raises_still_ends_the_paused_ffmpeg(
