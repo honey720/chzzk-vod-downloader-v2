@@ -632,7 +632,7 @@ class TestHorizontalScrollIsOnlyASafetyNet:
             and win.filterChipBar.isCompact()
             and win.sortButton.isCompact()
         )
-        if not is_narrow and os_floor > narrow_goal:
+        if not is_narrow and os_floor > 1 and os_floor > narrow_goal:
             pytest.skip(
                 f"OS 최소 창 폭 {os_floor}px이 목표 {narrow_goal}px을 올려 "
                 "좁은 폭 모양(#529)에 들어가지 못한다"
