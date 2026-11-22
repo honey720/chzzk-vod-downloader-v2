@@ -129,24 +129,52 @@ def test_a_stop_during_pause_ends_the_run(
 
 
 def test_the_timeout_still_applies_after_a_pause(
-    tmp_path: Path, launched: list[subprocess.Popen], polls: list[float]
+    tmp_path: Path,
+    launched: list[subprocess.Popen],
+    polls: list[float],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """일시정지했다 풀어도 제한 시간은 듣고, 끝나기까지 걸린 시간에는 일시정지한 시간이 더해져야 한다.
 
     제한 2초 · 일하는 명령(20초 분량) · 뜨자마자 1초 일시정지 -> FFmpegTimeoutError,
-    확인이 일시정지를 본 시간(처음 「멈춤」 답 ~ 그 뒤 처음 「풀림」 답) >= 0.5초,
-    첫 확인 ~ 끝낸 확인 >= 2초 + 그 시간
+    멈춘 시간(멈춤 성공 뒤 ~ 풀림을 본 확인의 시작) >= 0.5초,
+    `_Control` 생성 전 ~ 끝낸 확인의 반환 뒤 >= 2초 + 멈춘 시간
 
-    시각은 모두 확인하는 스레드 쪽에서 잰다. 테스트 스레드가 뜬 것을 본 때 · 일시정지를 켜고 끈 때로 재면,
-    바쁜 러너(macOS)에서 확인이 늦게 돈 만큼 멈춰 둔 시간이 짧아져 고정 여유(0.2초)를 넘긴다(PR #627 CI
-    2.78초 < 2.8초)
+    시작은 제한 시각을 정하기 전, 끝은 제한 시각을 넘겼다고 판단한 뒤에 적어 걸린 시간을 크게 잡고, 멈춘 시간은
+    제품이 읽은 두 시각의 안쪽에서 재 작게 잡는다. 그래서 스레드가 어디서 늦어도 고정 여유 없이 부등식이 성립한다
     """
     paused = threading.Event()
-    answers: list[tuple[float, bool]] = []  # 확인이 일시정지 요청을 읽은 (시각, 답)
+    answers: list[tuple[float, bool]] = []  # 일시정지 요청을 읽은 확인의 (시작 시각, 답)
+    created: list[float] = []  # `_Control`을 만들기 직전 시각
+    returned: list[float] = []  # 확인이 돌아온 직후 시각
+    suspended_after: list[float] = []  # 프로세스를 멈추는 데 성공한 직후 시각
+    make_control = ffmpeg_module._Control.__init__
+    check = ffmpeg_module._Control.poll
+    set_suspended = ffmpeg_module._set_suspended
+
+    def init(self: ffmpeg_module._Control, *args: object) -> None:
+        created.append(time.monotonic())
+        make_control(self, *args)
+
+    def poll(self: ffmpeg_module._Control) -> str | None:
+        outcome = check(self)
+        returned.append(time.monotonic())
+        return outcome
+
+    def suspend(process: subprocess.Popen, suspended: bool) -> bool:
+        done = set_suspended(process, suspended)
+        if suspended and done:
+            suspended_after.append(time.monotonic())
+        return done
+
+    monkeypatch.setattr(ffmpeg_module._Control, "__init__", init)
+    monkeypatch.setattr(ffmpeg_module._Control, "poll", poll)
+    monkeypatch.setattr(ffmpeg_module, "_set_suspended", suspend)
 
     def should_pause() -> bool:
         answer = paused.is_set()
-        answers.append((time.monotonic(), answer))
+        if polls:  # 띄우기 전에도 불린다(`_hold_while_paused`) — 그때는 아직 확인이 없다
+            answers.append((polls[-1], answer))
         return answer
 
     output = str(tmp_path / "out.mp4")
@@ -158,13 +186,12 @@ def test_the_timeout_still_applies_after_a_pause(
     paused.clear()
     _wait_until(run.finished, "제한 시간이 지나도 끝나지 않았다")
     assert isinstance(run.error, FFmpegTimeoutError)
-    suspended = next(at for at, answer in answers if answer)
+    assert len(created) == 1, "전제: 제한 시각을 정한 확인은 하나다"
+    suspended = suspended_after[0]
     resumed = next(at for at, answer in answers if at > suspended and not answer)
     stood = resumed - suspended
     assert stood >= 0.5, "전제: 확인이 일시정지를 0.5초 넘게 보았다"
-    # 제한 시각은 첫 확인 바로 앞(_Control을 만들 때)부터 2초이고, 멈춰 둔 만큼 늦춰진다. 끝낸 확인은 그 시각을
-    # 넘긴 확인이다. 확인 기록(polls)은 확인이 시각을 읽기 조금 앞에 적혀 0.02초를 덜어 준다
-    assert polls[-1] - polls[0] >= 2.0 + stood - 0.02
+    assert returned[-1] - created[0] >= 2.0 + stood
 
 
 def test_a_check_that_raises_still_ends_the_paused_ffmpeg(
