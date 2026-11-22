@@ -611,6 +611,7 @@ class TestHorizontalScrollIsOnlyASafetyNet:
         """OS가 창을 콘텐츠보다 좁게 만드는 상황(접근성 배율로 콘텐츠 최소가 화면보다 큰 경우).
 
         OS 최소 창 폭은 DPI 지표마다 달라 재서 목표 폭의 하한으로 쓴다(#630).
+        offscreen에는 OS 최소 창 폭이 없어 잰 값이 1이어야 한다.
         """
         win = _window(cards=3)
         win.show()
@@ -620,6 +621,8 @@ class TestHorizontalScrollIsOnlyASafetyNet:
             0
         )  # 창 최소폭 바닥을 걷어내야 그 아래로 내려갈 수 있다 — 화면이 작은 상황의 대역
         os_floor = _os_min_width(win)
+        if QApplication.platformName() == "offscreen":
+            assert os_floor == 1, f"offscreen에는 OS 최소 창 폭이 없는데 {os_floor}px로 재졌다"
         # 콘텐츠 최소폭은 좁은 폭 모양(#529)을 따른다 — 창 최소폭의 절반으로 끝까지 줄인 모양을 만든 뒤에
         # 읽고, 그보다 120px 좁게 놓는다
         narrow_goal = floor // 2
