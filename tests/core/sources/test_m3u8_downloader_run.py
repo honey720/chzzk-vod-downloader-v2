@@ -10,11 +10,14 @@
 - 중단(stop): 결과 파일·임시 폴더 삭제, 완료 콜백 없음
 """
 
+import logging
 import os
 import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
+
+import pytest
 
 import core.engine.base as base_module
 import core.sources.m3u8_downloader as m3u8_module
@@ -778,6 +781,56 @@ def test_cleanup_error_after_finish_keeps_a_single_finish(tmp_path, monkeypatch)
     assert logger.errors == []
     assert logger.closed == 1
     assert warnings_at_close == [logger.warnings]
+
+
+def test_log_close_error_after_finish_keeps_a_single_finish(
+    tmp_path, monkeypatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """완료를 알린 뒤 로거 닫기가 예외를 내면 완료 한 번과 앱 로그 경고만 남아야 한다 (#603).
+
+    save_and_close가 OSError
+    -> run()이 예외 없이 끝난다, 실패 == [], 완료 1회, core.engine.base 경고 1줄
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    finish_count = []
+    notify_finish = engine._on_finished
+
+    def count_finish() -> None:
+        finish_count.append(True)
+        notify_finish()
+
+    def close() -> Never:
+        raise OSError(5, "테스트 — 로그를 닫을 수 없다")
+
+    engine._on_finished = count_finish
+    monkeypatch.setattr(logger, "save_and_close", close)
+    escaped = []
+
+    def run() -> None:
+        try:
+            engine.run()
+        except BaseException as e:
+            escaped.append(e)
+
+    data.model.start()
+    with caplog.at_level(logging.WARNING, logger="core.engine.base"):
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert escaped == []
+    assert failures == []
+    assert len(finish_count) == 1
+    records = [
+        r
+        for r in caplog.records
+        if r.name == "core.engine.base" and "Closing the download log" in r.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
 
 
 def test_failure_before_finish_is_still_reported_as_a_failure(tmp_path, monkeypatch) -> None:

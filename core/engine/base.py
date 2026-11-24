@@ -54,6 +54,7 @@ data·logger는 DownloadData/DownloadLogger 호환 객체를 주입받는다.
 
 import errno
 import heapq
+import logging
 import math
 import os
 import re
@@ -1117,14 +1118,22 @@ class BaseDownloader(ABC):
         """완료를 알린 뒤 정리하고, 정리 실패는 경고 로그로만 남긴 뒤 로거를 닫는다.
 
         완료를 알린 다운로드에 실패를 함께 알리지 않는다 (#603). 경고가 이 다운로드의 로그
-        파일에 남도록 로거는 정리 뒤에 닫는다 — 닫힌 로거의 줄은 버려진다.
+        파일에 남도록 로거는 정리 뒤에 닫는다 — 닫힌 로거의 줄은 버려진다. 로거를 닫다 난 예외도
+        완료를 바꾸지 않으므로, 그 경고는 닫히는 로거 대신 앱 로그에 남긴다.
         """
         try:
             self._cleanup_after_run()
         except self._failure_exceptions as e:
             self.logger.warning(f"Cleanup after completion failed: {type(e).__name__}: {e}")
         finally:
-            self.logger.save_and_close()
+            try:
+                self.logger.save_and_close()
+            except self._failure_exceptions as e:
+                logging.getLogger(__name__).warning(
+                    "Closing the download log after completion failed: %s: %s",
+                    type(e).__name__,
+                    e,
+                )
 
     def _progress_total_size(self) -> int | None:
         """ProgressEvent에 실을 전체 크기. 미리 알 수 없는 다운로더는 None."""
