@@ -24,6 +24,7 @@ ffmpeg로 넘긴다. 오디오는 구간의 세그먼트를 한 번 흘려 복�
 """
 
 import dataclasses
+import logging
 import os
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -49,6 +50,7 @@ from core.sections.hybrid import (
     cut_frames_from_mp4,
 )
 
+logger = logging.getLogger(__name__)
 
 # 다시 싼 mp4와 TS의 프레임마다 시각 차이가 서로 벗어나도 되는 폭(초) — 90kHz 2틱.
 # 두 쪽 모두 틱 단위라 차이는 프레임마다 같아야 한다
@@ -171,6 +173,9 @@ def _remux(
 ) -> CutFrames:
     """세그먼트를 순서대로 ffmpeg에 흘려 mp4로 다시 싸고, 그 파일의 프레임 정보를 읽는다.
 
+    세그먼트 · 다시 싼 파일을 읽다 난 ``OSError``는 그 구간만의 실패로 바꾼다 — 글에는 파일
+    이름만, 오류 종류 · 경로는 경고 로그에 남긴다(``hybrid.io_failure``, #604 · #640).
+
     Raises:
         CutError: 다시 싸지 못했거나 다시 싼 파일의 색인을 읽지 못한 경우(``CUT_FAILED``)
         CutCancelled: 흘려 넣는 도중 멈추라는 요청이 온 경우 — ffmpeg는 끝내고 쓰다 만 파일은 지운다
@@ -178,14 +183,17 @@ def _remux(
 
     def feed() -> Iterator[bytes]:
         for path in segment_paths:
-            for chunk in read_in_chunks(path):
-                while should_pause is not None and should_pause():
+            try:
+                for chunk in read_in_chunks(path):
+                    while should_pause is not None and should_pause():
+                        if should_stop is not None and should_stop():
+                            break
+                        time.sleep(_PAUSE_POLL_SECONDS)  # 일시정지 — 흘려 넣기를 멈추고 기다린다
                     if should_stop is not None and should_stop():
-                        break
-                    time.sleep(_PAUSE_POLL_SECONDS)  # 일시정지 — 흘려 넣기를 멈추고 기다린다
-                if should_stop is not None and should_stop():
-                    raise CutCancelled("멈추라는 요청으로 다시 싸기를 그만뒀다")
-                yield chunk
+                        raise CutCancelled("멈추라는 요청으로 다시 싸기를 그만뒀다")
+                    yield chunk
+            except OSError as e:
+                raise hc.io_failure("다시 쌀 세그먼트를 읽지 못했다", path, e, logger) from e
 
     try:
         remux_stream(
@@ -200,8 +208,11 @@ def _remux(
         raise CutCancelled(str(e)) from e
     except FFmpegTimeoutError as e:
         raise CutError(CUT_TIMEOUT, str(e)) from e
-    except (FFmpegError, OSError) as e:
+    except FFmpegError as e:
         raise CutError(CUT_FAILED, f"세그먼트를 mp4로 다시 싸지 못했다: {e}") from e
+    except OSError as e:
+        # 세그먼트 읽기는 feed가 바꿨다 — 그 밖의 입출력 오류는 다시 싸던 파일의 몫으로 적는다
+        raise hc.io_failure("세그먼트를 mp4로 다시 싸지 못했다", joined_path, e, logger) from e
 
     def read(offset: int, size: int) -> bytes:
         with open(joined_path, "rb") as f:
@@ -210,6 +221,8 @@ def _remux(
 
     try:
         return cut_frames_from_mp4(read_mp4_index(read))
+    except OSError as e:
+        raise hc.io_failure("다시 싼 mp4를 읽지 못했다", joined_path, e, logger) from e
     except Mp4Error as e:
         raise CutError(CUT_FAILED, f"다시 싼 mp4의 색인을 읽지 못했다: {e}") from e
 

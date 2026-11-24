@@ -40,6 +40,7 @@ ffmpeg의 탐색이 정확하지 않아 그대로 넣지 않는다 — ``encode_
 (``MetadataError``와 같은 방식).
 """
 
+import logging
 import os
 import re
 import subprocess
@@ -148,6 +149,33 @@ class CutError(Exception):
     def __init__(self, message_key: str, detail: str = "") -> None:
         super().__init__(f"{message_key}: {detail}" if detail else message_key)
         self.message_key = message_key
+
+
+def io_failure(what: str, path: str, error: OSError, log: logging.Logger) -> CutError:
+    """구간을 만드는 중 난 파일 입출력 오류를 그 구간만의 실패(``CutError``)로 바꾼다 (#604 · #640).
+
+    ``OSError``가 그대로 나가면 부르는 쪽(엔진의 ``_cut_sections``)이 구간 실패로 잡지 못해
+    다운로드 전체가 실패하고 끝낸 구간 파일까지 지운다. 원인(오류 종류 · errno · 경로)은 경고
+    로그에 남긴다. ``CutError``의 글에는 파일 이름만 넣는다 — 작업 폴더의 절대 경로를 싣지 않는다.
+
+    경로는 ``error.filename``이 아니라 부르는 쪽이 연 파일의 경로(``path``)를 쓴다 — 열린 파일의
+    읽기 · 쓰기 실패(닫을 때 flush의 ENOSPC 등)는 ``filename``이 비어 있다(#637 리뷰).
+
+    fMP4 구간(``fmp4_cut``) · TS 구간(``ts_cut``) · 암호화 VOD 엔진이 함께 쓴다. 그래서
+    ``CutError``와 같은 모듈에 둔다. 경고는 부르는 쪽의 로거(``log``)로 남긴다 — 로그를 읽는
+    사람이 어느 단계의 실패인지 로거 이름으로 안다.
+
+    Args:
+        what: 실패한 일 — 글과 경고의 머리("세그먼트를 읽지 못했다" 등)
+        path: 열거나 읽거나 쓰던 파일
+        log: 경고를 남길 로거 — 부르는 모듈의 것
+    """
+    kind = type(error).__name__
+    reason = error.strerror or str(error)
+    # 경로는 그대로 적는다 — str(error)는 경로를 repr로 적어 Windows에서 역슬래시가 두 겹이 된다
+    log.warning("%s — %s errno=%s %s: %s", what, kind, error.errno, reason, path)
+    name = os.path.basename(path)
+    return CutError(CUT_FAILED, f"{what}: {kind} errno={error.errno} {reason} ({name})")
 
 
 # ================================================================ 프레임 정보
