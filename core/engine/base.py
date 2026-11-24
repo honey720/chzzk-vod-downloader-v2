@@ -54,6 +54,7 @@ data·logger는 DownloadData/DownloadLogger 호환 객체를 주입받는다.
 
 import errno
 import heapq
+import logging
 import math
 import os
 import re
@@ -1113,6 +1114,27 @@ class BaseDownloader(ABC):
     def _cleanup_after_run(self) -> None:
         """정상 경로(비예외) 종료 후 정리 (기본 no-op). m3u8은 임시 폴더를 지운다."""
 
+    def _cleanup_after_finish(self) -> None:
+        """완료를 알린 뒤 정리하고, 정리 실패는 경고 로그로만 남긴 뒤 로거를 닫는다.
+
+        완료를 알린 다운로드에 실패를 함께 알리지 않는다 (#603). 경고가 이 다운로드의 로그
+        파일에 남도록 로거는 정리 뒤에 닫는다 — 닫힌 로거의 줄은 버려진다. 로거를 닫다 난 예외도
+        완료를 바꾸지 않으므로, 그 경고는 닫히는 로거 대신 앱 로그에 남긴다.
+        """
+        try:
+            self._cleanup_after_run()
+        except self._failure_exceptions as e:
+            self.logger.warning(f"Cleanup after completion failed: {type(e).__name__}: {e}")
+        finally:
+            try:
+                self.logger.save_and_close()
+            except self._failure_exceptions as e:
+                logging.getLogger(__name__).warning(
+                    "Closing the download log after completion failed: %s: %s",
+                    type(e).__name__,
+                    e,
+                )
+
     def _progress_total_size(self) -> int | None:
         """ProgressEvent에 실을 전체 크기. 미리 알 수 없는 다운로더는 None."""
         return self.s.total_size
@@ -1267,6 +1289,7 @@ class BaseDownloader(ABC):
         monitor = threading.Thread(target=self._monitor_loop, name="DownloadMonitor", daemon=True)
         stopped_in = None  # 중단을 처음 본 단계 — prepare · transfer · postprocess
         phase = "prepare"  # 지금 도는 단계 — 일이 그만두라는 답을 받아 멈췄을 때 적는다 (#410)
+        finish_notified = False  # 완료를 알렸는가 — 그 뒤의 정리 실패는 결과를 바꾸지 않는다 (#603)
         self._failure_notified = False
         try:
             self.s.start_time = tm.time()
@@ -1455,11 +1478,14 @@ class BaseDownloader(ABC):
                         postprocess_elapsed,
                         *((all_paused,) if all_paused > 0 else ()),
                     )
-                    self.logger.save_and_close()
                     self._on_finished()
+                    finish_notified = True
 
             # (5) 정상 경로 종료 후 정리 (중단으로 빠져나온 경우 포함)
-            self._cleanup_after_run()
+            if finish_notified:
+                self._cleanup_after_finish()
+            else:
+                self._cleanup_after_run()
 
             # 사용자가 강제로 중단한 경우 부분 산출물 삭제 (#185 — try 안으로 이동).
             # 여기 있어야 하는 이유: 이 블록은 예외 없이 끝난 경로에서만 닿는다.
