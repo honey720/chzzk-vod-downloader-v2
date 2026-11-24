@@ -727,6 +727,86 @@ def test_remux_failure_whose_output_cannot_be_removed_still_fails_as_a_postproce
     assert (tmp_path / "CVDv2_temp_out").is_dir()
 
 
+def test_cleanup_error_after_finish_keeps_a_single_finish(tmp_path, monkeypatch) -> None:
+    """완료를 알린 뒤 정리가 예외를 내면 완료 한 번과 경고 로그만 남아야 한다 (#603).
+
+    임시 폴더 정리가 PermissionError
+    -> run()이 예외 없이 끝난다, 실패 == [], 완료 1회, 경고 1줄, 경고 뒤 로그 닫기 1회
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    finish_count = []
+    notify_finish = engine._on_finished
+    warnings_at_close = []
+    close_logger = logger.save_and_close
+
+    def count_finish() -> None:
+        finish_count.append(True)
+        notify_finish()
+
+    def cleanup() -> Never:
+        raise PermissionError(13, "테스트 — 지울 수 없다")
+
+    def close_after_recording() -> None:
+        warnings_at_close.append(list(logger.warnings))
+        close_logger()
+
+    engine._on_finished = count_finish
+    monkeypatch.setattr(engine, "_cleanup_after_run", cleanup)
+    monkeypatch.setattr(logger, "save_and_close", close_after_recording)
+    escaped = []
+
+    def run() -> None:
+        try:
+            engine.run()
+        except BaseException as e:
+            escaped.append(e)
+
+    data.model.start()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert escaped == []
+    assert failures == []
+    assert len(finish_count) == 1
+    assert data.model.state == DownloadState.FINISHED
+    assert len(logger.warnings) == 1
+    assert "Cleanup after completion failed: PermissionError" in logger.warnings[0]
+    assert logger.errors == []
+    assert logger.closed == 1
+    assert warnings_at_close == [logger.warnings]
+
+
+def test_failure_before_finish_is_still_reported_as_a_failure(tmp_path, monkeypatch) -> None:
+    """완료를 알리기 전에 후처리가 실패하면 실패 한 번으로 알려지고 완료는 없어야 한다 (#603).
+
+    후처리가 RuntimeError("후처리 전 실패")
+    -> 실패 == [그 RuntimeError], 완료 0회, 정리 경고 없음
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    cause = RuntimeError("후처리 전 실패")
+
+    def postprocess() -> Never:
+        raise cause
+
+    monkeypatch.setattr(engine, "postprocess", postprocess)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert failures == [cause]
+    assert not finished.is_set()
+    assert not any("Cleanup after completion" in line for line in logger.warnings)
+    assert logger.closed == 1
+
+
 def test_cleanup_error_after_a_failure_does_not_replace_the_failure(tmp_path, monkeypatch) -> None:
     """실패 뒤 정리가 예외를 내도 실패는 원래 예외로 한 번 알려지고, 정리 예외는 로그로만 남아야 한다 (#389).
 
