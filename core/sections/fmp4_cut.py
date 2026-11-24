@@ -143,8 +143,9 @@ def cut_fmp4_section(
 
     Raises:
         CutError: 받은 세그먼트로 구간을 만들 수 없거나(``CUT_UNSUPPORTED`` — 이어지는
-            세그먼트가 키프레임으로 시작하지 않는 등), ffmpeg가 실패하거나 잇는 중 조각 목록
-            쓰기 · 세그먼트 읽기가 ``OSError``로 실패한 경우(``CUT_FAILED`` — #604)
+            세그먼트가 키프레임으로 시작하지 않는 등), ffmpeg가 실패하거나 프레임 정보 읽기 ·
+            경계 조각 입력 쓰기 · 잇는 중 조각 목록 쓰기 · 세그먼트 읽기가 ``OSError``로 실패한
+            경우(``CUT_FAILED`` — #604)
         CutCancelled: should_stop이 참을 돌려줘 그만둔 경우
         Mp4Error: 세그먼트의 moof를 해석하지 못한 경우(``core.media.mp4``)
     """
@@ -157,7 +158,10 @@ def cut_fmp4_section(
         parsed = []
         for count, path in enumerate(paths, start=1):
             _hold()
-            parsed.append(read_segment_file(path, init))
+            try:
+                parsed.append(read_segment_file(path, init))
+            except OSError as e:
+                raise _io_failure("프레임 정보를 읽을 세그먼트를 읽지 못했다", path, e) from e
             if on_read is not None:
                 on_read(count / len(paths))
         index = build_fmp4_index(init, parsed, section.origin)
@@ -320,11 +324,33 @@ def _segment_frames(head: Fmp4Head, segment: Fmp4Segment, section: Fmp4Section) 
 
 
 def _joined(work_dir: str, name: str, head: Fmp4Head, segment_path: str) -> str:
-    """초기화 세그먼트 + 세그먼트 하나를 이은 작은 fMP4 — ffmpeg가 탐색할 수 있는 입력이다."""
+    """초기화 세그먼트 + 세그먼트 하나를 이은 작은 fMP4 — ffmpeg가 탐색할 수 있는 입력이다.
+
+    ``OSError``는 그 구간만의 실패(``CutError``)로 바꾼다 (#604). 경고 로그에는 실패한 쪽의
+    경로를 적는다 — 읽던 세그먼트인지 쓰던 입력 파일인지.
+
+    Raises:
+        CutError: 세그먼트를 읽거나 입력 파일을 쓰지 못한 경우(``CUT_FAILED``)
+    """
     path = os.path.join(work_dir, name)
-    with open(path, "wb") as out, open(segment_path, "rb") as source:
-        out.write(head.init_data)
-        shutil.copyfileobj(source, out, _COPY_CHUNK_BYTES)
+    failing = segment_path
+    try:
+        with open(segment_path, "rb") as source:
+            failing = path
+            with open(path, "wb") as out:
+                out.write(head.init_data)
+                while True:
+                    failing = segment_path
+                    chunk = source.read(_COPY_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    failing = path
+                    out.write(chunk)
+                failing = path  # 닫을 때의 flush
+            failing = segment_path
+    except OSError as e:
+        what = "경계 조각 입력을 쓰지 못했다" if failing == path else "세그먼트를 읽지 못했다"
+        raise _io_failure(what, failing, e) from e
     return path
 
 

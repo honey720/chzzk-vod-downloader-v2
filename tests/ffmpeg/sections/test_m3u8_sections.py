@@ -62,7 +62,7 @@ import core.engine.segment_space as space_module
 import core.utils.ffmpeg as ffmpeg_module
 import core.sections.fmp4_cut as fmp4_cut_module
 import core.sections.hybrid as hybrid_module
-from core.media.fmp4_index import Fmp4Head
+from core.media.fmp4_index import Fmp4Head, Fmp4Init, Fmp4Segment
 from core.media.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
 from core.media.hls import parse_media_playlist
 from core.sections.hls_fmp4 import fetch_fmp4_head, segment_file_name, segment_frames
@@ -1516,6 +1516,143 @@ def test_section_whose_segment_cannot_be_read_fails_alone(
     """
     caplog.set_level(logging.WARNING, logger="core.sections.fmp4_cut")
     refuse = _ReadFailsInSecondCut(monkeypatch, with_filename)
+
+    run = _Run(host, tmp_path, _three(sources["plain"])).start()
+
+    assert refuse.cuts == 3
+    assert len(refuse.refused) == 1
+    assert refuse.refused[0].endswith(".m4v")
+    _assert_only_one_section_failed(run, 0, tmp_path, refuse.refused[0])
+    warnings = _io_warnings(caplog)
+    assert len(warnings) == 1
+    assert "OSError" in warnings[0] and refuse.refused[0] in warnings[0]
+
+
+class _BoundaryOpenFails:
+    """첫 컷이 경계 조각 입력을 만들려고 파일을 처음 열 때 한 번만 `OSError`를 낸다.
+
+    where가 ``write``면 `head_source.mp4`를 쓰기로 열 때 ENOSPC를 낸다 — with_filename이 참이면
+    여는 자리에서 경로가 든 오류를, 거짓이면 닫는 자리에서 `filename` 없는 오류를 낸다.
+    ``read``면 그 입력에 옮길 세그먼트를 읽기로 열 때 경로가 든 EIO를 낸다.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, where: str, with_filename: bool) -> None:
+        self.refused: list[str] = []
+        self._where = where
+        self._with_filename = with_filename
+        monkeypatch.setattr(fmp4_cut_module, "open", self._open, raising=False)
+
+    def _open(self, file: str, mode: str = "r", *args: object, **kwargs: object) -> IO:
+        if not self.refused and self._where == "write":
+            if os.path.basename(file) == "head_source.mp4" and "w" in mode:
+                self.refused.append(file)
+                if self._with_filename:
+                    raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), file)
+                return _FlushFailsOnClose(open(file, mode, *args, **kwargs))
+        if not self.refused and self._where == "read":
+            if file.endswith(".m4v") and "r" in mode:
+                self.refused.append(file)
+                raise OSError(errno.EIO, os.strerror(errno.EIO), file)
+        return open(file, mode, *args, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("where", "with_filename", "name"),
+    [
+        ("write", True, "head_source.mp4"),
+        ("write", False, "head_source.mp4"),
+        ("read", True, None),
+    ],
+    ids=["write-open", "write-flush-no-filename", "segment-open"],
+)
+def test_section_whose_boundary_input_cannot_be_made_fails_alone(
+    host,
+    sources,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    where: str,
+    with_filename: bool,
+    name: str | None,
+) -> None:
+    """경계 조각 입력을 만들다 OSError가 나면 그 구간만 실패하고 원인이 경고 로그에 남아야 한다 (#604).
+
+    plain, 구간 셋. 첫 컷(둘째 구간)이 경계 조각 입력을 만들 때 OSError — `head_source.mp4`를
+    여는 자리(ENOSPC, 경로 있음) · 닫는 자리(ENOSPC, `filename` 없음) 또는 옮길 세그먼트를 여는
+    자리(EIO, 경로 있음)
+    -> 거절 1회(`section_2` 작업 폴더의 `head_source.mp4` 또는 `.m4v` 세그먼트),
+       실패 1건(PostprocessError, 원인 CutError(CUT_FAILED), 그 원인 OSError),
+       CutError 글에 절대 경로 없음 · 끝이 `(<거절된 파일 이름>)`,
+       구간 상태 == (전체 3, 완료 2, 실패 1), 이어받기 기록이 있다,
+       `_1` · `_3` 파일과 임시 폴더가 남고 `_2` 파일은 없다,
+       `core.sections.fmp4_cut` WARNING 1건에 `OSError` · 거절된 경로
+    """
+    caplog.set_level(logging.WARNING, logger="core.sections.fmp4_cut")
+    refuse = _BoundaryOpenFails(monkeypatch, where, with_filename)
+
+    run = _Run(host, tmp_path, _three(sources["plain"])).start()
+
+    assert len(refuse.refused) == 1
+    if name is None:
+        assert refuse.refused[0].endswith(".m4v")
+    else:
+        assert os.path.basename(refuse.refused[0]) == name
+        assert os.path.basename(os.path.dirname(refuse.refused[0])) == "section_2"
+    _assert_only_one_section_failed(run, 1, tmp_path, refuse.refused[0])
+    warnings = _io_warnings(caplog)
+    assert len(warnings) == 1
+    assert "OSError" in warnings[0] and refuse.refused[0] in warnings[0]
+
+
+class _FrameReadFailsInSecondCut:
+    """둘째 컷 호출이 시작된 뒤 프레임 정보를 읽으려고 세그먼트를 처음 열 때 한 번만 `OSError`(EIO)를 낸다.
+
+    with_filename이 거짓이면 열린 파일의 읽기 실패처럼 `filename` 없는 오류를 낸다.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, with_filename: bool) -> None:
+        self.cuts = 0
+        self.refused: list[str] = []
+        self._with_filename = with_filename
+        self._real_cut = m3u8_module.cut_fmp4_section
+        self._real_read = fmp4_cut_module.read_segment_file
+        monkeypatch.setattr(m3u8_module, "cut_fmp4_section", self._cut)
+        monkeypatch.setattr(fmp4_cut_module, "read_segment_file", self._read)
+
+    def _cut(self, *args: object, **kwargs: object) -> tuple[CutResult, CutFrames]:
+        self.cuts += 1
+        return self._real_cut(*args, **kwargs)
+
+    def _read(self, path: str, init: Fmp4Init) -> Fmp4Segment:
+        if not self.refused and self.cuts >= 2:
+            self.refused.append(path)
+            if self._with_filename:
+                raise OSError(errno.EIO, os.strerror(errno.EIO), path)
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return self._real_read(path, init)
+
+
+@pytest.mark.parametrize("with_filename", [True, False], ids=["filename", "no-filename"])
+def test_section_whose_segment_frames_cannot_be_read_fails_alone(
+    host,
+    sources,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    with_filename: bool,
+) -> None:
+    """첫 구간을 끝낸 뒤 프레임 정보를 읽으려고 세그먼트를 열다 OSError가 나면 그 구간만 실패해야 한다 (#604).
+
+    plain, 구간 셋. 둘째 컷(첫째 구간 — 첫 컷은 둘째 구간)이 시작된 뒤 프레임 정보를 읽는 첫
+    세그먼트에서 OSError(EIO) — 경로 있음 또는 `filename` 없음
+    -> 컷 호출 3회, 거절 1회(`.m4v` 세그먼트), 실패 1건(PostprocessError, 원인 CutError(CUT_FAILED), 그 원인 OSError),
+       CutError 글에 절대 경로 없음 · 끝이 `(<세그먼트 파일 이름>)`,
+       구간 상태 == (전체 3, 완료 2, 실패 1), 이어받기 기록이 있다,
+       `_2` · `_3` 파일과 임시 폴더가 남고 `_1` 파일은 없다,
+       `core.sections.fmp4_cut` WARNING 1건에 `OSError` · 세그먼트 경로
+    """
+    caplog.set_level(logging.WARNING, logger="core.sections.fmp4_cut")
+    refuse = _FrameReadFailsInSecondCut(monkeypatch, with_filename)
 
     run = _Run(host, tmp_path, _three(sources["plain"])).start()
 
