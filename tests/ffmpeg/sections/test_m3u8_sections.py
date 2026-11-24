@@ -1392,20 +1392,26 @@ class _ListWriteFails:
         return open(file, mode, *args, **kwargs)
 
 
-class _ReadFailsAfter:
-    """파일 after가 생긴 뒤 잇기가 세그먼트를 처음 읽을 때 한 번만 `OSError`(EIO)를 낸다."""
+class _ReadFailsInSecondCut:
+    """둘째 컷 호출이 시작된 뒤 잇기가 세그먼트를 처음 읽을 때 한 번만 `OSError`(EIO)를 낸다."""
 
-    def __init__(self, monkeypatch, after: str) -> None:
+    def __init__(self, monkeypatch) -> None:
+        self.cuts = 0
         self.refused: list[str] = []
-        self._after = after
-        self._real = fmp4_cut_module.read_in_chunks
+        self._real_cut = m3u8_module.cut_fmp4_section
+        self._real_read = fmp4_cut_module.read_in_chunks
+        monkeypatch.setattr(m3u8_module, "cut_fmp4_section", self._cut)
         monkeypatch.setattr(fmp4_cut_module, "read_in_chunks", self._read)
 
+    def _cut(self, *args: object, **kwargs: object) -> tuple[CutResult, CutFrames]:
+        self.cuts += 1
+        return self._real_cut(*args, **kwargs)
+
     def _read(self, path: str, chunk_size: int) -> Iterator[bytes]:
-        if not self.refused and os.path.isfile(self._after):
+        if not self.refused and self.cuts >= 2:
             self.refused.append(path)
             raise OSError(errno.EIO, os.strerror(errno.EIO), path)
-        yield from self._real(path, chunk_size)
+        yield from self._real_read(path, chunk_size)
 
 
 def _io_warnings(caplog) -> list[str]:
@@ -1462,19 +1468,19 @@ def test_section_whose_segment_cannot_be_read_fails_alone(
 ) -> None:
     """첫 구간을 끝낸 뒤 잇기가 세그먼트를 읽다 OSError가 나면 그 구간만 실패하고 끝낸 구간 파일은 남아야 한다 (#604).
 
-    plain, 구간 셋. 첫 컷(둘째 구간)의 `_2` 파일이 생긴 뒤 잇기의 첫 세그먼트 읽기(둘째 컷 — 첫째 구간)에서
+    plain, 구간 셋. 둘째 컷(첫째 구간 — 첫 컷은 둘째 구간)이 시작된 뒤 잇기의 첫 세그먼트 읽기에서
     OSError(EIO)
-    -> 거절 1회(`.m4v` 세그먼트), 실패 1건(PostprocessError, 원인 CutError(CUT_FAILED), 그 원인 OSError),
+    -> 컷 호출 3회, 거절 1회(`.m4v` 세그먼트), 실패 1건(PostprocessError, 원인 CutError(CUT_FAILED), 그 원인 OSError),
        CutError 글에 절대 경로 없음, 구간 상태 == (전체 3, 완료 2, 실패 1), 이어받기 기록이 있다,
        `_2` · `_3` 파일과 임시 폴더가 남고 `_1` 파일은 없다,
        `core.sections.fmp4_cut` WARNING 1건에 `OSError` · 세그먼트 경로
     """
     caplog.set_level(logging.WARNING, logger="core.sections.fmp4_cut")
-    run = _Run(host, tmp_path, _three(sources["plain"]))
-    refuse = _ReadFailsAfter(monkeypatch, run.paths[1])
+    refuse = _ReadFailsInSecondCut(monkeypatch)
 
-    run.start()
+    run = _Run(host, tmp_path, _three(sources["plain"])).start()
 
+    assert refuse.cuts == 3
     assert len(refuse.refused) == 1
     assert refuse.refused[0].endswith(".m4v")
     _assert_only_one_section_failed(run, 0, tmp_path)
