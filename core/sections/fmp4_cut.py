@@ -301,10 +301,11 @@ def _io_failure(what: str, error: OSError) -> CutError:
     ``CutError``의 글에는 파일 이름만 넣는다 — 잇는 ffmpeg의 실패 글처럼 작업 폴더의 절대 경로를
     싣지 않는다.
     """
-    logger.warning("%s — %s: %s", what, type(error).__name__, error)
-    name = os.path.basename(str(error.filename)) if error.filename is not None else "?"
-    reason = error.strerror or str(error)
     kind = type(error).__name__
+    reason = error.strerror or str(error)
+    # 경로는 그대로 적는다 — str(error)는 경로를 repr로 적어 Windows에서 역슬래시가 두 겹이 된다
+    logger.warning("%s — %s errno=%s %s: %s", what, kind, error.errno, reason, error.filename)
+    name = os.path.basename(str(error.filename)) if error.filename is not None else "?"
     return CutError(CUT_FAILED, f"{what}: {kind} errno={error.errno} {reason} ({name})")
 
 
