@@ -143,7 +143,8 @@ def cut_fmp4_section(
 
     Raises:
         CutError: 받은 세그먼트로 구간을 만들 수 없거나(``CUT_UNSUPPORTED`` — 이어지는
-            세그먼트가 키프레임으로 시작하지 않는 등), ffmpeg가 실패한 경우(``CUT_FAILED``)
+            세그먼트가 키프레임으로 시작하지 않는 등), ffmpeg가 실패하거나 잇는 중 조각 목록
+            쓰기 · 세그먼트 읽기가 ``OSError``로 실패한 경우(``CUT_FAILED`` — #604)
         CutCancelled: should_stop이 참을 돌려줘 그만둔 경우
         Mp4Error: 세그먼트의 moof를 해석하지 못한 경우(``core.media.mp4``)
     """
@@ -281,12 +282,30 @@ def _feed(
     if init_data:
         yield init_data
     for number, path in enumerate(paths):
-        for chunk in read_in_chunks(path, _COPY_CHUNK_BYTES):
-            _hold()
-            yield chunk
+        try:
+            for chunk in read_in_chunks(path, _COPY_CHUNK_BYTES):
+                _hold()
+                yield chunk
+        except OSError as e:
+            raise _io_failure("세그먼트를 읽지 못했다", e) from e
         # 여기 왔으면 이 세그먼트의 마지막 조각까지 넘어갔다
         if on_each is not None:
             on_each(number)
+
+
+def _io_failure(what: str, error: OSError) -> CutError:
+    """구간을 잇는 중 난 파일 입출력 오류를 그 구간만의 실패(``CutError``)로 바꾼다 (#604).
+
+    ``OSError``가 그대로 나가면 부르는 쪽(``_cut_sections``)이 구간 실패로 잡지 못해 다운로드
+    전체가 실패하고 끝낸 구간 파일까지 지운다. 원인(오류 종류 · errno · 경로)은 경고 로그에 남긴다.
+    ``CutError``의 글에는 파일 이름만 넣는다 — 잇는 ffmpeg의 실패 글처럼 작업 폴더의 절대 경로를
+    싣지 않는다.
+    """
+    logger.warning("%s — %s: %s", what, type(error).__name__, error)
+    name = os.path.basename(str(error.filename)) if error.filename is not None else "?"
+    reason = error.strerror or str(error)
+    kind = type(error).__name__
+    return CutError(CUT_FAILED, f"{what}: {kind} errno={error.errno} {reason} ({name})")
 
 
 def _segment_frames(head: Fmp4Head, segment: Fmp4Segment, section: Fmp4Section) -> CutFrames:
@@ -462,8 +481,11 @@ def _cut(
             if number + 1 < len(pieces):
                 span = frames.frame_pts[piece_end] - frames.frame_pts[piece_first]
                 lines.append(f"duration {hc._seconds(span)}")
-        with open(os.path.join(work_dir, _LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
-            f.write("\n".join(lines) + "\n")
+        try:
+            with open(os.path.join(work_dir, _LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+                f.write("\n".join(lines) + "\n")
+        except OSError as e:
+            raise _io_failure("조각 목록을 쓰지 못했다", e) from e
         # 목록 안의 파일(조각 mp4 · 변환 쪽의 조각난 mp4)도 concat의 format_whitelist로 잠긴다 (#600)
         video_input = [
             "-protocol_whitelist", "file,pipe,fd", *input_lock("concat", piped=False), "-safe", "0",
