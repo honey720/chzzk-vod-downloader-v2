@@ -15,8 +15,10 @@ import pytest
 from tests.qt_platform import CI_FONT_DIRS, NATIVE_SWITCH, defaults
 
 ROOT = Path(__file__).resolve().parents[2]  # 저장소 루트
-# 별도 프로세스에서 지울 환경 변수 — 이 세션(CI · 로컬)의 값이 결과에 섞이지 않게
-_CLEARED = ("QT_QPA_PLATFORM", "QT_QPA_FONTDIR", "CI", NATIVE_SWITCH)
+# 별도 프로세스에서 지울 환경 변수 — 이 세션(CI · 로컬)의 값이 결과에 섞이지 않게.
+# PYTEST_XDIST_WORKER: 별도 프로세스는 xdist 워커가 아니다. 남기면 Linux의 [ci] 경우가 워커 Xvfb를
+# 띄운다(#592 · #635)
+_CLEARED = ("QT_QPA_PLATFORM", "QT_QPA_FONTDIR", "CI", NATIVE_SWITCH, "PYTEST_XDIST_WORKER")
 # conftest를 읽은 뒤의 두 값을 JSON으로 찍는다. 인자가 app이면 Qt 앱을 만들어 쓰인 플랫폼도 찍는다
 _READ_CONFTEST = (
     "import json, os, sys\n"
