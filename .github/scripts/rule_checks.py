@@ -35,6 +35,22 @@ ISSUE_SECTIONS = {  # 이슈 폼이 본문에 남기는 ### 머리
     "feature": ("목적", "요구사항", "작업 범위", "완료 조건"),
     "improvement": ("현재 상태와 문제", "제안 내용", "리스크와 영향 범위", "착수 조건"),
 }
+# Claude Code가 붙이는 귀속 줄 · 세션 링크. 세션 링크는 코드 안에 있어도 막는다
+SESSION_URL_RE = re.compile(r"claude\.ai/code/session_[A-Za-z0-9]{6,}")
+ATTRIBUTION_TEXT = (
+    ("attr-generated", re.compile(r"Generated\s+(with|by)\s+\[?\s*Claude(\s+Code)?\b", re.I)),
+    ("attr-coauthor", re.compile(r"^\s*Co-Authored-By:.*(claude|anthropic)", re.I | re.M)),
+    ("attr-session", re.compile(r"^\s*Claude-Session\s*:", re.I | re.M)),
+    ("attr-link", re.compile(r"claude\.com/claude-code\b", re.I)),
+)  # fmt: skip
+CODE_RE = re.compile(r"```.*?(```|\Z)|`[^`\n]+`", re.S)  # 인용한 코드 — 귀속 문구 검사에서 뺀다
+FENCE_RE = re.compile(r"```.*?(```|\Z)", re.S)  # 코드 블록 — 자리 표시 검사에서 뺀다
+# 한 줄을 통째로 차지한 대문자 이름(FAULT_TABLE 같은 채우지 않은 자리)
+PLACEHOLDER_LINE_RE = re.compile(r"^[ \t]*\{{0,2}[A-Z][A-Z0-9]*(_[A-Z0-9]+)+\}{0,2}[ \t]*$", re.M)
+TEMPLATE_COMMENTS = (
+    "<!-- 무엇을 어떻게 바꿨는지 요약 -->",
+    "<!-- 판단이 필요했던 지점",
+)  # PR 템플릿
 LINK_RE = re.compile(r"\b(Closes|Refs) #(\d+)\b")
 CLOSE_WORD_RE = re.compile(r"\b(close[sd]?|fix(e[sd])?|resolve[sd]?) #\d+", re.I)
 COMMENT_HEAD = "🤖 **Claude** —"  # privacy.md 코멘트 첫 줄
@@ -235,6 +251,7 @@ def check_pr(
         first = body.lstrip().split("\n## ", 1)[0] if not body.lstrip().startswith("## ") else ""
         if not first.strip():
             out.append(Finding("warn", "pr-summary", "본문 최상단 요약(3~5줄) 없음"))
+        out += check_placeholder(body)
         if by_agent and "agent" not in labels_set:
             out.append(Finding("block", "agent-label", "에이전트 PR에 `agent` 라벨 없음"))
         elif owner_pr and "agent" not in labels_set:
@@ -264,6 +281,7 @@ def check_pr(
                 )
             )
     out += check_privacy(title + "\n" + body)
+    out += check_attribution(body)
     if not owner_pr:
         out = only_warn(out)
     return out
@@ -307,7 +325,34 @@ def check_comment(body: str) -> list[Finding]:
     out: list[Finding] = []
     if not body.lstrip().startswith(COMMENT_HEAD):
         out.append(Finding("block", "comment-head", f"첫 줄이 「{COMMENT_HEAD}」로 시작하지 않음"))
-    return out + check_privacy(body)
+    return out + check_privacy(body) + check_attribution(body)
+
+
+def check_attribution(text: str) -> list[Finding]:
+    """Claude 귀속 줄 · 세션 링크를 찾는다.
+
+    커밋은 commit-msg 훅이 꼬리표 줄을 지우지만 PR 본문 · 코멘트는 지울 자리가 없어 막는다.
+    코드로 인용한 귀속 문구는 문제 설명일 수 있어 통과시키고, 세션 링크는 어디에 있어도 막는다.
+    """
+    out: list[Finding] = []
+    if SESSION_URL_RE.search(text):
+        out.append(Finding("block", "attr-session-url", "Claude 세션 링크"))
+    prose = CODE_RE.sub("", text)
+    for rule, rx in ATTRIBUTION_TEXT:
+        if rx.search(prose):
+            out.append(Finding("block", rule, "Claude 귀속 줄"))
+    return out
+
+
+def check_placeholder(body: str) -> list[Finding]:
+    """PR 본문에 채우지 않은 자리 표시 · 템플릿 안내 주석이 남았는지 찾는다."""
+    out: list[Finding] = []
+    for m in PLACEHOLDER_LINE_RE.finditer(FENCE_RE.sub("", body)):
+        out.append(Finding("block", "placeholder", f"자리 표시가 남음 — {m.group().strip()}"))
+    for c in TEMPLATE_COMMENTS:
+        if c in body:
+            out.append(Finding("block", "placeholder", "템플릿 안내 주석이 남음"))
+    return out
 
 
 def check_privacy(text: str) -> list[Finding]:
