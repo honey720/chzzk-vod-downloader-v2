@@ -28,12 +28,13 @@ HlsAesDownloader를 구간과 함께 실제로 돌려 구간 파일이 나오는
 - 전체 다운로드(구간 없음)의 경로는 그대로다
 """
 
+import errno
 import logging
 import os
 import subprocess
 import threading
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import pytest
 from Crypto.Cipher import AES
@@ -1118,6 +1119,75 @@ def test_section_whose_output_ffmpeg_cannot_write_or_remove_fails_alone(
 
     assert (again.finished, again.failures) == (1, [])
     assert host.requests[requests_before:] == [("GET", name, None) for name in _names(gone)]
+
+
+class _JoinReadFailsInSecondCut:
+    """둘째 컷 호출이 시작된 뒤 잇기가 세그먼트를 처음 읽을 때 한 번만 `OSError`(EIO)를 낸다."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.cuts = 0
+        self.refused: list[str] = []
+        self._real_cut = aes_module.cut_ts_section
+        self._real_read = fmp4_cut_module.read_in_chunks
+        monkeypatch.setattr(aes_module, "cut_ts_section", self._cut)
+        monkeypatch.setattr(fmp4_cut_module, "read_in_chunks", self._read)
+
+    def _cut(self, *args: object, **kwargs: object) -> tuple[CutResult, CutFrames]:
+        self.cuts += 1
+        return self._real_cut(*args, **kwargs)
+
+    def _read(self, path: str, chunk_size: int) -> Iterator[bytes]:
+        if not self.refused and self.cuts >= 2:
+            self.refused.append(path)
+            raise OSError(errno.EIO, os.strerror(errno.EIO), path)
+        yield from self._real_read(path, chunk_size)
+
+
+def test_section_whose_segment_cannot_be_read_while_joining_fails_alone(
+    vod,
+    host,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """첫 구간을 끝낸 뒤 잇기가 세그먼트를 읽다 OSError가 나면 그 구간만 실패하고 끝낸 구간 파일은 남아야 한다 (#604).
+
+    구간 셋(0.8 ~ 2.3초 · 3.4 ~ 5.2초 · 2.2 ~ 3.6초 — 컷 순서는 `_2` · `_1` · `_3`). 둘째 컷(`_1`)이
+    시작된 뒤 잇기의 첫 세그먼트 읽기에서 OSError(EIO, 경로 있음)
+    -> 컷 호출 3회, 거절 1회(`.ts` 세그먼트), 실패 1건(PostprocessError, 원인 CutError(CUT_FAILED), 그 원인 OSError),
+       CutError 글에 절대 경로 없음 · 끝이 `(<세그먼트 파일 이름>)`,
+       구간 상태 == (전체 3, 완료 2, 실패 1), 이어받기 기록이 있다,
+       `_2` · `_3` 파일과 임시 폴더가 남고 `_1` 파일은 없다,
+       `core.sections.fmp4_cut` WARNING 1건에 `OSError` · 세그먼트 경로
+    """
+    caplog.set_level(logging.WARNING, logger="core.sections.fmp4_cut")
+    refuse = _JoinReadFailsInSecondCut(monkeypatch)
+
+    run = _Run(host, tmp_path, THREE).start()
+
+    assert refuse.cuts == 3
+    assert len(refuse.refused) == 1
+    assert refuse.refused[0].endswith(".ts")
+    assert run.finished == 0
+    assert [type(e) for e in run.failures] == [PostprocessError]
+    cause = run.failures[0].__cause__
+    assert isinstance(cause, CutError) and cause.message_key == CUT_FAILED
+    assert isinstance(cause.__cause__, OSError)
+    assert str(cause).endswith(f"({os.path.basename(refuse.refused[0])})")
+    for absolute in (str(tmp_path), str(tmp_path).replace("\\", "/")):
+        assert absolute not in str(cause)
+    data = run.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert data.section_resume is not None
+    assert [os.path.isfile(path) for path in run.paths] == [False, True, True]
+    assert os.path.isdir(run.engine.temp_dir)
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "core.sections.fmp4_cut" and record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    assert "OSError" in warnings[0] and refuse.refused[0] in warnings[0]
 
 
 def test_stop_during_retry_removes_only_what_the_retry_made(
