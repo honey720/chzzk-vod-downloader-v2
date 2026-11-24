@@ -161,7 +161,9 @@ def cut_fmp4_section(
             try:
                 parsed.append(read_segment_file(path, init))
             except OSError as e:
-                raise _io_failure("프레임 정보를 읽을 세그먼트를 읽지 못했다", path, e) from e
+                raise hc.io_failure(
+                    "프레임 정보를 읽을 세그먼트를 읽지 못했다", path, e, logger
+                ) from e
             if on_read is not None:
                 on_read(count / len(paths))
         index = build_fmp4_index(init, parsed, section.origin)
@@ -291,29 +293,10 @@ def _feed(
                 _hold()
                 yield chunk
         except OSError as e:
-            raise _io_failure("세그먼트를 읽지 못했다", path, e) from e
+            raise hc.io_failure("세그먼트를 읽지 못했다", path, e, logger) from e
         # 여기 왔으면 이 세그먼트의 마지막 조각까지 넘어갔다
         if on_each is not None:
             on_each(number)
-
-
-def _io_failure(what: str, path: str, error: OSError) -> CutError:
-    """구간을 잇는 중 난 파일 입출력 오류를 그 구간만의 실패(``CutError``)로 바꾼다 (#604).
-
-    ``OSError``가 그대로 나가면 부르는 쪽(``_cut_sections``)이 구간 실패로 잡지 못해 다운로드
-    전체가 실패하고 끝낸 구간 파일까지 지운다. 원인(오류 종류 · errno · 경로)은 경고 로그에 남긴다.
-    ``CutError``의 글에는 파일 이름만 넣는다 — 잇는 ffmpeg의 실패 글처럼 작업 폴더의 절대 경로를
-    싣지 않는다.
-
-    경로는 ``error.filename``이 아니라 부르는 쪽이 연 파일의 경로(``path``)를 쓴다 — 열린 파일의
-    읽기 · 쓰기 실패(닫을 때 flush의 ENOSPC 등)는 ``filename``이 비어 있다(#637 리뷰).
-    """
-    kind = type(error).__name__
-    reason = error.strerror or str(error)
-    # 경로는 그대로 적는다 — str(error)는 경로를 repr로 적어 Windows에서 역슬래시가 두 겹이 된다
-    logger.warning("%s — %s errno=%s %s: %s", what, kind, error.errno, reason, path)
-    name = os.path.basename(path)
-    return CutError(CUT_FAILED, f"{what}: {kind} errno={error.errno} {reason} ({name})")
 
 
 def _segment_frames(head: Fmp4Head, segment: Fmp4Segment, section: Fmp4Section) -> CutFrames:
@@ -350,7 +333,7 @@ def _joined(work_dir: str, name: str, head: Fmp4Head, segment_path: str) -> str:
             failing = segment_path
     except OSError as e:
         what = "경계 조각 입력을 쓰지 못했다" if failing == path else "세그먼트를 읽지 못했다"
-        raise _io_failure(what, failing, e) from e
+        raise hc.io_failure(what, failing, e, logger) from e
     return path
 
 
@@ -516,7 +499,7 @@ def _cut(
             with open(list_path, "w", encoding="utf-8", newline="\n") as f:
                 f.write("\n".join(lines) + "\n")
         except OSError as e:
-            raise _io_failure("조각 목록을 쓰지 못했다", list_path, e) from e
+            raise hc.io_failure("조각 목록을 쓰지 못했다", list_path, e, logger) from e
         # 목록 안의 파일(조각 mp4 · 변환 쪽의 조각난 mp4)도 concat의 format_whitelist로 잠긴다 (#600)
         video_input = [
             "-protocol_whitelist", "file,pipe,fd", *input_lock("concat", piped=False), "-safe", "0",

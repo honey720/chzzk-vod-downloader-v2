@@ -48,6 +48,7 @@ base_url 해석(#75)과 같은 주입 방식이다.
 """
 
 import dataclasses
+import logging
 import os
 import shutil
 import time as tm
@@ -80,7 +81,7 @@ from core.models.events import ProgressEvent
 from core.models.plan import DownloadPlan
 from core.models.section_resume import SectionResume
 from core.media.ts_index import TsHead, TsStreams
-from core.sections.hybrid import CutCancelled, CutError
+from core.sections.hybrid import CutCancelled, CutError, io_failure
 from core.utils.paths import choose_temp_dir, release_output_paths
 from core.sections.section_plan import PlannedSection
 from core.sections.ts_cut import cut_ts_section
@@ -88,6 +89,8 @@ from core.sections.ts_sections import TsSectionSource, choose_ts_frame_rate, pla
 
 
 __all__ = ["DecryptionError", "HlsAesDownloader"]  # DecryptionError는 decrypt.py에 있다
+
+logger = logging.getLogger(__name__)
 
 
 class HlsAesDownloader(BaseDownloader):
@@ -568,8 +571,14 @@ class HlsAesDownloader(BaseDownloader):
             if found is None:
                 found = read.get(index)
             if found is None:
-                with open(self._segment_path(index), "rb") as f:
-                    found = read[index] = parse_ts(f.read())
+                path = self._segment_path(index)
+                try:
+                    with open(path, "rb") as f:
+                        data = f.read()
+                except OSError as e:
+                    # 그 구간만 실패한다 — 글에는 파일 이름만, 경로는 경고 로그에 (#640)
+                    raise io_failure("받은 세그먼트를 읽지 못했다", path, e, logger) from e
+                found = read[index] = parse_ts(data)
             return found
 
         source = TsSectionSource(head.playlist, segment_at, self._frame_rate)

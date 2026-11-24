@@ -60,6 +60,7 @@ from core.models.plan import TimeRange
 from core.sections.check import check_cut
 from core.sections.cut import CutFrames, CutResult
 import core.sections.fmp4_cut as fmp4_cut_module
+import core.sections.ts_cut as ts_cut_module
 from core.utils.ffmpeg import RemuxError, get_ffmpeg_exe
 from core.sections.hybrid import CUT_FAILED, CutError
 from core.utils.paths import build_section_output_paths
@@ -1185,6 +1186,231 @@ def test_section_whose_segment_cannot_be_read_while_joining_fails_alone(
         record.getMessage()
         for record in caplog.records
         if record.name == "core.sections.fmp4_cut" and record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    assert "OSError" in warnings[0] and refuse.refused[0] in warnings[0]
+
+
+class _Unreadable:
+    """열리지만 읽으면 `filename` 없는 `OSError`(EIO)를 내는 파일."""
+
+    def __enter__(self) -> "_Unreadable":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read(self, *_args: object) -> bytes:
+        raise OSError(errno.EIO, os.strerror(errno.EIO))
+
+
+class _SegmentReadFailsInSecondSection:
+    """둘째 구간을 읽기 시작한 뒤 엔진이 받은 세그먼트를 처음 열 때 한 번만 `OSError`(EIO)를 낸다.
+
+    with_name이면 여는 순간에 `filename`이 든 오류를, 아니면 읽는 순간에 `filename` 없는 오류를 낸다.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, with_name: bool) -> None:
+        self.begins = 0  # 구간 읽기를 시작한 횟수
+        self.refused: list[str] = []
+        self._with_name = with_name
+        real_begin = HlsAesDownloader._begin_cut_reading
+
+        # 클래스 속성에 넣으므로 함수여야 한다 — 바운드 메서드는 엔진을 인자로 받지 못한다
+        def begin(engine: HlsAesDownloader) -> None:
+            self.begins += 1
+            real_begin(engine)
+
+        monkeypatch.setattr(HlsAesDownloader, "_begin_cut_reading", begin)
+        monkeypatch.setattr(aes_module, "open", self._open, raising=False)
+
+    def _open(self, file: str, mode: str = "r", *args: object, **kwargs: object) -> object:
+        if self.begins >= 2 and not self.refused and mode == "rb" and file.endswith(".ts"):
+            self.refused.append(file)
+            if self._with_name:
+                raise OSError(errno.EIO, os.strerror(errno.EIO), file)
+            return _Unreadable()
+        return open(file, mode, *args, **kwargs)
+
+
+@pytest.mark.parametrize("with_name", [True, False], ids=["filename", "no-filename"])
+def test_section_whose_received_segment_cannot_be_read_fails_alone(
+    vod,
+    host,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    with_name: bool,
+) -> None:
+    """첫 구간을 끝낸 뒤 받은 세그먼트를 읽다 OSError가 나면 그 구간만 실패하고 끝낸 구간 파일은 남아야 한다.
+
+    구간 둘(0.8 ~ 2.3초 · 3.4 ~ 5.2초 — 컷 순서는 `_2` · `_1`). 둘째 구간(`_1`)을 읽기 시작한 뒤
+    받은 세그먼트를 처음 열 때 OSError(EIO, `filename` 있음 · 없음)
+    -> 거절 1회(`.ts` 세그먼트), 실패 1건(PostprocessError, 원인 CutError(CUT_FAILED), 그 원인 OSError),
+       CutError 글에 절대 경로 없음 · 끝이 `(<세그먼트 파일 이름>)`,
+       구간 상태 == (전체 2, 완료 1, 실패 1), 이어받기 기록이 있다,
+       `_2` 파일과 임시 폴더가 남고 `_1` 파일은 없다,
+       `core.sources.hls_aes_downloader` WARNING 1건에 `OSError` · 세그먼트 경로
+    """
+    caplog.set_level(logging.WARNING, logger="core.sources.hls_aes_downloader")
+    refuse = _SegmentReadFailsInSecondSection(monkeypatch, with_name)
+
+    run = _Run(host, tmp_path, [FIRST, SECOND]).start()
+
+    assert len(refuse.refused) == 1
+    assert refuse.refused[0].endswith(".ts")
+    assert run.finished == 0
+    assert [type(e) for e in run.failures] == [PostprocessError]
+    cause = run.failures[0].__cause__
+    assert isinstance(cause, CutError) and cause.message_key == CUT_FAILED
+    assert isinstance(cause.__cause__, OSError)
+    assert str(cause).endswith(f"({os.path.basename(refuse.refused[0])})")
+    for absolute in (str(tmp_path), str(tmp_path).replace("\\", "/")):
+        assert absolute not in str(cause)
+    data = run.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (2, 1, 1)
+    assert data.section_resume is not None
+    assert [os.path.isfile(path) for path in run.paths] == [False, True]
+    assert os.path.isdir(run.engine.temp_dir)
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "core.sources.hls_aes_downloader" and record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    assert "OSError" in warnings[0] and refuse.refused[0] in warnings[0]
+
+
+class _RemuxReadFailsInSecondCut:
+    """둘째 컷 호출이 시작된 뒤 경계 세그먼트를 다시 싸려고 처음 읽을 때 한 번만 `OSError`(EIO)를 낸다.
+
+    with_name이면 `filename`이 든 오류를, 아니면 `filename` 없는 오류를 낸다.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, with_name: bool) -> None:
+        self.cuts = 0
+        self.refused: list[str] = []
+        self._with_name = with_name
+        self._real_cut = aes_module.cut_ts_section
+        self._real_read = ts_cut_module.read_in_chunks
+        monkeypatch.setattr(aes_module, "cut_ts_section", self._cut)
+        monkeypatch.setattr(ts_cut_module, "read_in_chunks", self._read)
+
+    def _cut(self, *args: object, **kwargs: object) -> tuple[CutResult, CutFrames]:
+        self.cuts += 1
+        return self._real_cut(*args, **kwargs)
+
+    def _read(self, path: str, *args: object) -> Iterator[bytes]:
+        if not self.refused and self.cuts >= 2:
+            self.refused.append(path)
+            if self._with_name:
+                raise OSError(errno.EIO, os.strerror(errno.EIO), path)
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        yield from self._real_read(path, *args)
+
+
+@pytest.mark.parametrize("with_name", [True, False], ids=["filename", "no-filename"])
+def test_section_whose_boundary_segment_cannot_be_read_for_remux_fails_without_the_path(
+    vod,
+    host,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    with_name: bool,
+) -> None:
+    """경계 세그먼트를 다시 싸려고 읽다 OSError가 나면 그 구간만 실패하고 실패 글에 절대 경로가 없어야 한다.
+
+    구간 셋(컷 순서는 `_2` · `_1` · `_3`). 둘째 컷(`_1`)이 시작된 뒤 다시 싸기의 첫 세그먼트 읽기에서
+    OSError(EIO, `filename` 있음 · 없음)
+    -> 거절 1회(`.ts` 세그먼트), 실패 1건(PostprocessError, 원인 CutError(CUT_FAILED), 그 원인 OSError),
+       CutError 글에 절대 경로 없음 · 끝이 `(<세그먼트 파일 이름>)`,
+       구간 상태 == (전체 3, 완료 2, 실패 1), `_2` · `_3` 파일이 남고 `_1` 파일은 없다,
+       `core.sections.ts_cut` WARNING 1건에 `OSError` · 세그먼트 경로
+    """
+    caplog.set_level(logging.WARNING, logger="core.sections.ts_cut")
+    refuse = _RemuxReadFailsInSecondCut(monkeypatch, with_name)
+
+    run = _Run(host, tmp_path, THREE).start()
+
+    assert len(refuse.refused) == 1
+    assert refuse.refused[0].endswith(".ts")
+    assert [type(e) for e in run.failures] == [PostprocessError]
+    cause = run.failures[0].__cause__
+    assert isinstance(cause, CutError) and cause.message_key == CUT_FAILED
+    assert isinstance(cause.__cause__, OSError)
+    assert str(cause).endswith(f"({os.path.basename(refuse.refused[0])})")
+    for absolute in (str(tmp_path), str(tmp_path).replace("\\", "/")):
+        assert absolute not in str(cause)
+    data = run.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert [os.path.isfile(path) for path in run.paths] == [False, True, True]
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "core.sections.ts_cut" and record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    assert "OSError" in warnings[0] and refuse.refused[0] in warnings[0]
+
+
+class _RemuxedReadFailsInSecondCut:
+    """둘째 컷 호출이 시작된 뒤 다시 싼 mp4를 처음 열 때 한 번만 `OSError`(EIO, `filename` 있음)를 낸다."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.cuts = 0
+        self.refused: list[str] = []
+        self._real_cut = aes_module.cut_ts_section
+        monkeypatch.setattr(aes_module, "cut_ts_section", self._cut)
+        monkeypatch.setattr(ts_cut_module, "open", self._open, raising=False)
+
+    def _cut(self, *args: object, **kwargs: object) -> tuple[CutResult, CutFrames]:
+        self.cuts += 1
+        return self._real_cut(*args, **kwargs)
+
+    def _open(self, file: str, mode: str = "r", *args: object, **kwargs: object) -> object:
+        if not self.refused and self.cuts >= 2:
+            self.refused.append(file)
+            raise OSError(errno.EIO, os.strerror(errno.EIO), file)
+        return open(file, mode, *args, **kwargs)
+
+
+def test_section_whose_remuxed_boundary_cannot_be_read_fails_alone(
+    vod,
+    host,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """다시 싼 경계 mp4의 색인을 읽으려고 열다 OSError가 나면 그 구간만 실패해야 한다.
+
+    구간 셋(컷 순서는 `_2` · `_1` · `_3`). 둘째 컷(`_1`)이 시작된 뒤 다시 싼 mp4를 처음 열 때
+    OSError(EIO, `filename` 있음)
+    -> 거절 1회(`.mp4`), 실패 1건(PostprocessError, 원인 CutError(CUT_FAILED), 그 원인 OSError),
+       CutError 글에 절대 경로 없음 · 끝이 `(<다시 싼 파일 이름>)`,
+       구간 상태 == (전체 3, 완료 2, 실패 1), `_2` · `_3` 파일이 남고 `_1` 파일은 없다,
+       `core.sections.ts_cut` WARNING 1건에 `OSError` · 다시 싼 파일 경로
+    """
+    caplog.set_level(logging.WARNING, logger="core.sections.ts_cut")
+    refuse = _RemuxedReadFailsInSecondCut(monkeypatch)
+
+    run = _Run(host, tmp_path, THREE).start()
+
+    assert len(refuse.refused) == 1
+    assert refuse.refused[0].endswith(".mp4")
+    assert [type(e) for e in run.failures] == [PostprocessError]
+    cause = run.failures[0].__cause__
+    assert isinstance(cause, CutError) and cause.message_key == CUT_FAILED
+    assert isinstance(cause.__cause__, OSError)
+    assert str(cause).endswith(f"({os.path.basename(refuse.refused[0])})")
+    for absolute in (str(tmp_path), str(tmp_path).replace("\\", "/")):
+        assert absolute not in str(cause)
+    data = run.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert [os.path.isfile(path) for path in run.paths] == [False, True, True]
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "core.sections.ts_cut" and record.levelno == logging.WARNING
     ]
     assert len(warnings) == 1
     assert "OSError" in warnings[0] and refuse.refused[0] in warnings[0]
