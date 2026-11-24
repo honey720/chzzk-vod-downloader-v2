@@ -1378,26 +1378,54 @@ def test_section_whose_output_ffmpeg_cannot_write_or_remove_fails_alone(
     ]
 
 
-class _ListWriteFails:
-    """잇기 단계의 조각 목록(`list.txt`)을 처음 쓰기로 열 때 한 번만 `OSError`(ENOSPC)를 낸다."""
+class _FlushFailsOnClose:
+    """쓴 글을 진짜 파일로 넘기고, 닫을 때 `filename` 없는 `OSError`(ENOSPC)를 낸다."""
 
-    def __init__(self, monkeypatch) -> None:
+    def __init__(self, real: IO) -> None:
+        self._real = real
+
+    def __enter__(self) -> "_FlushFailsOnClose":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._real.close()
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+    def write(self, text: str) -> int:
+        return self._real.write(text)
+
+
+class _ListWriteFails:
+    """잇기 단계의 조각 목록(`list.txt`)을 처음 쓸 때 한 번만 `OSError`(ENOSPC)를 낸다.
+
+    with_filename이 참이면 여는 자리에서 경로가 든 오류를, 거짓이면 닫는 자리에서 `filename`
+    없는 오류를 낸다.
+    """
+
+    def __init__(self, monkeypatch, with_filename: bool) -> None:
         self.refused: list[str] = []
+        self._with_filename = with_filename
         monkeypatch.setattr(fmp4_cut_module, "open", self._open, raising=False)
 
     def _open(self, file: str, mode: str = "r", *args: object, **kwargs: object) -> IO:
         if not self.refused and os.path.basename(file) == "list.txt" and "w" in mode:
             self.refused.append(file)
-            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), file)
+            if self._with_filename:
+                raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), file)
+            return _FlushFailsOnClose(open(file, mode, *args, **kwargs))
         return open(file, mode, *args, **kwargs)
 
 
 class _ReadFailsInSecondCut:
-    """둘째 컷 호출이 시작된 뒤 잇기가 세그먼트를 처음 읽을 때 한 번만 `OSError`(EIO)를 낸다."""
+    """둘째 컷 호출이 시작된 뒤 잇기가 세그먼트를 처음 읽을 때 한 번만 `OSError`(EIO)를 낸다.
 
-    def __init__(self, monkeypatch) -> None:
+    with_filename이 거짓이면 열린 파일의 읽기 실패처럼 `filename` 없는 오류를 낸다.
+    """
+
+    def __init__(self, monkeypatch, with_filename: bool) -> None:
         self.cuts = 0
         self.refused: list[str] = []
+        self._with_filename = with_filename
         self._real_cut = m3u8_module.cut_fmp4_section
         self._real_read = fmp4_cut_module.read_in_chunks
         monkeypatch.setattr(m3u8_module, "cut_fmp4_section", self._cut)
@@ -1410,7 +1438,9 @@ class _ReadFailsInSecondCut:
     def _read(self, path: str, chunk_size: int) -> Iterator[bytes]:
         if not self.refused and self.cuts >= 2:
             self.refused.append(path)
-            raise OSError(errno.EIO, os.strerror(errno.EIO), path)
+            if self._with_filename:
+                raise OSError(errno.EIO, os.strerror(errno.EIO), path)
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
         yield from self._real_read(path, chunk_size)
 
 
@@ -1423,13 +1453,17 @@ def _io_warnings(caplog) -> list[str]:
     ]
 
 
-def _assert_only_one_section_failed(run: _Run, failed: int, tmp_path) -> None:
-    """실패 1건(PostprocessError ← CutError(CUT_FAILED) ← OSError)이고 failed번째 구간 파일만 없다."""
+def _assert_only_one_section_failed(run: _Run, failed: int, tmp_path, refused: str) -> None:
+    """실패 1건(PostprocessError ← CutError(CUT_FAILED) ← OSError)이고 failed번째 구간 파일만 없다.
+
+    CutError 글에는 거절된 파일(refused)의 이름이 괄호로 든다.
+    """
     assert run.finished == 0
     assert [type(e) for e in run.failures] == [PostprocessError]
     cause = run.failures[0].__cause__
     assert isinstance(cause, CutError) and cause.message_key == CUT_FAILED
     assert isinstance(cause.__cause__, OSError)
+    assert str(cause).endswith(f"({os.path.basename(refused)})")
     for absolute in (str(tmp_path), str(tmp_path).replace("\\", "/")):
         assert absolute not in str(cause)
     data = run.data
@@ -1439,51 +1473,56 @@ def _assert_only_one_section_failed(run: _Run, failed: int, tmp_path) -> None:
     assert os.path.isdir(run.engine.temp_dir)
 
 
+@pytest.mark.parametrize("with_filename", [True, False], ids=["open", "flush-no-filename"])
 def test_section_whose_piece_list_cannot_be_written_fails_alone(
-    host, sources, tmp_path, monkeypatch, caplog
+    host, sources, tmp_path, monkeypatch, caplog, with_filename: bool
 ) -> None:
-    """잇기의 조각 목록을 쓰다 OSError가 나면 그 구간만 실패하고 원인이 경고 로그에 남아야 한다 (#604).
+    """잇기의 조각 목록을 쓰다 OSError가 나면 그 구간만 실패하고 원인이 경고 로그에 남아야 한다 (#604 · #637).
 
-    plain, 구간 셋. 첫 컷(둘째 구간)이 `list.txt`를 쓰기로 열 때 OSError(ENOSPC)
+    plain, 구간 셋. 첫 컷(둘째 구간)이 `list.txt`를 쓸 때 OSError(ENOSPC) — 여는 자리(경로 있음)
+    또는 닫는 자리(`filename` 없음)
     -> 거절 1회(`section_2` 작업 폴더의 `list.txt`), 실패 1건(PostprocessError, 원인 CutError(CUT_FAILED),
-       그 원인 OSError), CutError 글에 절대 경로 없음, 구간 상태 == (전체 3, 완료 2, 실패 1),
+       그 원인 OSError), CutError 글에 절대 경로 없음 · 끝이 `(list.txt)`,
+       구간 상태 == (전체 3, 완료 2, 실패 1),
        이어받기 기록이 있다, `_1` · `_3` 파일과 임시 폴더가 남고 `_2` 파일은 없다,
        `core.sections.fmp4_cut` WARNING 1건에 `OSError` · `list.txt` 경로
     """
     caplog.set_level(logging.WARNING, logger="core.sections.fmp4_cut")
-    refuse = _ListWriteFails(monkeypatch)
+    refuse = _ListWriteFails(monkeypatch, with_filename)
 
     run = _Run(host, tmp_path, _three(sources["plain"])).start()
 
     assert len(refuse.refused) == 1
     assert os.path.basename(os.path.dirname(refuse.refused[0])) == "section_2"
-    _assert_only_one_section_failed(run, 1, tmp_path)
+    _assert_only_one_section_failed(run, 1, tmp_path, refuse.refused[0])
     warnings = _io_warnings(caplog)
     assert len(warnings) == 1
     assert "OSError" in warnings[0] and refuse.refused[0] in warnings[0]
 
 
+@pytest.mark.parametrize("with_filename", [True, False], ids=["filename", "no-filename"])
 def test_section_whose_segment_cannot_be_read_fails_alone(
-    host, sources, tmp_path, monkeypatch, caplog
+    host, sources, tmp_path, monkeypatch, caplog, with_filename: bool
 ) -> None:
-    """첫 구간을 끝낸 뒤 잇기가 세그먼트를 읽다 OSError가 나면 그 구간만 실패하고 끝낸 구간 파일은 남아야 한다 (#604).
+    """첫 구간을 끝낸 뒤 잇기가 세그먼트를 읽다 OSError가 나면 그 구간만 실패하고 끝낸 구간 파일은 남아야 한다 (#604 · #637).
 
     plain, 구간 셋. 둘째 컷(첫째 구간 — 첫 컷은 둘째 구간)이 시작된 뒤 잇기의 첫 세그먼트 읽기에서
-    OSError(EIO)
+    OSError(EIO) — 경로 있음 또는 `filename` 없음
     -> 컷 호출 3회, 거절 1회(`.m4v` 세그먼트), 실패 1건(PostprocessError, 원인 CutError(CUT_FAILED), 그 원인 OSError),
-       CutError 글에 절대 경로 없음, 구간 상태 == (전체 3, 완료 2, 실패 1), 이어받기 기록이 있다,
+       CutError 글에 절대 경로 없음 · 끝이 `(<세그먼트 파일 이름>)`,
+       구간 상태 == (전체 3, 완료 2, 실패 1), 이어받기 기록이 있다,
        `_2` · `_3` 파일과 임시 폴더가 남고 `_1` 파일은 없다,
        `core.sections.fmp4_cut` WARNING 1건에 `OSError` · 세그먼트 경로
     """
     caplog.set_level(logging.WARNING, logger="core.sections.fmp4_cut")
-    refuse = _ReadFailsInSecondCut(monkeypatch)
+    refuse = _ReadFailsInSecondCut(monkeypatch, with_filename)
 
     run = _Run(host, tmp_path, _three(sources["plain"])).start()
 
     assert refuse.cuts == 3
     assert len(refuse.refused) == 1
     assert refuse.refused[0].endswith(".m4v")
-    _assert_only_one_section_failed(run, 0, tmp_path)
+    _assert_only_one_section_failed(run, 0, tmp_path, refuse.refused[0])
     warnings = _io_warnings(caplog)
     assert len(warnings) == 1
     assert "OSError" in warnings[0] and refuse.refused[0] in warnings[0]
