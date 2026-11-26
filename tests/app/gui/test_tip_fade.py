@@ -26,7 +26,7 @@ def _fade(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """페이드 시간을 짧게 걸고 애니메이션 켬으로 둔다 — 앞뒤로 말풍선을 바로 닫는다."""
     monkeypatch.setattr(tip_bubble, "TIP_FADE_IN_MS", FADE_IN_MS)
     monkeypatch.setattr(tip_bubble, "TIP_FADE_OUT_MS", FADE_OUT_MS)
-    monkeypatch.setattr(tip_bubble, "CARD_BUTTON_TIP_DELAY_MS", 30)
+    monkeypatch.setattr(tip_bubble, "BUTTON_TIP_DELAY_MS", 30)
     card_display.use(card_display.CardDisplay(animations=True))
     _hide_now()
     yield

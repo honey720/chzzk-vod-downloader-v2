@@ -61,7 +61,7 @@ def _hide_bubble() -> Iterator[None]:
 @pytest.fixture
 def _short_text_delay(monkeypatch: pytest.MonkeyPatch, _hide_bubble: None) -> None:
     """글 툴팁 지연만 `TEST_TEXT_DELAY_MS`로 줄인다 — 버튼 지연은 제품 값(0) 그대로다."""
-    monkeypatch.setattr(tip_bubble, "CARD_TEXT_TIP_DELAY_MS", TEST_TEXT_DELAY_MS)
+    monkeypatch.setattr(tip_bubble, "TEXT_TIP_DELAY_MS", TEST_TEXT_DELAY_MS)
 
 
 def _bubble_shown() -> bool:
@@ -242,7 +242,7 @@ class TestProductDelays:
         글 지연 10000ms · 첫 행 · 나중 행의 ✕ / 손잡이 들어감
         -> 들어감 직후 말풍선 글 = 그 위젯의 툴팁, 기다리는 위젯 없음
         """
-        monkeypatch.setattr(tip_bubble, "CARD_TEXT_TIP_DELAY_MS", 10_000)
+        monkeypatch.setattr(tip_bubble, "TEXT_TIP_DELAY_MS", 10_000)
         widget = _target(qtbot, tmp_path, "section", name)
         enter(widget)
         assert bubble_text_for(widget) == widget.toolTip()
