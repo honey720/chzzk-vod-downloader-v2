@@ -198,19 +198,16 @@ def test_window_opens_on_the_general_tab(opened: Callable[[], SettingDialog]) ->
 def test_ctrl_tab_moves_to_the_next_and_ctrl_shift_tab_to_the_previous_tab(
     opened: Callable[[], SettingDialog],
 ) -> None:
-    """Ctrl+Tab은 다음 탭으로, Ctrl+Shift+Tab은 앞 탭으로 넘겨야 하고 끝에서는 돌아야 한다.
+    """다음 탭 키는 다음 탭으로, 앞 탭 키는 앞 탭으로 넘겨야 하고 끝에서는 돌아야 한다.
 
-    일반에서 Ctrl+Tab -> 다운로드, 그 뒤 Ctrl+Shift+Tab 두 번 -> 고급
+    키는 Qt 표준 키 NextChild · PreviousChild(Windows Ctrl+Tab · Ctrl+Shift+Tab — OS마다 다르다)
+    일반에서 다음 탭 키 -> 다운로드, 그 뒤 앞 탭 키 두 번 -> 고급
     """
     dialog = opened()
-    QTest.keyClick(dialog, Qt.Key.Key_Tab, Qt.KeyboardModifier.ControlModifier)
+    QTest.keySequence(dialog, QKeySequence(QKeySequence.StandardKey.NextChild))
     assert dialog.currentTab() == "download"
     for _ in range(2):
-        QTest.keyClick(
-            dialog,
-            Qt.Key.Key_Backtab,
-            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
-        )
+        QTest.keySequence(dialog, QKeySequence(QKeySequence.StandardKey.PreviousChild))
     assert dialog.currentTab() == "advanced"
 
 
