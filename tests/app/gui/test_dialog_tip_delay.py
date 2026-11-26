@@ -1,4 +1,5 @@
-"""편집 창 · 구간 창 툴팁 지연 테스트 — 글은 카드 글처럼 머문 뒤에, 버튼 · 손잡이 · ✕는 바로 (#629)."""
+"""편집 창 · 구간 창 툴팁 지연 · 페이드 테스트 — 글은 카드 글처럼 머문 뒤에, 버튼 · 손잡이 · ✕는 바로,
+페이드는 메인 창과 같다 (#629)."""
 
 from collections.abc import Iterator
 from pathlib import Path
@@ -7,6 +8,7 @@ import pytest
 from PySide6.QtWidgets import QApplication, QWidget
 from pytestqt.qtbot import QtBot
 
+import app.viewmodels.card_display as card_display
 from app.views.card_edit_dialog import CardEditDialog
 from app.views.section_dialog import MESSAGE_ERROR, SectionEditDialog
 from app.widgets import tip_bubble
@@ -247,3 +249,88 @@ class TestProductDelays:
         enter(widget)
         assert bubble_text_for(widget) == widget.toolTip()
         assert tip_bubble.tip_filter().pending() is None
+
+
+FADE_IN_MS = 77  # 테스트가 거는 나타남 시간(ms) — 제품 값(120)과 달라 다른 곳에 박힌 값이 드러난다
+FADE_OUT_MS = 53  # 테스트가 거는 닫힘 시간(ms) — 제품 값(80)과 다르다
+# 페이드를 재는 위젯 — (창, 이름). 메인 창의 헤더 버튼 · 카드 버튼과 두 대화상자의 글 · 버튼
+FADE_CASES = [
+    ("edit", "titleLabel"),
+    ("edit", "metaLabel"),
+    ("edit", "pathLabel"),
+    ("section", "titleLabel"),
+    ("section", "totalLabel"),
+    ("section", "rows[0].handle"),
+    ("section", "rows[1].deleteButton"),
+    ("section", "rows[1].infoLabel"),
+]
+FadeShape = tuple[int, str, int, str]  # (나타남 ms, 나타남 곡선, 닫힘 ms, 닫힘 곡선)
+
+
+@pytest.fixture
+def _fades_on(monkeypatch: pytest.MonkeyPatch, _hide_bubble: None) -> Iterator[None]:
+    """페이드를 `FADE_IN_MS` · `FADE_OUT_MS`로 켜고 글 지연을 0으로 둔다 — 애니메이션 설정은 켬."""
+    monkeypatch.setattr(tip_bubble, "TIP_FADE_IN_MS", FADE_IN_MS)
+    monkeypatch.setattr(tip_bubble, "TIP_FADE_OUT_MS", FADE_OUT_MS)
+    monkeypatch.setattr(tip_bubble, "TEXT_TIP_DELAY_MS", 0)
+    card_display.use(card_display.CardDisplay(animations=True))
+    yield
+    card_display.use(None)
+
+
+def _fade_shape(qtbot: QtBot, widget: QWidget) -> FadeShape:
+    """위젯에 들어가 나타나는 페이드를, 나가서 닫히는 페이드를 읽는다 — 페이드가 끝날 때까지 기다린다."""
+    bubble = tip_bubble.current_bubble()
+    if bubble is not None:
+        bubble.hideNow()
+    enter(widget)
+    bubble = tip_bubble.current_bubble()
+    assert bubble_text_for(widget) == widget.toolTip(), "전제: 그 위젯의 툴팁이 떴다"
+    fade_in = bubble.fade()
+    assert fade_in is not None, "전제: 나타나는 페이드가 움직인다"
+    shape_in = (fade_in.duration(), fade_in.easingCurve().type().name)
+    qtbot.waitUntil(lambda: bubble.fade() is None, timeout=3000)
+    leave(widget)
+    fade_out = bubble.fade()
+    assert fade_out is not None and bubble.isFadingOut(), "전제: 닫히는 페이드가 움직인다"
+    shape_out = (fade_out.duration(), fade_out.easingCurve().type().name)
+    qtbot.waitUntil(lambda: not bubble.isVisible(), timeout=3000)
+    return (*shape_in, *shape_out)
+
+
+def _main_widgets(dialog: QWidget) -> dict[str, QWidget]:
+    """대화상자를 연 메인 창의 헤더 설정 버튼과 편집 창을 연 카드의 ✎ 버튼."""
+    owner = getattr(dialog, "_holdOwner", dialog)
+    win = owner._holdWindow
+    card = win.listView.widgetFor(owner._item)
+    leave(card.editButton)  # 편집 창을 열려고 누른 ✎ — 나가야 다시 툴팁을 띄운다(`tipPressed`)
+    return {"settingsButton": win.settingsButton, "card.editButton": card.editButton}
+
+
+@pytest.mark.usefixtures("_fades_on")
+class TestFadeMatchesMainWindow:
+    """두 대화상자의 툴팁 페이드는 메인 창 툴팁과 같은 상수 · 같은 곡선이다(#629)."""
+
+    @pytest.mark.parametrize(("where", "name"), FADE_CASES)
+    def test_dialog_fade_equals_main_window_fade(
+        self,
+        qtbot: QtBot,
+        tmp_path: Path,
+        basis: type,  # noqa: F811
+        where: str,
+        name: str,
+    ) -> None:
+        """대화상자 위젯의 툴팁 페이드가 메인 창 헤더 버튼 · 카드 버튼의 페이드와 같아야 한다.
+
+        나타남 77ms · 닫힘 53ms · 글 지연 0 · 편집 창 제목 / 정보 줄 / 저장 위치, 구간 창 제목 / 합 알림 /
+        첫 행 손잡이 / 나중 행 ✕ / 나중 행 길이 글, 메인 창 설정 버튼 / 카드 ✎ 들어감 · 나감
+        -> 셋 모두 (77, OutCubic, 53, Linear)
+        """
+        widget = _target(qtbot, tmp_path, where, name)
+        dialog = widget.window()
+        main = _main_widgets(dialog)
+        for main_name, main_widget in main.items():
+            assert main_widget.isVisible() and main_widget.toolTip(), f"전제: 메인 창 {main_name}"
+        shapes = {main_name: _fade_shape(qtbot, w) for main_name, w in main.items()}
+        shapes[f"{where} {name}"] = _fade_shape(qtbot, widget)
+        assert set(shapes.values()) == {(FADE_IN_MS, "OutCubic", FADE_OUT_MS, "Linear")}, shapes
