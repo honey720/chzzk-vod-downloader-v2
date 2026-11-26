@@ -174,6 +174,7 @@ class TestTextTipDelay:
     @pytest.mark.parametrize(
         ("where", "name"), [("edit", "titleLabel"), ("section", "rows[0].infoLabel")]
     )
+    @pytest.mark.os_window
     def test_switching_window_before_the_text_delay_shows_nothing(
         self,
         qtbot: QtBot,
