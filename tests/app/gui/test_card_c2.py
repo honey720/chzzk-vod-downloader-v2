@@ -913,8 +913,8 @@ class TestTipBubbles:
 
     @pytest.fixture(autouse=True)
     def _hide_bubble(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-        monkeypatch.setattr(tip_bubble, "CARD_BUTTON_TIP_DELAY_MS", TIP_DELAY_MS)
-        monkeypatch.setattr(tip_bubble, "CARD_TEXT_TIP_DELAY_MS", TIP_DELAY_MS)
+        monkeypatch.setattr(tip_bubble, "BUTTON_TIP_DELAY_MS", TIP_DELAY_MS)
+        monkeypatch.setattr(tip_bubble, "TEXT_TIP_DELAY_MS", TIP_DELAY_MS)
         tip_bubble.hide_tip()
         yield
         tip_bubble.hide_tip()

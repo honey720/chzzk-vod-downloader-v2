@@ -471,8 +471,8 @@ TEST_TIP_DELAY_MS = 40
 @pytest.fixture
 def _short_tip_delay(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """카드 버튼 · 글 툴팁 지연을 `TEST_TIP_DELAY_MS`로 걸고(지연 장치 재기), 앞뒤로 말풍선을 닫는다."""
-    monkeypatch.setattr(tip_bubble, "CARD_BUTTON_TIP_DELAY_MS", TEST_TIP_DELAY_MS)
-    monkeypatch.setattr(tip_bubble, "CARD_TEXT_TIP_DELAY_MS", TEST_TIP_DELAY_MS)
+    monkeypatch.setattr(tip_bubble, "BUTTON_TIP_DELAY_MS", TEST_TIP_DELAY_MS)
+    monkeypatch.setattr(tip_bubble, "TEXT_TIP_DELAY_MS", TEST_TIP_DELAY_MS)
     tip_bubble.hide_tip()
     yield
     tip_bubble.hide_tip()
@@ -614,8 +614,8 @@ class TestCardButtonTipDelay:
         카드 버튼 지연 10000ms · 등록 버튼(툴팁 있음) 들어감
         -> 들어감 직후 말풍선 = 등록 버튼 툴팁, 기다리는 위젯 없음
         """
-        monkeypatch.setattr(tip_bubble, "CARD_BUTTON_TIP_DELAY_MS", 10_000)
-        monkeypatch.setattr(tip_bubble, "CARD_TEXT_TIP_DELAY_MS", 10_000)
+        monkeypatch.setattr(tip_bubble, "BUTTON_TIP_DELAY_MS", 10_000)
+        monkeypatch.setattr(tip_bubble, "TEXT_TIP_DELAY_MS", 10_000)
         win = open_window(tmp_path)
         button = win.fetchButton
         assert button.isVisible() and button.toolTip(), "전제: 등록 버튼이 보이고 툴팁이 있다"

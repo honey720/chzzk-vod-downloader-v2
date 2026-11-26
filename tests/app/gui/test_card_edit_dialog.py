@@ -748,8 +748,8 @@ class TestWaitingHint:
         assert not dialog.waitHintLabel.isVisible()
 
 
-LONG_TITLE = "긴 제목 견본 " * 20  # 창 처음 폭에서 잘리는 지어낸 제목
-LONG_CHANNEL = "긴 채널 이름 견본 " * 12  # 창 처음 폭에서 정보 줄을 자르는 지어낸 채널 이름
+LONG_TITLE = "긴 제목 견본 " * 20  # 창 최소폭에서 잘리는 지어낸 제목
+LONG_CHANNEL = "긴 채널 이름 견본 " * 12  # 창 최소폭에서 정보 줄을 자르는 지어낸 채널 이름
 HEADER_LABELS = ("titleLabel", "metaLabel")  # 편집 창 머리 두 줄 — 제목 · 정보 줄
 
 
@@ -766,6 +766,16 @@ def _resize_dialog(dialog: CardEditDialog, width: int) -> None:
     dialog.resize(width, dialog.height())
     _pump()
     assert dialog.width() == width, f"요청 폭 {width} · 실제 {dialog.width()} — 클램프됐다"
+
+
+def _narrow_dialog(dialog: CardEditDialog) -> int:
+    """편집 창을 최소폭으로 좁히고 그 폭을 돌려준다.
+
+    처음 폭은 글 전체 폭을 바라는 라벨 sizeHint와 화면 폭으로 정해진다. 화면이 넓으면 긴 글도 처음 폭에 다
+    들어간다(#629 — 실제 화면에서 정보 줄). 최소폭은 화면과 무관하게 `DIALOG_WIDTH` 이상 내용 최소폭이다.
+    """
+    _resize_dialog(dialog, dialog.minimumWidth())
+    return dialog.width()
 
 
 class TestHeaderTips:
@@ -794,32 +804,34 @@ class TestHeaderTips:
 
     @pytest.mark.parametrize("name", HEADER_LABELS)
     def test_clipped_text_tips_the_full_text(self, qtbot, tmp_path, name: str) -> None:
-        """머리 줄 글이 잘렸으면 툴팁이 전체 글이고 들어가면 그 글이 말풍선으로 떠야 한다.
+        """머리 줄 글이 잘렸으면 툴팁이 전체 글이고 들어가면 글 지연 뒤에 그 글이 말풍선으로 떠야 한다.
 
-        긴 제목 · 긴 채널 이름(지어낸 글) · 창 처음 폭 -> 툴팁 = 전체 글, 들어감 -> 말풍선 글 = 전체 글
+        긴 제목 · 긴 채널 이름(지어낸 글) · 창 최소폭 -> 툴팁 = 전체 글, 들어감 -> 지연 뒤 말풍선 글 = 전체 글
+        (글 툴팁은 머문 뒤에 뜬다 — #629)
         """
         item = _header_item(tmp_path, name, long=True)
         win = _window(tmp_path, item)
         dialog = _open(win, item)
         label = getattr(dialog, name)
+        _narrow_dialog(dialog)
         assert shown(label) != label.text(), "전제: 글이 잘렸다"
         assert label.toolTip() == label.text()
         enter(label)
-        assert bubble_text_for(label) == label.text()
+        qtbot.waitUntil(lambda: bubble_text_for(label) == label.text(), timeout=3000)
 
     @pytest.mark.parametrize("name", HEADER_LABELS)
     def test_tip_follows_clipping_as_the_dialog_resizes(self, qtbot, tmp_path, name: str) -> None:
         """창을 넓혀 잘림이 풀리면 툴팁이 없어지고 다시 좁혀 잘리면 전체 글 툴팁이 돌아와야 한다.
 
-        긴 글 · 창 폭 = 처음 폭 - 라벨 폭 + 글 폭 + 8 -> 잘림 없음 · 툴팁 "",
-        창 처음 폭으로 되돌림 -> 잘림 · 툴팁 = 전체 글
+        긴 글 · 창 폭 = 최소폭 - 라벨 폭 + 글 폭 + 8 -> 잘림 없음 · 툴팁 "",
+        창 최소폭으로 되돌림 -> 잘림 · 툴팁 = 전체 글
         """
         item = _header_item(tmp_path, name, long=True)
         win = _window(tmp_path, item)
         dialog = _open(win, item)
         label = getattr(dialog, name)
-        narrow = dialog.width()
-        assert shown(label) != label.text(), "전제: 처음 폭에서 글이 잘렸다"
+        narrow = _narrow_dialog(dialog)
+        assert shown(label) != label.text(), "전제: 최소폭에서 글이 잘렸다"
         full = label.fontMetrics().horizontalAdvance(label.text())
         # 창 폭에서 라벨 바깥 몫은 그대로 두고 라벨에 글 폭 + 여유(8 — sizeHint의 +4보다 넉넉히)를 준다
         _resize_dialog(dialog, narrow - label.width() + full + 8)
@@ -831,7 +843,7 @@ class TestHeaderTips:
 
 
 class TestTipBubbles:
-    """편집 창 · 구간 창의 툴팁은 말풍선으로 바로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (#550 inbox 128)."""
+    """편집 창 · 구간 창의 툴팁은 말풍선으로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (#550 inbox 128 · 지연은 #629)."""
 
     @pytest.fixture(autouse=True)
     def _hide_bubble(self) -> Iterator[None]:
@@ -840,9 +852,10 @@ class TestTipBubbles:
         tip_bubble.hide_tip()
 
     def test_edit_dialog_path_shows_the_full_path_in_the_bubble(self, qtbot, tmp_path) -> None:
-        """편집 창의 저장 위치 글에 들어가면 전체 경로가 말풍선으로 뜨고 Qt 툴팁은 뜨지 않아야 한다.
+        """편집 창의 저장 위치 글에 들어가면 글 지연 뒤에 전체 경로가 말풍선으로 뜨고 Qt 툴팁은 뜨지 않아야 한다.
 
-        카드 편집 창 · 저장 위치 글 들어감 -> 말풍선 글 = 저장 위치 글의 툴팁(전체 경로), Qt 툴팁 안 뜸
+        카드 편집 창 · 저장 위치 글 들어감 -> 지연 뒤 말풍선 글 = 저장 위치 글의 툴팁(전체 경로), Qt 툴팁 안 뜸
+        (글 툴팁은 머문 뒤에 뜬다 — #629)
         """
         item = _make_item(str(tmp_path))
         win = _window(tmp_path, item)
@@ -850,7 +863,7 @@ class TestTipBubbles:
         label = dialog.pathLabel
         assert label.toolTip(), "전제: 저장 위치 글에 툴팁이 있다"
         enter(label)
-        assert bubble_text_for(label) == label.toolTip()
+        qtbot.waitUntil(lambda: bubble_text_for(label) == label.toolTip(), timeout=3000)
         assert not qt_tooltip_shown(label)
 
     def test_section_dialog_buttons_show_their_tooltips_in_the_bubble(

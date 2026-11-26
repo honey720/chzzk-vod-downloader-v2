@@ -95,7 +95,7 @@ from app.widgets.eliding_label import ElidingLabel, TwoLineLabel
 from app.widgets.focus_ring import watch_dialog_buttons
 from app.widgets.icons import IconButton
 from app.widgets.scroll_padding import ScrollBarPadding
-from app.widgets.tip_bubble import install_tips
+from app.widgets.tip_bubble import close_floats_if_left, install_tips
 from app.widgets.timecode_edit import TimecodeEdit, TimePointEdit
 from app.widgets import view as _pointer  # widget_under_pointer — 테스트가 그 모듈에서 갈아 끼운다
 
@@ -557,9 +557,12 @@ class SectionEditDialog(QDialog):
         viewmodel.endClamped.connect(self._onEndClamped)
         self._onStateChanged()
         self._rebuildRows()
-        # 툴팁은 모두 말풍선(0ms)으로 뜬다 — 창의 위젯마다 필터를 건다(설계 §12.1 「툴팁」, #550).
+        # 툴팁은 모두 말풍선으로 뜬다 — 창의 위젯마다 필터를 건다(설계 §12.1 「툴팁」, #550). 버튼 · 손잡이 ·
+        # ✕는 바로, 글(잘린 제목 · 잘린 합계 알림 · 합계 밀리초)은 카드 글처럼 머문 뒤에 뜬다(#629).
         # 나중에 만드는 행은 _rebuildRows가 건다
         install_tips(self)
+        for label in (self.titleLabel, self.totalLabel, self.sumLabel):
+            install_tips(label, delayed=True, text=True)
         self.resize(*_INITIAL_SIZE)
 
     def viewModel(self) -> SectionEditViewModel:
@@ -823,6 +826,9 @@ class SectionEditDialog(QDialog):
             row.show()
             self._rows.append(row)
             install_tips(row)  # 새 행의 손잡이 · ✕ 툴팁도 말풍선으로(#550)
+            # 행의 글(길이 밀리초 · 잘린 안내 글)은 머문 뒤에 뜬다(#629)
+            for label in (row.infoLabel, row.errorLabel, row.noticeLabel, row.noteLabel):
+                install_tips(label, delayed=True, text=True)
         # 목록의 값은 _refresh가 칸에 넣는다 — 빈 시각(빈 글)이 아닌 값은 새 칸의 값과 달라
         # 언제나 들어가고, 넣은 값은 0이어도 전부 밝게 보인다
         self._refresh()
@@ -882,8 +888,14 @@ class SectionEditDialog(QDialog):
         self._setHoverRow(target)
 
     def changeEvent(self, event: QEvent) -> None:
-        """창이 비활성이 되면 행 호버를 끄고, 다시 활성이 되면 포인터 밑 행으로 맞춘다."""
+        """창이 비활성이 되면 행 호버를 끄고, 다시 활성이 되면 포인터 밑 행으로 맞춘다.
+
+        창을 떠나면(다른 창이 활성 · 최소화) 툴팁과 기다리던 툴팁도 그만둔다 — 글 툴팁은 머문 뒤에 뜨므로
+        포인터를 글에 둔 채 Alt+Tab 하면 다른 창 위에 뜬다(#629, 메인 창과 같은 처리).
+        """
         super().changeEvent(event)
+        if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
+            close_floats_if_left(self)
         if event.type() == QEvent.Type.ActivationChange:
             if self.isActiveWindow():
                 self._scheduleRehover()

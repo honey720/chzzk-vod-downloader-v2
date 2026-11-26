@@ -43,7 +43,7 @@ from app.views.section_dialog import SectionEditDialog
 from app.widgets.choice_combo import ChoiceCombo
 from app.widgets.eliding_label import ElidingLabel, PathLabel
 from app.widgets.focus_ring import watch_dialog_buttons
-from app.widgets.tip_bubble import install_tips
+from app.widgets.tip_bubble import close_floats_if_left, install_tips
 from app.widgets.widget import path_display_parts
 from core.media.representations import file_tag
 from core.models.download_state import DownloadState
@@ -105,8 +105,11 @@ class CardEditDialog(QDialog):
         self._refreshTail()
         self._refreshSections()
         self._refreshPath()
-        # 툴팁은 모두 말풍선(0ms)으로 뜬다 — 창의 위젯마다 필터를 건다(설계 §12.1 「툴팁」, #550)
+        # 툴팁은 모두 말풍선으로 뜬다 — 창의 위젯마다 필터를 건다(설계 §12.1 「툴팁」, #550). 버튼은 바로,
+        # 글(잘린 제목 · 잘린 정보 줄 · 저장 위치 전체 경로)은 카드 글처럼 머문 뒤에 뜬다(#629)
         install_tips(self)
+        for label in (self.titleLabel, self.metaLabel, self.pathLabel):
+            install_tips(label, delayed=True, text=True)
 
     # ---- 조립 ----
 
@@ -230,6 +233,16 @@ class CardEditDialog(QDialog):
         width = max(DIALOG_WIDTH, content)
         if self.minimumWidth() != width:
             self.setMinimumWidth(width)
+
+    def changeEvent(self, event: QEvent) -> None:
+        """창을 떠나면(다른 창이 활성 · 최소화) 툴팁과 기다리던 툴팁을 그만둔다(#629).
+
+        글 툴팁은 머문 뒤에 뜬다 — 포인터를 글에 둔 채 Alt+Tab 하면 나감 이벤트가 오지 않아, 그대로 두면
+        기다리던 툴팁이 다른 창 위에 뜬다. 메인 창과 같은 처리다.
+        """
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
+            close_floats_if_left(self)
 
     def event(self, event: QEvent) -> bool:
         """레이아웃이 다시 잡힌 뒤 최소폭을 내용에 맞춘다 — 글 · 글꼴 · 번역이 바뀐 때다(#555)."""
