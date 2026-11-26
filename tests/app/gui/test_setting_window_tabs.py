@@ -1,0 +1,538 @@
+"""설정 창 5탭 틀 — 탭 전환 · 항목 자리 · 바뀐 값 저장 · 취소 · 닫기 확인 · 탭 줄 폭 (#644).
+
+씨앗과 판정은 설정 DB를 직접 읽고 쓴다(`tests.support.settings_db` — 제품의 읽기 · 쓰기 함수를 거치지
+않는다). 버튼 · 키는 실제 위젯에 누름 · 키 이벤트를 보내 시그널 배선을 탄다.
+"""
+
+import json
+from collections.abc import Callable, Iterator
+
+import pytest
+from pytestqt.qtbot import QtBot
+from PySide6.QtCore import Qt, QTimer, QTranslator
+from PySide6.QtGui import QKeySequence
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QPushButton, QWidget
+
+import app.system.settings as settings
+import app.theme as theme
+import CVDv2 as main_module
+from app.views.dialog import SettingDialog
+from tests.app.gui.card_helpers import hold_style
+from tests.support.settings_db import read_rows, read_settings, write_rows
+
+ACTIVE_WAIT_MS = (
+    3000  # 창 활성 · 확인 대화상자를 기다리는 한도(ms) — X11 · xvfb는 활성이 비동기로 온다
+)
+PROMPT_POLL_MS = 10  # 닫기 확인 대화상자가 떴는지 다시 보는 간격(ms)
+TAB_ORDER = ["general", "download", "display", "account", "advanced"]  # 탭 차례 — 설계 §14.3
+#: 옮긴 항목 → 있어야 할 탭(#644). 라벨이 있는 칸은 라벨도 같은 탭이다
+ITEM_TABS = {
+    "language": "general",
+    "languageLabel": "general",
+    "afterDownload": "general",
+    "afterDownloadLabel": "general",
+    "nidaut": "account",
+    "nidautLabel": "account",
+    "nidses": "account",
+    "nidsesLabel": "account",
+    "helpButton": "account",
+    "logsFolder": "advanced",
+    "logsFolderLabel": "advanced",
+}
+TAB_NAMES = {
+    "ko_KR": ["일반", "다운로드", "화면", "계정", "고급"],
+    "en_US": ["General", "Download", "Display", "Account", "Advanced"],
+}
+#: 창을 열 때 저장돼 있는 값 — 칸마다 맨 위 선택지가 아니다
+SAVED = {
+    "cookies": {"NID_AUT": "aut-saved", "NID_SES": "ses-saved"},
+    "afterDownload": "sleep",
+    "language": "ko_KR",
+}
+
+
+def _seed() -> None:
+    """기본값 위에 `SAVED`를 행마다 직접 쓴다 — 제품이 내지 않을 모양(들여쓰기 4)이라 다시 쓰면 문자열이 바뀐다."""
+    values = settings.default_settings() | SAVED
+    write_rows({key: json.dumps(value, indent=4) for key, value in values.items()})
+
+
+def _change_nidaut(dialog: SettingDialog) -> None:
+    dialog.nidaut.setText("aut-typed")
+
+
+def _change_nidses(dialog: SettingDialog) -> None:
+    dialog.nidses.setText("ses-typed")
+
+
+def _change_after_download(dialog: SettingDialog) -> None:
+    dialog.afterDownload.setCurrentIndex(dialog.afterDownload.findData("shutdown"))
+
+
+def _change_language(dialog: SettingDialog) -> None:
+    dialog.language.setCurrentIndex(dialog.language.findData("en_US"))
+
+
+#: 칸 → (값을 바꾸는 함수, 그 칸이 쓰는 키, 바꾼 뒤 저장될 값)
+FIELDS: dict[str, tuple[Callable[[SettingDialog], None], str, object]] = {
+    "nidaut": (_change_nidaut, "cookies", {"NID_AUT": "aut-typed", "NID_SES": "ses-saved"}),
+    "nidses": (_change_nidses, "cookies", {"NID_AUT": "aut-saved", "NID_SES": "ses-typed"}),
+    "afterDownload": (_change_after_download, "afterDownload", "shutdown"),
+    "language": (_change_language, "language", "en_US"),
+}
+
+
+def _shown_value(dialog: SettingDialog, key: str) -> object:
+    """설정 창 칸이 보이는 값 — 키마다 저장할 꼴로."""
+    if key == "cookies":
+        return {"NID_AUT": dialog.nidaut.text(), "NID_SES": dialog.nidses.text()}
+    return getattr(dialog, key).currentData()
+
+
+@pytest.fixture
+def app_style(qapp: QApplication) -> Iterator[None]:
+    """앱 스타일 · 실제 QSS(다크). 끝에 빈 QSS로 되돌린다."""
+    theme.set_color_scheme("dark")
+    qapp.setStyle(hold_style(theme.build_style()))
+    qapp.setPalette(theme.build_palette())
+    qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
+    yield
+    qapp.setStyleSheet("")
+    qapp.setStyle(hold_style(theme.build_style()))
+    qapp.setPalette(theme.build_palette())
+
+
+@pytest.fixture
+def opened(qtbot: QtBot, app_style: None) -> Callable[[], SettingDialog]:
+    """`SAVED`로 연 설정 창을 만드는 함수 — 보이고 활성이다. 정리 때 닫기 전에 숨긴다(닫기 확인이 뜨지 않게)."""
+
+    def open_() -> SettingDialog:
+        dialog = SettingDialog()
+        qtbot.addWidget(dialog, before_close_func=lambda widget: widget.hide())
+        dialog.show()
+        qtbot.waitExposed(dialog)
+        dialog.activateWindow()
+        qtbot.waitUntil(dialog.isActiveWindow, timeout=ACTIVE_WAIT_MS)
+        return dialog
+
+    _seed()
+    return open_
+
+
+def _save_keys() -> QKeySequence:
+    """저장 단축키(Ctrl+S, macOS Cmd+S) — Qt 표준 키에서 읽는다(앱이 있어야 플랫폼 키를 안다)."""
+    return QKeySequence(QKeySequence.StandardKey.Save)
+
+
+def _save(dialog: SettingDialog) -> QPushButton:
+    return dialog.dialogButtonBox.button(QDialogButtonBox.StandardButton.Save)
+
+
+def _cancel(dialog: SettingDialog) -> QPushButton:
+    return dialog.dialogButtonBox.button(QDialogButtonBox.StandardButton.Cancel)
+
+
+def _close_answering(
+    qtbot: QtBot, dialog: SettingDialog, answer: Callable[[QDialog], None]
+) -> dict:
+    """창을 닫고(`close`) 뜬 닫기 확인 대화상자에 answer를 한다 — 본 것(떴는지 · 기본 · Esc 버튼)을 돌려준다.
+
+    대화상자는 `exec`로 떠서 `close`가 돌아오지 않으므로, 타이머가 떴는지 보고 답한다. 한도 안에 뜨지
+    않으면 아무것도 누르지 않는다(떴는지 = 거짓).
+    """
+    seen: dict = {"shown": False}
+    tries = ACTIVE_WAIT_MS // PROMPT_POLL_MS
+
+    def poll() -> None:
+        nonlocal tries
+        box = dialog.closePrompt
+        if box is None or not box.isVisible():
+            tries -= 1
+            if tries > 0:
+                QTimer.singleShot(PROMPT_POLL_MS, poll)
+            return
+        seen["shown"] = True
+        seen["default"] = box.defaultButton().objectName()
+        seen["escape"] = box.escapeButton().objectName()
+        answer(box)
+
+    QTimer.singleShot(PROMPT_POLL_MS, poll)
+    dialog.close()
+    QApplication.processEvents()
+    return seen
+
+
+def _click(name: str) -> Callable[[QDialog], None]:
+    """닫기 확인 대화상자의 그 버튼을 누르는 답."""
+    return lambda box: box.findChild(QPushButton, name).click()
+
+
+# ================================================================ 탭
+
+
+@pytest.mark.parametrize("key", TAB_ORDER)
+def test_clicking_a_tab_shows_its_page(opened: Callable[[], SettingDialog], key: str) -> None:
+    """탭을 누르면 그 탭만 고른 채 그 탭 쪽이 보여야 한다.
+
+    탭 버튼 왼쪽 단추 누름 -> 고른 탭 = 그 탭 하나, 보이는 쪽 = `<key>Page`
+    """
+    dialog = opened()
+    QTest.mouseClick(dialog.tabs[key], Qt.MouseButton.LeftButton)
+    QApplication.processEvents()
+    assert [k for k, tab in dialog.tabs.items() if tab.isChecked()] == [key]
+    assert dialog.pages.currentWidget().objectName() == f"{key}Page"
+    assert dialog.pages.currentWidget().isVisible()
+
+
+def test_window_opens_on_the_general_tab(opened: Callable[[], SettingDialog]) -> None:
+    """설정 창이 열리면 일반 탭이 골라져 있고 초점이 그 탭에 있어야 한다.
+
+    창을 연다 -> currentTab() == "general", 일반 탭에 초점
+    """
+    dialog = opened()
+    assert dialog.currentTab() == "general"
+    assert dialog.tabs["general"].hasFocus()
+
+
+def test_ctrl_tab_moves_to_the_next_and_ctrl_shift_tab_to_the_previous_tab(
+    opened: Callable[[], SettingDialog],
+) -> None:
+    """Ctrl+Tab은 다음 탭으로, Ctrl+Shift+Tab은 앞 탭으로 넘겨야 하고 끝에서는 돌아야 한다.
+
+    일반에서 Ctrl+Tab -> 다운로드, 그 뒤 Ctrl+Shift+Tab 두 번 -> 고급
+    """
+    dialog = opened()
+    QTest.keyClick(dialog, Qt.Key.Key_Tab, Qt.KeyboardModifier.ControlModifier)
+    assert dialog.currentTab() == "download"
+    for _ in range(2):
+        QTest.keyClick(
+            dialog,
+            Qt.Key.Key_Backtab,
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+        )
+    assert dialog.currentTab() == "advanced"
+
+
+@pytest.mark.parametrize("name", sorted(ITEM_TABS))
+def test_each_moved_item_sits_on_its_tab(opened: Callable[[], SettingDialog], name: str) -> None:
+    """옮긴 항목은 정한 탭 쪽 안에 있어야 하고, 그 탭을 고르면 보여야 한다.
+
+    항목 objectName -> 조상에 `<탭>Page`, 그 탭을 누르면 isVisible()
+    """
+    dialog = opened()
+    found = [w for w in dialog.findChildren(QWidget, name) if w.objectName() == name]
+    assert len(found) == 1, f"{name}: {len(found)}개"
+    widget = found[0]
+    page = dialog.findChild(QWidget, f"{ITEM_TABS[name]}Page")
+    assert page is not None and page.isAncestorOf(widget), f"{name}: {ITEM_TABS[name]} 탭에 없다"
+    QTest.mouseClick(dialog.tabs[ITEM_TABS[name]], Qt.MouseButton.LeftButton)
+    QApplication.processEvents()
+    assert widget.isVisible()
+
+
+def test_every_widget_shows_tips_in_the_bubble(opened: Callable[[], SettingDialog]) -> None:
+    """설정 창의 위젯 모두에 말풍선 필터가 걸려 있어야 한다(#629 — 편집 창과 같다).
+
+    창 · 자식 위젯 전부 -> property("tipInstalled") 참
+    """
+    dialog = opened()
+    missing = [
+        w.objectName() or type(w).__name__
+        for w in (dialog, *dialog.findChildren(QWidget))
+        if not w.property("tipInstalled")
+    ]
+    assert missing == []
+
+
+# ================================================================ 저장 · 취소 켜짐
+
+
+def test_save_and_cancel_are_off_when_nothing_changed(opened: Callable[[], SettingDialog]) -> None:
+    """칸을 바꾸지 않으면 저장 · 취소가 꺼져 있어야 한다.
+
+    `SAVED`로 연다 -> 저장 · 취소 isEnabled() 거짓
+    """
+    dialog = opened()
+    assert not _save(dialog).isEnabled()
+    assert not _cancel(dialog).isEnabled()
+
+
+@pytest.mark.parametrize("field", sorted(FIELDS))
+def test_changing_a_field_turns_save_and_cancel_on(
+    opened: Callable[[], SettingDialog], field: str
+) -> None:
+    """칸 하나를 바꾸면 저장 · 취소가 켜져야 한다.
+
+    칸 값을 `FIELDS`의 값으로 -> 저장 · 취소 isEnabled() 참
+    """
+    dialog = opened()
+    FIELDS[field][0](dialog)
+    assert _save(dialog).isEnabled()
+    assert _cancel(dialog).isEnabled()
+
+
+def test_typing_back_the_saved_value_turns_save_and_cancel_off(
+    opened: Callable[[], SettingDialog],
+) -> None:
+    """바꾼 칸을 연 때의 값으로 되돌리면 저장 · 취소가 다시 꺼져야 한다.
+
+    NID_AUT "aut-typed" → "aut-saved", 다운로드 후 동작 shutdown → sleep -> 저장 · 취소 꺼짐
+    """
+    dialog = opened()
+    _change_nidaut(dialog)
+    _change_after_download(dialog)
+    dialog.nidaut.setText("aut-saved")
+    dialog.afterDownload.setCurrentIndex(dialog.afterDownload.findData("sleep"))
+    assert not _save(dialog).isEnabled()
+    assert not _cancel(dialog).isEnabled()
+
+
+# ================================================================ 저장
+
+
+@pytest.mark.parametrize("field", sorted(FIELDS))
+def test_save_writes_only_the_changed_key(opened: Callable[[], SettingDialog], field: str) -> None:
+    """칸 하나를 바꾸고 저장을 누르면 그 키의 행만 바뀌고 창이 닫혀야 한다.
+
+    칸 값을 바꾼다 → 저장 누름 -> 문자열이 달라진 행 = 그 키 하나, 값 = `FIELDS`의 값, 창 숨음
+    """
+    dialog = opened()
+    before = read_rows()
+    change, key, value = FIELDS[field]
+    change(dialog)
+    QTest.mouseClick(_save(dialog), Qt.MouseButton.LeftButton)
+    QApplication.processEvents()
+    after = read_rows()
+    assert {k for k in after if after[k] != before.get(k)} == {key}
+    assert read_settings()[key] == value
+    assert not dialog.isVisible()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+
+
+@pytest.mark.parametrize("field", sorted(FIELDS))
+def test_saved_value_is_shown_when_the_window_opens_again(
+    opened: Callable[[], SettingDialog], field: str
+) -> None:
+    """저장한 뒤 설정 창을 다시 열면 칸이 저장한 값을 보여야 한다.
+
+    칸 값을 바꾼다 → 저장 → 다시 연다 -> 칸 값 = `FIELDS`의 값
+    """
+    dialog = opened()
+    change, key, value = FIELDS[field]
+    change(dialog)
+    _save(dialog).click()
+    QApplication.processEvents()
+    assert _shown_value(opened(), key) == value
+
+
+def test_ctrl_s_saves_the_changed_key_and_closes(opened: Callable[[], SettingDialog]) -> None:
+    """칸을 바꾸고 Ctrl+S를 누르면 그 키가 저장되고 창이 닫혀야 한다.
+
+    다운로드 후 동작 shutdown → Ctrl+S(StandardKey.Save) -> 저장 값 "shutdown", 창 숨음
+    """
+    dialog = opened()
+    _change_after_download(dialog)
+    QTest.keySequence(dialog, _save_keys())
+    QApplication.processEvents()
+    assert read_settings()["afterDownload"] == "shutdown"
+    assert not dialog.isVisible()
+
+
+def test_ctrl_s_without_changes_writes_nothing_and_stays_open(
+    opened: Callable[[], SettingDialog],
+) -> None:
+    """칸을 바꾸지 않고 Ctrl+S를 누르면 아무 행도 바뀌지 않고 창이 열려 있어야 한다.
+
+    Ctrl+S -> 행 문자열 전부 그대로, 창 보임
+    """
+    dialog = opened()
+    before = read_rows()
+    QTest.keySequence(dialog, _save_keys())
+    QApplication.processEvents()
+    assert read_rows() == before
+    assert dialog.isVisible()
+
+
+# ================================================================ 취소 · Esc
+
+
+@pytest.mark.parametrize("field", sorted(FIELDS))
+def test_cancel_writes_nothing_and_the_window_opens_again_on_the_saved_value(
+    opened: Callable[[], SettingDialog], field: str
+) -> None:
+    """칸을 바꾸고 취소를 누르면 아무 행도 바뀌지 않고, 다시 연 창은 저장돼 있던 값을 보여야 한다.
+
+    칸 값을 바꾼다 → 취소 누름 -> 행 문자열 전부 그대로, 창 숨음, 다시 연 창의 칸 = `SAVED`의 값
+    """
+    dialog = opened()
+    before = read_rows()
+    change, key, _value = FIELDS[field]
+    change(dialog)
+    QTest.mouseClick(_cancel(dialog), Qt.MouseButton.LeftButton)
+    QApplication.processEvents()
+    assert read_rows() == before
+    assert not dialog.isVisible()
+    assert _shown_value(opened(), key) == SAVED[key]
+
+
+def test_escape_writes_nothing_and_closes(opened: Callable[[], SettingDialog]) -> None:
+    """칸을 바꾸고 Esc를 누르면 아무 행도 바뀌지 않고 확인 없이 창이 닫혀야 한다.
+
+    네 칸을 모두 바꾼다 → Esc -> 행 문자열 전부 그대로, 창 숨음, result() == Rejected
+    """
+    dialog = opened()
+    before = read_rows()
+    for change, _key, _value in FIELDS.values():
+        change(dialog)
+    QTest.keyClick(dialog, Qt.Key.Key_Escape)
+    QApplication.processEvents()
+    assert read_rows() == before
+    assert not dialog.isVisible()
+    assert dialog.result() == QDialog.DialogCode.Rejected
+
+
+# ================================================================ 닫기 확인
+
+
+def test_closing_without_changes_closes_without_asking(
+    opened: Callable[[], SettingDialog], qtbot: QtBot
+) -> None:
+    """칸을 바꾸지 않고 창을 닫으면 확인 대화상자 없이 닫혀야 한다.
+
+    close() -> 확인 대화상자 뜨지 않음, 창 숨음, 행 그대로
+    """
+    dialog = opened()
+    before = read_rows()
+    seen = _close_answering(qtbot, dialog, _click("closeBack"))
+    assert seen["shown"] is False
+    assert not dialog.isVisible()
+    assert read_rows() == before
+
+
+def test_close_prompt_defaults_to_go_back(
+    opened: Callable[[], SettingDialog], qtbot: QtBot
+) -> None:
+    """바뀐 채로 닫을 때 뜨는 확인 대화상자의 기본 버튼과 Esc 버튼은 돌아가기여야 한다.
+
+    NID_AUT를 바꾼다 → close() -> 기본 = closeBack, Esc = closeBack
+    """
+    dialog = opened()
+    _change_nidaut(dialog)
+    seen = _close_answering(qtbot, dialog, _click("closeBack"))
+    assert seen["shown"] is True
+    assert (seen["default"], seen["escape"]) == ("closeBack", "closeBack")
+
+
+def test_close_prompt_save_writes_the_changed_key_and_closes(
+    opened: Callable[[], SettingDialog], qtbot: QtBot
+) -> None:
+    """확인 대화상자에서 저장을 누르면 바뀐 키만 저장되고 창이 닫혀야 한다.
+
+    언어 en_US → close() → 저장 -> 달라진 행 = language 하나, 값 "en_US", 창 숨음
+    """
+    dialog = opened()
+    before = read_rows()
+    _change_language(dialog)
+    seen = _close_answering(qtbot, dialog, _click("closeSave"))
+    assert seen["shown"] is True
+    after = read_rows()
+    assert {k for k in after if after[k] != before.get(k)} == {"language"}
+    assert read_settings()["language"] == "en_US"
+    assert not dialog.isVisible()
+
+
+def test_close_prompt_dont_save_writes_nothing_and_closes(
+    opened: Callable[[], SettingDialog], qtbot: QtBot
+) -> None:
+    """확인 대화상자에서 저장 안 함을 누르면 아무 행도 바뀌지 않고 창이 닫혀야 한다.
+
+    언어 en_US → close() → 저장 안 함 -> 행 문자열 전부 그대로, 창 숨음
+    """
+    dialog = opened()
+    before = read_rows()
+    _change_language(dialog)
+    seen = _close_answering(qtbot, dialog, _click("closeDiscard"))
+    assert seen["shown"] is True
+    assert read_rows() == before
+    assert not dialog.isVisible()
+
+
+@pytest.mark.parametrize("how", ["button", "escape"])
+def test_close_prompt_go_back_keeps_the_window_open_with_the_changed_value(
+    opened: Callable[[], SettingDialog], qtbot: QtBot, how: str
+) -> None:
+    """확인 대화상자에서 돌아가기(버튼 · Esc)를 고르면 아무 행도 바뀌지 않고 창이 바꾼 값 그대로 열려 있어야 한다.
+
+    언어 en_US → close() → 돌아가기 누름 / Esc -> 행 그대로, 창 보임, 언어 칸 en_US, 저장 켜짐
+    """
+    dialog = opened()
+    before = read_rows()
+    _change_language(dialog)
+    if how == "button":
+        answer = _click("closeBack")
+    else:
+
+        def answer(box: QDialog) -> None:
+            QTest.keyClick(box, Qt.Key.Key_Escape)
+
+    seen = _close_answering(qtbot, dialog, answer)
+    assert seen["shown"] is True
+    assert read_rows() == before
+    assert dialog.isVisible()
+    assert dialog.language.currentData() == "en_US"
+    assert _save(dialog).isEnabled()
+
+
+# ================================================================ 탭 줄 폭
+
+
+@pytest.fixture
+def language(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Iterator[str]:
+    """`CVDv2.set_language`로 그 언어의 번역기를 건다 — 끝나면 건 번역기를 전부 뗀다."""
+    code = request.param
+    monkeypatch.setattr(main_module, "app", qapp, raising=False)
+    cfg = settings.default_settings() | {"language": code}
+    installed = main_module.set_language(cfg, QTranslator())
+    yield code
+    for translator in installed:
+        qapp.removeTranslator(translator)
+    main_module._qt_translators.clear()
+    QApplication.processEvents()
+
+
+@pytest.mark.parametrize("language", sorted(TAB_NAMES), indirect=True)
+def test_tab_names_follow_the_language(opened: Callable[[], SettingDialog], language: str) -> None:
+    """탭 이름은 앱 언어의 이름이어야 한다.
+
+    ko_KR -> 일반 · 다운로드 · 화면 · 계정 · 고급, en_US -> General · Download · Display · Account · Advanced
+    """
+    dialog = opened()
+    assert [dialog.tabs[key].text() for key in TAB_ORDER] == TAB_NAMES[language]
+
+
+@pytest.mark.parametrize("language", sorted(TAB_NAMES), indirect=True)
+def test_tab_row_fits_inside_the_minimum_width(
+    opened: Callable[[], SettingDialog], language: str
+) -> None:
+    """창을 최소폭으로 줄여도 탭 다섯이 제 sizeHint 폭 그대로 창 안쪽 오른쪽 끝 안에 들어야 한다.
+
+    최소폭으로 resize -> 실제 폭 = 최소폭, 탭마다 폭 = sizeHint 폭 · 겹치지 않음,
+    마지막 탭 오른쪽 끝 ≤ 창 폭 − 바깥 오른쪽 여백
+    """
+    dialog = opened()
+    minimum = dialog.minimumSizeHint().width()
+    dialog.resize(minimum, dialog.height())
+    QApplication.processEvents()
+    assert dialog.width() == minimum, "전제: 최소폭으로 줄었다"
+    tabs = [dialog.tabs[key] for key in TAB_ORDER]
+    assert all(tab.isVisible() for tab in tabs), "전제: 탭이 보인다"
+    lefts = [tab.mapTo(dialog, tab.rect().topLeft()).x() for tab in tabs]
+    for tab, left, next_left in zip(tabs, lefts, [*lefts[1:], None], strict=True):
+        assert tab.width() == tab.sizeHint().width(), f"{tab.text()}: 눌렸다"
+        if next_left is not None:
+            assert left + tab.width() <= next_left, f"{tab.text()}: 다음 탭과 겹친다"
+    inner_right = dialog.width() - dialog.layout().contentsMargins().right()
+    assert lefts[-1] + tabs[-1].width() <= inner_right
