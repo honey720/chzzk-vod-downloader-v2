@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterator
 import pytest
 from pytestqt.qtbot import QtBot
 from PySide6.QtCore import Qt, QTimer, QTranslator
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QGuiApplication, QKeySequence
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QPushButton, QWidget
 
@@ -260,6 +260,141 @@ def test_ctrl_shift_tab_as_the_tab_key_moves_to_the_previous_tab(
     assert dialog.currentTab() == "general"
 
 
+_NEXT_TAB = _PHYSICAL_CTRL  # 다음 탭 키 Control+Tab의 수정자(Key_Tab과 함께)
+_PREVIOUS_TAB = _PHYSICAL_CTRL | Qt.KeyboardModifier.ShiftModifier  # 앞 탭 키 Control+Shift+Tab
+
+
+def _key(modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier) -> None:
+    """지금 포커스 위젯에 Tab 키(수정자 포함)를 한 번 보낸다 — 단축키 · Tab 이동 모두 실제 키 처리를 탄다."""
+    focused = QApplication.focusWidget()
+    assert focused is not None, "전제: 포커스 위젯이 있다"
+    QTest.keyClick(focused, Qt.Key.Key_Tab, modifiers)
+    QApplication.processEvents()
+
+
+def _focus_name() -> str:
+    """지금 포커스 위젯의 objectName(없으면 빈 문자열)."""
+    focused = QApplication.focusWidget()
+    return "" if focused is None else focused.objectName()
+
+
+#: 탭 버튼 포커스에서 누른 키 → (앞서 누를 키들, 누를 키, 넘어간 탭). 창은 일반 탭 버튼 포커스로 열린다
+TAB_BUTTON_SWITCHES = {
+    "next": ([], _NEXT_TAB, "download"),
+    "previous-wraps": ([], _PREVIOUS_TAB, "advanced"),
+    "next-wraps": ([_PREVIOUS_TAB], _NEXT_TAB, "general"),
+    "previous": ([_NEXT_TAB, _NEXT_TAB], _PREVIOUS_TAB, "download"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(TAB_BUTTON_SWITCHES))
+def test_tab_switch_key_on_a_tab_button_moves_keyboard_focus_to_the_new_tab_button(
+    opened: Callable[[], SettingDialog], case: str
+) -> None:
+    """탭 버튼에 포커스가 있을 때 탭 넘기기 키를 누르면 포커스가 새 탭 버튼으로 가고 focus ring이 그려져야 한다(#659).
+
+    `TAB_BUTTON_SWITCHES[case]`의 키를 차례로 Key_Tab 키 이벤트로 보낸다
+    -> currentTab() == 넘어간 탭, 포커스 = 그 탭 버튼, keyFocus True
+    """
+    before, modifiers, expected = TAB_BUTTON_SWITCHES[case]
+    dialog = opened()
+    for earlier in before:
+        _key(earlier)
+    assert QApplication.focusWidget() in dialog.tabs.values(), "전제: 탭 버튼 포커스"
+    _key(modifiers)
+    assert dialog.currentTab() == expected
+    assert _focus_name() == f"settingsTab_{expected}"
+    assert dialog.tabs[expected].isVisible()
+    assert dialog.tabs[expected].property("keyFocus") is True
+
+
+#: 탭 안 칸 포커스에서 다음 탭 키 → (칸까지 가는 키들, 칸, 넘어간 탭, 포커스가 갈 위젯).
+#: 창은 일반 탭 버튼 포커스로 열리고 Tab은 고른 탭 버튼에서 그 탭 쪽 첫 칸으로 간다
+FIELD_SWITCHES = {
+    "to-first-field": (
+        [_NEXT_TAB] * 3 + [Qt.KeyboardModifier.NoModifier],
+        "nidaut",
+        "advanced",
+        "logsFolder",
+    ),
+    "wraps-to-first-field": (
+        [_PREVIOUS_TAB, Qt.KeyboardModifier.NoModifier],
+        "logsFolder",
+        "general",
+        "language",
+    ),
+    "empty-tab-to-tab-button": (
+        [Qt.KeyboardModifier.NoModifier],
+        "language",
+        "download",
+        "settingsTab_download",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(FIELD_SWITCHES))
+def test_tab_switch_key_in_a_field_moves_focus_to_the_new_tab(
+    opened: Callable[[], SettingDialog], case: str
+) -> None:
+    """탭 안 칸에 포커스가 있을 때 다음 탭 키를 누르면 새 탭의 첫 Tab 위젯(칸이 없으면 탭 버튼)으로 가야 한다(#659).
+
+    `FIELD_SWITCHES[case]`의 키로 칸까지 간 뒤 Control+Tab 키 이벤트
+    -> currentTab() == 넘어간 탭, 포커스 = 정한 위젯(보임), 버튼이면 keyFocus True
+    """
+    keys, field, expected_tab, expected_focus = FIELD_SWITCHES[case]
+    dialog = opened()
+    for earlier in keys:
+        _key(earlier)
+    assert _focus_name() == field, "전제: 칸 포커스"
+    _key(_NEXT_TAB)
+    assert dialog.currentTab() == expected_tab
+    assert _focus_name() == expected_focus
+    focused = QApplication.focusWidget()
+    assert focused.isVisible()
+    if isinstance(focused, QPushButton):
+        assert focused.property("keyFocus") is True
+
+
+def test_tab_switch_key_skips_controls_tab_does_not_stop_at(
+    opened: Callable[[], SettingDialog],
+) -> None:
+    """Tab이 글 칸에만 가는 규칙에서 Tab이 멈추지 않는 위젯만 있는 탭으로 넘기면 포커스가 탭 버튼으로 가야 한다(#659).
+
+    tabFocusBehavior = TabFocusTextControls(macOS 「키보드 탐색」 꺼짐), logsFolder 포커스 정책 = TabFocus
+    계정 탭 nidaut 포커스에서 Control+Tab -> 고급 탭, 포커스 = 고급 탭 버튼
+    """
+    dialog = opened()
+    dialog.logsFolder.setFocusPolicy(Qt.FocusPolicy.TabFocus)  # Tab만 받는 위젯 — macOS 단추 정책
+    for earlier in [_NEXT_TAB] * 3 + [Qt.KeyboardModifier.NoModifier]:
+        _key(earlier)
+    assert _focus_name() == "nidaut", "전제: 칸 포커스"
+    hints = QGuiApplication.styleHints()
+    before = hints.tabFocusBehavior()
+    if not isinstance(before, Qt.TabFocusBehavior):
+        before = Qt.TabFocusBehavior(int(before))  # macOS 기본값 3은 열거 이름이 없다
+    hints.setTabFocusBehavior(Qt.TabFocusBehavior.TabFocusTextControls)
+    try:
+        _key(_NEXT_TAB)
+    finally:
+        hints.setTabFocusBehavior(before)
+    assert dialog.currentTab() == "advanced"
+    assert _focus_name() == "settingsTab_advanced"
+
+
+def test_clicking_a_tab_gives_it_mouse_focus(opened: Callable[[], SettingDialog]) -> None:
+    """탭을 마우스로 누르면 포커스가 그 탭 버튼에 가고 focus ring은 그려지지 않아야 한다.
+
+    일반 탭 버튼 포커스 -> 계정 탭 왼쪽 단추 누름 -> currentTab() == "account", 포커스 = 계정 탭 버튼,
+    keyFocus False
+    """
+    dialog = opened()
+    QTest.mouseClick(dialog.tabs["account"], Qt.MouseButton.LeftButton)
+    QApplication.processEvents()
+    assert dialog.currentTab() == "account"
+    assert _focus_name() == "settingsTab_account"
+    assert dialog.tabs["account"].property("keyFocus") is False
+
+
 #: 실제 키 입력 경우 — (OS, 수정자, 키, 다운로드 탭에서 누른 뒤 탭). 물리 키 이름(`os_key_input`)
 REAL_TAB_KEYS = [
     ("win32", [os_key_input.CTRL], "tab", "display"),
@@ -302,6 +437,69 @@ def test_real_tab_switch_keys_move_between_tabs(
         key,
         lambda: qtbot.waitUntil(lambda: dialog.currentTab() == expected, timeout=ACTIVE_WAIT_MS),
     )
+
+
+#: 실제 키 입력으로 포커스가 따라가는 경우 — id → (OS, 앞서 누를 (수정자, 키)들, 수정자, 키, 포커스가 갈 위젯).
+#: 창은 일반 탭 버튼 포커스로 열린다. 수정자 없는 Tab은 일반 탭 버튼에서 일반 탭 쪽 첫 칸으로 간다
+REAL_FOCUS_KEYS: dict[str, tuple[str, list[tuple[list[str], str]], list[str], str, str]] = {
+    f"{platform}-{name}": (platform, before, modifiers, key, focus)
+    for platform in ("win32", "darwin")
+    for name, before, modifiers, key, focus in (
+        ("button-next", [], [os_key_input.CTRL], "tab", "settingsTab_download"),
+        (
+            "button-previous",
+            [],
+            [os_key_input.CTRL, os_key_input.SHIFT],
+            "tab",
+            "settingsTab_advanced",
+        ),
+        ("field-to-empty-tab", [([], "tab")], [os_key_input.CTRL], "tab", "settingsTab_download"),
+    )
+} | {
+    "darwin-button-cmd-next": (
+        "darwin",
+        [],
+        [os_key_input.CMD, os_key_input.SHIFT],
+        "]",
+        "settingsTab_download",
+    )
+}
+
+
+@pytest.mark.skipif(
+    os.environ.get(NATIVE_SWITCH) != "1" or not os_key_input.SUPPORTED,
+    reason="OS 키 입력은 Windows · macOS 실제 화면에서만 낸다",
+)
+@pytest.mark.parametrize(
+    "case", sorted(case for case, value in REAL_FOCUS_KEYS.items() if value[0] == sys.platform)
+)
+def test_real_tab_switch_keys_move_keyboard_focus_to_the_new_tab(
+    opened: Callable[[], SettingDialog], qtbot: QtBot, case: str
+) -> None:
+    """OS 입력 경로로 누른 탭 넘기기 키 뒤 포커스는 `REAL_FOCUS_KEYS`의 위젯이고 focus ring이 그려져야 한다(#659).
+
+    일반 탭 버튼 포커스 → `before` 키(OS 키 경로) → 탭 넘기기 키(OS 키 경로)
+    -> 포커스 위젯 objectName == focus, keyFocus True
+    """
+    _, before, modifiers, key, focus = REAL_FOCUS_KEYS[case]
+    dialog = opened()
+    hwnd = int(dialog.winId())
+    for earlier_modifiers, earlier_key in before:
+        os_key_input.press(
+            hwnd,
+            earlier_modifiers,
+            earlier_key,
+            lambda: qtbot.waitUntil(lambda: _focus_name() == "language", timeout=ACTIVE_WAIT_MS),
+        )
+
+    def arrived() -> bool:
+        focused = QApplication.focusWidget()
+        return focused is not None and focused.objectName() == focus
+
+    os_key_input.press(
+        hwnd, modifiers, key, lambda: qtbot.waitUntil(arrived, timeout=ACTIVE_WAIT_MS)
+    )
+    assert QApplication.focusWidget().property("keyFocus") is True
 
 
 @pytest.mark.parametrize("name", sorted(ITEM_TABS))
