@@ -44,6 +44,7 @@ from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 �
 SLACK = 24  # 색이 같다고 보는 한도 — 세 채널 차의 합
 WAIT_MS = 3000  # 초점 · 활성을 기다리는 한도(ms) — X11 · xvfb는 활성이 비동기로 온다
 WIDE = 900  # 메인 창을 최소폭보다 넓히는 값(px) — 바 버튼이 모두 보이는 폭
+TAB_PRESSES = 30  # target에 닿을 때까지 누르는 Tab 한도 — 창 하나의 Tab 순서보다 넉넉하다
 SELECT_BAR_EDGE = 3  # 선택 줄 버튼의 가장자리 자리(px) — 바깥 여백 2px + 테두리 1px(style.qss)
 
 # 경우 이름 -> (버튼을 찾는 함수, 가장자리 두께 px)
@@ -157,8 +158,16 @@ def _step_back(qtbot: QtBot, window: QWidget, target: QWidget) -> QWidget:
 
 
 def _tab_in(qtbot: QtBot, window: QWidget, before: QWidget, target: QWidget) -> None:
-    """앞 위젯에서 실제 Tab 키로 `target`에 초점을 옮긴다 — 창에 WA_KeyboardFocusChange가 선다."""
-    QTest.keyClick(before, Qt.Key.Key_Tab)
+    """앞 위젯에서 실제 Tab 키로 `target`에 초점을 옮긴다 — 창에 WA_KeyboardFocusChange가 선다.
+
+    macOS는 Shift+Tab과 Tab의 순서가 어긋나 한 번에 돌아오지 않는 버튼이 있다 — `target`에 닿을 때까지 Tab을 더
+    누른다(`TAB_PRESSES`번까지).
+    """
+    for _ in range(TAB_PRESSES):
+        QTest.keyClick(QApplication.focusWidget() or before, Qt.Key.Key_Tab)
+        _pump()
+        if target.hasFocus():
+            break
     qtbot.waitUntil(target.hasFocus, timeout=WAIT_MS)
     _pump()
     assert window.testAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange), "전제: 키보드 초점 이동"
