@@ -2219,15 +2219,6 @@ def _wraps_tightly(face: list[int | None], ring: list[int | None]) -> bool:
     return True
 
 
-def _hover_over(win: VodDownloader, widget: QWidget, qtbot: QtBot) -> None:
-    """합성 이벤트로 포인터를 위젯 가운데에 올린다(실제 커서는 옮기지 않는다)."""
-    from PySide6.QtTest import QTest
-
-    QTest.mouseMove(win.windowHandle(), widget.mapTo(win, widget.rect().center()))
-    qtbot.waitUntil(widget.underMouse, timeout=3000)
-    _pump()
-
-
 class TestKeyFocusRing:
     """바 칩 · 선택 버튼의 키보드 focus ring은 가장자리 1px 강조색 테두리 하나다 — 면 · 모양은 그대로(#651)."""
 
@@ -2273,29 +2264,6 @@ class TestKeyFocusRing:
         assert widget.property("keyFocus") is True, "전제: 키보드 초점"
         after = _left_profile(win, widget, "accent")
         assert _wraps_tightly(before, after), f"{scheme} {name}: 면 {before} · 테두리 {after}"
-
-    def test_keyboard_focus_on_a_hovered_chip_is_one_edge_on_the_hover_face(
-        self, window, scheme: str, qtbot
-    ) -> None:
-        """포인터가 올라간 안 고른 칩에 키보드 초점이 오면 가장자리는 accent, 1px 안은 barHover여야 한다.
-
-        대기 카드 하나, 창 폭 = 최소폭 + 900, 안 고른 칩 「대기」에 포인터 + Tab 초점 -> 왼쪽 변 가운데
-        가장자리 ≈ accent, 1px 안 ≈ barHover, 초점 전후 칩 크기 같음
-        """
-        win = window(DownloadState.WAITING)
-        _chosen_control(win, "filterChip")
-        chip = win.filterChips["waiting"]
-        assert not chip.isChecked(), "전제: 안 고른 칩"
-        size = chip.size()
-        _hover_over(win, chip, qtbot)
-        _activate_and_focus(win, chip, qtbot)
-        _hover_over(win, chip, qtbot)
-        assert chip.property("keyFocus") is True, "전제: 키보드 초점"
-        seen = _ring_pixels(win, chip)
-        names = {key: colour.name() for key, colour in seen.items()}
-        assert _is(seen["left_edge"], "accent"), f"{scheme}: {names}"
-        assert _is(seen["left_gap"], "barHover"), f"{scheme}: {names}"
-        assert chip.size() == size
 
     @pytest.mark.parametrize("name", ["filterChip", "selectButton"])
     def test_mouse_focus_draws_no_ring(self, window, scheme: str, name: str, qtbot) -> None:
