@@ -1,5 +1,7 @@
 """설정 창 — 다섯 탭(일반 · 다운로드 · 화면 · 계정 · 고급) · 바뀐 값 저장 · 취소 · 닫기 확인 (#644)."""
 
+import sys
+
 import app.theme as theme
 from app.system import settings
 from app.widgets.choice_combo import ChoiceCombo
@@ -7,6 +9,7 @@ from app.widgets.focus_ring import watch_dialog_buttons
 from app.widgets.header_controls import CHIP_GAP, FilterChip
 from app.widgets.tip_bubble import close_floats_if_left, install_tips
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QDialog,
     QDialogButtonBox,
@@ -55,21 +58,40 @@ CLOSE_DISCARD = "discard"  # 닫기 확인 — 저장하지 않고 닫는다
 CLOSE_BACK = "back"  # 닫기 확인 — 닫지 않고 설정 창으로 돌아간다(기본 · Esc)
 
 
-def _tab_switch_keys(standard: QKeySequence.StandardKey) -> list[QKeySequence]:
-    """탭 넘기기 표준 키의 OS 키 전부에, Shift+Backtab 키마다 같은 Shift+Tab 키를 더해 돌려준다.
+def _physical_ctrl() -> Qt.KeyboardModifier:
+    """키보드의 Control 키가 Qt에서 내는 수정자 — macOS는 Meta다(Qt Ctrl은 Command 키)."""
+    if sys.platform == "darwin" and not QApplication.testAttribute(
+        Qt.ApplicationAttribute.AA_MacDontSwapCtrlAndMeta
+    ):
+        return Qt.KeyboardModifier.MetaModifier
+    return Qt.KeyboardModifier.ControlModifier
 
-    Qt 표준 키 PreviousChild는 `Ctrl+Shift+Backtab`이다. 그런데 실제 키보드로 Ctrl+Shift+Tab을 누르면
-    단축키 후보는 OS 키 배치(Windows · macOS 키 매퍼)가 물리 키 Tab으로 만든 `Ctrl+Shift+Tab`이라
-    Backtab 키와 맞지 않는다 — 앞 탭 키가 듣지 않았다(오너 실기 2026-11-27, #644). `QKeySequence(표준 키)`는
-    첫 키만 담으므로 `keyBindings`로 전부 받는다.
+
+def _tab_switch_keys(standard: QKeySequence.StandardKey) -> list[QKeySequence]:
+    """탭 넘기기 키 — 표준 키의 OS 키 전부 + Control+Tab(다음) · Control+Shift+Tab(앞)을 돌려준다.
+
+    `standard`는 NextChild 또는 PreviousChild다. 두 가지를 더한다(오너 실기 2026-11-27, #644):
+
+    - 실제 키보드로 Ctrl+Shift+Tab을 누르면 단축키 후보는 OS 키 매퍼가 물리 키 Tab으로 만든
+      `Ctrl+Shift+Tab`이다. 표준 키 PreviousChild는 `Ctrl+Shift+Backtab`이라 맞지 않아 앞 탭 키가 듣지 않았다
+    - macOS 표준 키는 Command 기준(Cmd+Shift+[ · ] · Cmd+Tab)이고 Cmd+Tab은 OS가 앱 전환에 쓴다. macOS
+      탭 창이 쓰는 Control+Tab · Control+Shift+Tab은 Qt에서 Meta라 표준 키에 없다
+
+    `QKeySequence(표준 키)`는 첫 키만 담으므로 `keyBindings`로 전부 받는다.
     """
+    ctrl = _physical_ctrl()
     keys = QKeySequence.keyBindings(standard)
-    for key in list(keys):
-        combo = key[0]
-        if combo.key() == Qt.Key.Key_Backtab:
-            tab = QKeySequence(QKeyCombination(combo.keyboardModifiers(), Qt.Key.Key_Tab))
-            if tab not in keys:
-                keys.append(tab)
+    if standard == QKeySequence.StandardKey.PreviousChild:
+        extra = [
+            (ctrl | Qt.KeyboardModifier.ShiftModifier, key)
+            for key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)
+        ]
+    else:
+        extra = [(ctrl, Qt.Key.Key_Tab)]
+    for modifiers, key in extra:
+        sequence = QKeySequence(QKeyCombination(modifiers, key))
+        if sequence not in keys:
+            keys.append(sequence)
     return keys
 
 
@@ -304,7 +326,7 @@ class SettingDialog(QDialog):
         # Ctrl+S 저장(macOS Cmd+S). 바뀐 값이 없으면 저장 버튼처럼 아무 일도 하지 않는다
         self.saveShortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.Save), dialog)
         self.saveShortcut.activated.connect(self._onSaveShortcut)
-        # Ctrl+Tab · Ctrl+Shift+Tab 탭 넘기기 — Qt 탭 위젯과 같은 키(OS 표준 키 전부)
+        # 탭 넘기기 — Control+Tab · Control+Shift+Tab과 OS 표준 키 전부
         self.nextTabShortcut = QShortcut(dialog)
         self.nextTabShortcut.setKeys(_tab_switch_keys(QKeySequence.StandardKey.NextChild))
         self.nextTabShortcut.activated.connect(self._nextTab)
