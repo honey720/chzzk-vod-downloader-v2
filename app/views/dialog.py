@@ -28,7 +28,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtGui import (
+    QCloseEvent,
+    QDesktopServices,
+    QGuiApplication,
+    QKeySequence,
+    QShortcut,
+)
 from PySide6.QtCore import (
     QEvent,
     QKeyCombination,
@@ -101,6 +107,29 @@ def _tab_switch_keys(standard: QKeySequence.StandardKey) -> list[QKeySequence]:
         if sequence not in keys:
             keys.append(sequence)
     return keys
+
+
+def _first_tab_stop(page: QWidget) -> QWidget | None:
+    """그 쪽 안에서 Tab 순서가 가장 앞인 위젯 — Tab 키가 멈출 수 있는 보이고 켜진 것만, 없으면 None.
+
+    창의 포커스 사슬(`nextInFocusChain`)을 쪽에서부터 한 바퀴 돈다. Tab이 멈추는 조건은 Qt와 같다 —
+    OS 설정이 모든 컨트롤 Tab이 아니면(macOS 「키보드 탐색」 꺼짐) `StrongFocus`인 위젯만 멈춘다(#659).
+    """
+    allControls = (
+        QGuiApplication.styleHints().tabFocusBehavior() == Qt.TabFocusBehavior.TabFocusAllControls
+    )
+    flag = Qt.FocusPolicy.TabFocus if allControls else Qt.FocusPolicy.StrongFocus
+    widget = page.nextInFocusChain()
+    while widget is not page:
+        if (
+            page.isAncestorOf(widget)
+            and widget.isVisible()
+            and widget.isEnabled()
+            and (widget.focusPolicy() & flag) == flag
+        ):
+            return widget
+        widget = widget.nextInFocusChain()
+    return None
 
 
 class _FormLabel(QLabel):
@@ -410,11 +439,38 @@ class SettingDialog(QDialog):
 
     def _nextTab(self) -> None:
         """다음 탭으로 — 끝에서 처음으로 돈다(Ctrl+Tab)."""
-        self.showTab((self.pages.currentIndex() + 1) % len(TAB_KEYS))
+        self._switchTab(1)
 
     def _previousTab(self) -> None:
         """앞 탭으로 — 처음에서 끝으로 돈다(Ctrl+Shift+Tab)."""
-        self.showTab((self.pages.currentIndex() - 1) % len(TAB_KEYS))
+        self._switchTab(-1)
+
+    def _switchTab(self, step: int) -> None:
+        """탭 넘기기 키로 탭을 `step`만큼 넘기고 키보드 포커스를 새 탭으로 옮긴다(#659).
+
+        포커스가 탭 버튼에 있었으면 새 탭 버튼으로, 옛 탭 쪽 칸에 있었으면 새 탭 쪽의 첫 Tab 순서
+        위젯으로 옮긴다. 새 탭 쪽에 그런 위젯이 없으면 새 탭 버튼으로 옮긴다. 옮기지 않으면 탭 버튼
+        포커스는 옛 탭에 남고, 칸 포커스는 `QStackedWidget`이 넘긴 자리(칸이 없는 탭이면 탭 쪽 위젯
+        자체 — 보이는 표시가 없다)로 간다. 키로 옮긴 포커스라 까닭은 단축키다 — focus ring이 그려진다.
+        포커스가 그 밖(저장 · 취소 버튼)에 있으면 옮기지 않는다. 마우스 누름(`showTab`)은 이 함수를
+        거치지 않는다.
+
+        쪽을 바꾸기 전에 포커스를 새 탭 버튼에 먼저 둔다 — 칸 포커스를 쥔 채 쪽을 바꾸면
+        `QStackedWidget`이 새 쪽 첫 위젯에 다른 까닭으로 포커스를 먼저 주고, 이미 포커스를 쥔 위젯에
+        `setFocus`를 다시 불러도 까닭이 바뀌지 않아 focus ring이 그려지지 않는다.
+        """
+        focused = QApplication.focusWidget()
+        onTab = focused in self.tabs.values()
+        inPage = focused is not None and self.pages.currentWidget().isAncestorOf(focused)
+        index = (self.pages.currentIndex() + step) % len(TAB_KEYS)
+        tab = self.tabs[TAB_KEYS[index]]
+        if onTab or inPage:
+            tab.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self.showTab(index)
+        if inPage:
+            target = _first_tab_stop(self.pages.currentWidget())
+            if target is not None:
+                target.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def setupDynamicUi(self) -> None:
         """칸에 선택지를 채우고 저장된 값으로 맞춘다 — 창을 열 때 한 번."""
