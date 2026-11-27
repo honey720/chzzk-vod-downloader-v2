@@ -356,6 +356,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._stillPending = False  # 애니메이션 끔에서 미룬 막대 바꾸기가 걸려 있는지
         self._previousState: object = None  # 직전 applyStateStyle의 상태 — 중지를 알아본다
         self._imageLabels: dict[str, QLabel] = {}  # 이미지 종류 → 받은 그림을 놓을 라벨(#564)
+        # 받은 썸네일을 큰 칸(110×62)에 맞춰 줄인 그림 — 썸네일 줄이기를 바꾸면 이것으로 다시 그린다(#645).
+        # 원본을 들지 않는다 — 1000장이면 원본 크기만큼 메모리가 늘어난다
+        self._thumbSource: QPixmap | None = None
         self.setupUi(self)
         # 카드 하나가 Tab 한 번이다. 마우스로는 초점을 받지 않는다 — focus ring은 키보드 초점만
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
@@ -893,6 +896,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             if type == "thumbnail":
                 # 썸네일 칸은 110×62 고정이다(#550) — 도착한 때의 칸 크기로 한 번 그린다
                 label.setPixmap(self._composeThumbnail(image, label.size()))
+                big = QSize(theme.METRICS["cardThumbWidth"], theme.METRICS["cardThumbHeight"])
+                self._thumbSource = image.scaled(
+                    big,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
                 return
             original_width = image.width()
             original_height = image.height()
@@ -1098,6 +1107,26 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             inset += self._thumbColumn()
         return max(self.width() - inset, 0)
 
+    def setCompactThumbnail(self, compact: bool) -> None:
+        """썸네일 줄이기를 바꾼다 — 썸네일 크기 · 격자 자리 · 3줄 폭을 새 모양으로 맞춘다 (#645).
+
+        설정 창에서 저장하면 목록이 모든 카드에 부른다(`ContentListView.applyDisplay`). 카드 높이는 바뀌지
+        않는다(세 줄 높이가 정한다). 받아 둔 썸네일은 줄여 둔 그림(`_thumbSource`)으로 새 칸에 다시 그린다.
+        """
+        if compact == self.compactThumbnail:
+            return
+        self.compactThumbnail = compact
+        self._arrangeThumbnail()
+        if self._thumbSource is not None:
+            self.thumbnailLabel.setPixmap(
+                self._composeThumbnail(self._thumbSource, self.thumbnailLabel.size())
+            )
+        self.thumbnailLabel.update()
+        self._fitRow3()
+        if self.hoverBox.isVisibleTo(self):
+            self.contentFrame.layout().activate()
+            self._placeCardButtons()
+
     def _frameInset(self) -> int:
         """카드 폭 − 안쪽 폭 — 좌우 테두리(띠 행은 0) + 안쪽 좌우 여백."""
         margins = self.bodyLayout.contentsMargins()
@@ -1226,7 +1255,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.progressBar.setLook("", 0.0, 1.0)
 
     def _setTint(self, tint: str) -> None:
-        """카드 면의 QSS 색조(`tint` 속성 — "finished" · "failed" · "")를 건다."""
+        """카드 면의 QSS 색조(`tint` 속성 — "finished" · "failed" · "")를 건다.
+
+        완료 · 실패 색조를 끈 설정이면 늘 빈 색조다(#645).
+        """
+        if not card_display.current().state_tint:
+            tint = ""
         frame = self.contentFrame
         if frame.property("tint") != tint:
             frame.setProperty("tint", tint)
@@ -1235,6 +1269,17 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # 계산되지 않는다(Qt 스타일시트). 빠뜨리면 새 카드만 옛 색으로 남고 테마 전환 뒤에야 맞는다
             theme.repolish(self.statusLabel)
             self.hoverShade.update()
+
+    def refreshTint(self) -> None:
+        """완료 · 실패 색조 설정을 지금 카드에 다시 건다 — 설정 창에서 색조를 바꾸면 목록이 부른다 (#645).
+
+        완료 · 실패 모션 도중이면 모션을 끝내고 마지막 모양으로 간다(그 끝이 새 설정으로 색조를 건다).
+        """
+        if self._motionGoal is not None:
+            self._finishStepMotion()
+            return
+        raw = self.item.downloadState
+        self._setTint(self._cardState() if raw in TINT_STATES else "")
 
     def _startStepMotion(self, goal: DownloadState, duration: int, step) -> None:
         """시간(ms)을 0 → `duration`으로 흘리며 `step(ms)`를 부르는 모션을 돈다 — 끝나면 마지막 모양.
@@ -1291,10 +1336,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         bar.setVisible(finished or start > 0)
         main = FINISH_MOTION_MS if finished else FAIL_MOTION_MS
         fade = BAR_FADE_MS if finished else 0
+        # 색조를 끈 설정이면 막대 모션만 돌고 카드 면은 칠하지 않는다(#645)
+        wash = tint if card_display.current().state_tint else ""
 
         def step(ms: float) -> None:
             t = _MOTION_EASING.valueForProgress(min(1.0, ms / main))
-            frame.setWash(tint, t)
+            frame.setWash(wash, t)
             if finished:
                 bar.setValue(
                     round(_snapped(start + (1.0 - start) * t, bar.width()) * PROGRESS_SCALE)
@@ -1368,7 +1415,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self._stopMotion()
             self._startTintMotion(previous, raw == DownloadState.FINISHED)
             return
-        if moving and previous in TINT_STATES and raw not in TINT_STATES:
+        if moving and display.state_tint and previous in TINT_STATES and raw not in TINT_STATES:
             self._stopMotion()
             self._setTint("")
             self._showProgress(fraction, state, busy)

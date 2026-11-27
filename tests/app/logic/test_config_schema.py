@@ -40,6 +40,7 @@ VALID = {
     "recentPaths": ["E:/vod", "D:/old"],
     "sortOrder": "title:desc",
     "cardCompactThumbnail": True,
+    "cardStateTint": False,
     "animations": False,
 }
 
@@ -164,6 +165,11 @@ class TestBrokenValuesFallBackInsteadOfCrashing:
             ("sortOrder", "title"),
             ("sortOrder", "size:asc"),
             ("sortOrder", None),
+            # 카드 화면(#645) — 색조는 참 · 거짓만, 애니메이션은 참 · 거짓 · null만
+            ("cardStateTint", None),
+            ("cardStateTint", "true"),
+            ("animations", 1),
+            ("animations", "null"),
         ),
     )
     def test_the_key_falls_back_and_the_rest_is_preserved(self, key, broken, caplog) -> None:

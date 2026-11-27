@@ -732,6 +732,18 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Logs Folder</translation>
     </message>
     <message>
+        <source>Tint finished and failed cards</source>
+        <translation>Tint finished and failed cards</translation>
+    </message>
+    <message>
+        <source>Smaller thumbnails</source>
+        <translation>Smaller thumbnails</translation>
+    </message>
+    <message>
+        <source>Smooth animations</source>
+        <translation>Smooth animations</translation>
+    </message>
+    <message>
         <source>Open</source>
         <translation>Open</translation>
     </message>

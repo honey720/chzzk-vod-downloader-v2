@@ -290,6 +290,26 @@ class ContentListView(QScrollArea):
             for widget in self._widgets.values():
                 widget.setShowYear(show)
 
+    # ---- 카드 화면 설정 (#645) ----
+
+    def applyDisplay(
+        self, before: card_display.CardDisplay, after: card_display.CardDisplay
+    ) -> None:
+        """카드 화면 설정이 `before` → `after`로 바뀌었다 — 바뀐 것만 목록의 카드에 건다 (#645).
+
+        썸네일 줄이기는 카드마다 모양을 바꾸고 날짜 연도를 다시 정한다(1줄 폭이 바뀐다). 색조는 완료 · 실패
+        카드의 면을 다시 칠한다. 애니메이션은 쓰는 때마다 읽으므로 걸 것이 없다. 지웠지만 되살릴 수 있는
+        카드도 같이 바꾼다 — 되살리면 다른 카드와 모양이 같아야 한다.
+        """
+        cards = [*self._widgets.values(), *self._parked.values()]
+        if before.compact_thumbnail != after.compact_thumbnail:
+            for card in cards:
+                card.setCompactThumbnail(after.compact_thumbnail)
+            self._scheduleDates()
+        if before.state_tint != after.state_tint:
+            for card in cards:
+                card.refreshTint()
+
     def wheelEvent(self, event: QWheelEvent) -> None:
         """휠 한 칸에 카드 한 칸씩 움직인다 — 끝이면 받지 않는다(`StepScroller.wheel`)."""
         self._scroller.wheel(event)
