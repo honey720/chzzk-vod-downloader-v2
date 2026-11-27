@@ -17,7 +17,6 @@ from PySide6.QtGui import (
     QFontMetricsF,
     QIcon,
     QPainter,
-    QPaintEvent,
     QPen,
 )
 from PySide6.QtWidgets import (
@@ -39,7 +38,6 @@ import app.theme as theme
 from app.viewmodels.card_order import FILTER_KEYS, SORT_KEYS
 from app.viewmodels.save_location import SaveLocations, folder_name
 from app.widgets.widget import abbreviate_path, path_display_parts
-from app.widgets.focus_ring import paint_lifted_ring
 from app.widgets.icons import STROKE, action_pixmap
 from app.widgets.tip_bubble import hide_tip, show_tip
 
@@ -661,6 +659,7 @@ class SortButton(DropButton):
         super().__init__("", parent)
         self._order = None
         self._compact = False
+        self._failedReserve = 0  # 「실패 999」 칩 폭(px) — applyWidth가 잰다
         self.menuWidget = ChoiceMenu(self)
         self.menuWidget.anchor = self  # 버튼 왼쪽 끝 맞춤 · 조금 아래(#536)
         self.menuWidget.aboutToShow.connect(self._fillMenu)
@@ -766,29 +765,27 @@ class SortButton(DropButton):
         return names[by]
 
 
-CHIP_COUNT_RESERVE = 999  # 칩 폭을 잡는 숫자 — 세 자리까지 칩 · 헤더바 · 창 최소폭이 그대로다(옛 카운트의 999/999 예약)
+CHIP_COUNT_RESERVE = (
+    999  # 드롭다운 폭 · 창 최소폭을 잡는 숫자 — 세 자리까지 드롭다운 · 창 최소폭이 그대로다
+)
 CHIP_GAP = 4  # 칩 사이 간격(px) — 좁은 폭의 드롭다운 ↔ 실패 칩도 같다
 
 
 class FilterChip(QPushButton):
-    """상태 필터 칩 하나 — 고른 칩의 키보드 focus ring을 고른 면에서 띄워 그린다 (#611 176u).
+    """상태 필터 칩 하나 — 면 · 글 · 키보드 focus ring을 모두 전역 QSS가 칠한다 (#651).
 
-    면 · 글은 전역 QSS가 칠한다. 고른 칩에 키보드 초점이 오면 QSS 테두리는 꺼지고 `paint_lifted_ring`이
-    가장자리에 강조색 테두리와 바 면 간격을 그린다 — 칩 크기 · 글 자리는 그대로다.
+    고른 칩 · 안 고른 칩 모두 키보드 초점이면 칩 가장자리 1px가 강조색 테두리다. 면 · 크기 · 모서리는 초점과
+    무관하게 그대로다(옛 「면에서 1px 띄운 고리」는 간격 때문에 면이 작은 상자로 따로 보였다 — #611 176u를 바꿈).
     """
-
-    def paintEvent(self, event: QPaintEvent) -> None:
-        super().paintEvent(event)
-        if self.isChecked():
-            paint_lifted_ring(self)
 
 
 class FilterChips(QWidget):
     """헤더바 2줄 상태 필터 — 상태별 숫자 칩(전체 · 대기 · 진행 · 일시정지 · 완료 · 실패) (#495).
 
     고른 칩만 눌린 상태다. 고른 칩을 다시 누르면 전체로 돌아간다(설계 §2 — 뜻은 `CardOrder.setFilter`).
-    실패 칩은 실패 카드가 있을 때 강조한다(`alert` 속성 → 전역 QSS). 칩 폭은 숫자 세 자리
-    (`CHIP_COUNT_RESERVE`)가 들어가는 고정 폭이다 — 숫자가 바뀌어도 줄이 움직이지 않는다.
+    실패 칩은 실패 카드가 있을 때 강조한다(`alert` 속성 → 전역 QSS). 칩 폭은 지금 글 「이름 N」에 맞는다 —
+    세 자리를 비워 두면 글 양옆 빈자리가 칩 사이를 벌려 한 묶음으로 덜 보인다(#651). 칩 줄 오른쪽은 늘어나는
+    빈칸이라 숫자가 바뀌어도 정렬 · 선택 버튼은 움직이지 않는다. 드롭다운은 세 자리 고정 폭이다.
 
     좁은 폭에서는 드롭다운 모양이 된다(`setCompact` — #529, 설계 §2 「좁은 폭」): 칩 여섯 대신 고른 필터
     「이름 N」을 보이는 드롭다운 하나(`dropButton`)와, 실패 카드가 있을 때만 그 옆에 남는 실패 칩이다.
@@ -800,6 +797,7 @@ class FilterChips(QWidget):
         super().__init__(parent)
         self._order = None
         self._compact = False
+        self._failedReserve = 0  # 「실패 999」 칩 폭(px) — applyWidth가 잰다
         self.chips: dict[str, QPushButton] = {}
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -854,15 +852,19 @@ class FilterChips(QWidget):
         self._refreshChecked()
 
     def applyWidth(self) -> None:
-        """칩마다 「이름 999」, 드롭다운에 가장 긴 「이름 999」가 들어가는 폭을 건다 — 글꼴 · 번역이 바뀌면 다시 부른다."""
+        """칩마다 지금 글 폭, 드롭다운에 가장 긴 「이름 999」가 들어가는 폭을 건다 — 글꼴 · 번역이 바뀌면 다시 부른다.
+
+        실패 칩의 「실패 999」 폭은 따로 재 둔다(`compactWidth(reserved=True)` — 창 최소폭 몫).
+        """
         names = self.names()
-        for key, name in names.items():
-            chip = self.chips[key]
-            shown = chip.text()
-            chip.setText(f"{name} {CHIP_COUNT_RESERVE}")
-            chip.ensurePolished()
-            chip.setFixedWidth(chip.sizeHint().width())
-            chip.setText(shown)
+        failed = self.chips["failed"]
+        shown = failed.text()
+        failed.setText(f"{names['failed']} {CHIP_COUNT_RESERVE}")
+        failed.ensurePolished()
+        self._failedReserve = failed.sizeHint().width()
+        failed.setText(shown)
+        for chip in self.chips.values():
+            self._fitChip(chip)
         self.dropButton.setFixedWidth(
             max(self.dropButton.widthFor(f"{name} {CHIP_COUNT_RESERVE}") for name in names.values())
         )
@@ -883,12 +885,24 @@ class FilterChips(QWidget):
         widths = [chip.minimumWidth() for chip in self.chips.values()]
         return sum(widths) + CHIP_GAP * (len(widths) - 1)
 
-    def compactWidth(self, failed: bool) -> int:
-        """드롭다운 모양의 폭 — 드롭다운과, `failed`면 실패 칩 · 간격(지금 모양과 무관)."""
+    def compactWidth(self, failed: bool, reserved: bool = False) -> int:
+        """드롭다운 모양의 폭 — 드롭다운과, `failed`면 실패 칩 · 간격(지금 모양과 무관).
+
+        Args:
+            failed: 실패 칩이 드롭다운 옆에 남는지
+            reserved: 실패 칩을 지금 숫자 대신 세 자리(「실패 999」) 폭으로 셀지 — 창 최소폭 몫
+        """
         width = self.dropButton.minimumWidth()
         if failed:
-            width += CHIP_GAP + self.chips["failed"].minimumWidth()
+            chip = self.chips["failed"]
+            width += CHIP_GAP + (self._failedReserve if reserved else chip.minimumWidth())
         return width
+
+    @staticmethod
+    def _fitChip(chip: QPushButton) -> None:
+        """칩 폭을 지금 글에 맞춰 고정한다 — 단계 판정 · 테스트가 `minimumWidth()`로 읽는다."""
+        chip.ensurePolished()
+        chip.setFixedWidth(chip.sizeHint().width())
 
     def hasFailed(self) -> bool:
         """실패 카드가 있는지 — 좁은 폭에서 실패 칩이 남는지."""
@@ -910,6 +924,7 @@ class FilterChips(QWidget):
             chip = self.chips[key]
             chip.setText(f"{name} {counts[key]}")
             chip.setProperty("count", counts[key])
+            self._fitChip(chip)
         failed = self.chips["failed"]
         alert = counts["failed"] > 0
         if failed.property("alert") != alert:

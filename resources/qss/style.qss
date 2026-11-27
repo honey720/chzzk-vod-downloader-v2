@@ -464,10 +464,10 @@ QFrame#headerFrame QPushButton#selectButton[on="true"] {
     border-color: transparent;
 }
 
-/* 켠 선택 버튼의 키보드 focus ring은 면 바깥 1px 띄워 IconButton.paintEvent가 그린다(176u) — 강조색은 켠 면
- * (barSelected) 위에서 묻힌다. 아래 공용 초점 규칙이 덮지 않게 더 구체적으로 테두리를 끈다 */
+/* 켠 선택 버튼의 키보드 초점도 고른 칩과 같은 꼴 — 가장자리 1px 강조색 테두리 하나(#651). 위 켠 규칙이 테두리를
+ * 끄므로 더 구체적으로 되살린다. 마우스 초점은 아래 [keyFocus="false"] 규칙이 끈다 */
 QFrame#headerFrame QPushButton#selectButton[on="true"]:focus {
-    border-color: transparent;
+    border-color: @accent;
 }
 
 /* 선택 줄(#561 — 설계 §12.1 「선택 모드」): 면 · 테두리는 SelectBar가 그린다(말풍선과 같은 떠 있는 면). 안 버튼은
@@ -578,14 +578,11 @@ QFrame#headerFrame QPushButton[role="filter"]:checked:hover {
     background-color: @barSelected;
 }
 
+/* 키보드 초점은 고른 칩 · 안 고른 칩 모두 칩 가장자리 1px 강조색 테두리 하나다 — 면 · 크기 · 모서리는 그대로이고
+ * 간격 · 두 겹이 없다(#651). 테두리 바깥은 바 면(barBg)이라 강조색이 고른 면 위에서도 보인다. 고른 칩 규칙보다
+ * 뒤에 두어 초점이 앞선다. 마우스 초점은 아래 [keyFocus="false"] 규칙이 끈다 */
 QFrame#headerFrame QPushButton[role="filter"]:focus {
     border-color: @accent;
-}
-
-/* 고른 칩의 키보드 focus ring은 면 바깥 1px 띄워 그리기 코드가 그린다(app/widgets/focus_ring.py::paint_lifted_ring,
- * 176u) — 강조색은 고른 면(barSelected) 위에서 묻힌다. 여기서는 QSS 테두리를 끈다 */
-QFrame#headerFrame QPushButton[role="filter"]:checked:focus {
-    border-color: transparent;
 }
 
 QFrame#headerFrame QPushButton[role="filter"][alert="true"] {

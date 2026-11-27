@@ -385,7 +385,7 @@ class VodDownloader(QMainWindow):
 
         # 헤더바 1줄(#492 — 셸 S0, #495 — S1):
         #   ┌ [URL 입력                              ][📁 폴더 이름 ⌄][+] ┐
-        #   └ [칩 여섯][정렬 ⌄] ……………………………………………………… [☑ 선택] ┘
+        #   └ [칩 여섯] ……………………………………………………… [정렬 ⌄][☑ 선택] ┘
         # 등록 오류는 줄이 아니라 URL 칸 아래 오류 말풍선이다(#536)
         # 남는 폭은 URL 입력이 다 받는다(설계: URL 입력이 남는 폭). 저장 위치 버튼은 고정 폭이다
         # (SaveLocationButton.applyWidth). 설정 톱니(#245)는 메뉴바 「설정」으로 옮겼다.
@@ -415,8 +415,10 @@ class VodDownloader(QMainWindow):
         # 조회 중 상태가 보인다
         self.registerError = ErrorTip(self.urlInput)
 
-        # 헤더바 2줄(#495 — 셸 S1): [상태 칩 여섯][정렬 ▾] ……
-        # 칩 · 정렬 버튼은 고정 폭이다(숫자 세 자리 · 가장 긴 정렬 이름) — 남는 폭은 줄 끝 빈칸이 받는다
+        # 헤더바 2줄(#495 — 셸 S1 · #651): 왼쪽 = 상태 칩(무엇을 볼지), 오른쪽 묶음 = 정렬 · 선택(어떻게 볼지).
+        # 칩 폭은 지금 글에 맞고, 정렬 버튼은 고정 폭(가장 긴 정렬 이름)이다 — 남는 폭은 가운데 빈칸이 받는다.
+        # 오른쪽 묶음은 1줄과 같은 간격이라 오른쪽 끝선이 1줄과 맞는다(정렬 ↔ 저장 위치, 선택 ↔ +). 나중에 들어올
+        # 목록 검색 버튼은 이 묶음 맨 앞(정렬 앞)에 더한다
         self.filterRowLayout = QHBoxLayout()
         self.filterRowLayout.setSpacing(8)
         self.filterRowLayout.setObjectName("filterRowLayout")
@@ -424,10 +426,13 @@ class VodDownloader(QMainWindow):
         self.filterChipBar.setObjectName("filterChipBar")
         self.filterChips = self.filterChipBar.chips
         self.filterRowLayout.addWidget(self.filterChipBar)
+        self.filterRowLayout.addStretch(1)
+        self.viewToolsLayout = QHBoxLayout()
+        self.viewToolsLayout.setObjectName("viewToolsLayout")
+        self.viewToolsLayout.setSpacing(self.urlRowLayout.spacing())
         self.sortButton = SortButton(self.headerFrame)
         self.sortButton.setObjectName("sortButton")
-        self.filterRowLayout.addWidget(self.sortButton)
-        self.filterRowLayout.addStretch(1)
+        self.viewToolsLayout.addWidget(self.sortButton)
         # 선택 버튼(#561 — 설계 §6 C4 「완료 지우기」 → 「지우기」 자리): 체크박스 아이콘, 이름은 툴팁. 누르면 선택
         # 모드로 들어가고 선택 모드 안에서 다시 누르면 나온다. 「완료 지우기」는 없앴다 — 같은 일은 완료 칩 → 모두
         # 선택 → 지우기(프로토 헤더 2줄에 「완료 지우기」가 없다)
@@ -437,7 +442,8 @@ class VodDownloader(QMainWindow):
         self.selectButton.setGlyphMetric("narrowIcon")
         self.selectButton.setIdleToken("text")
         self.selectButton.setProperty("on", False)
-        self.filterRowLayout.addWidget(self.selectButton)
+        self.viewToolsLayout.addWidget(self.selectButton)
+        self.filterRowLayout.addLayout(self.viewToolsLayout)
         self.headerFrameLayout.addLayout(self.filterRowLayout)
 
         # 상단·하단 바는 각자 행(headerRow·infoRow)에 담는다. 바는 창 끝까지 붙어 행 여백도 0이다(#536 —
@@ -601,7 +607,7 @@ class VodDownloader(QMainWindow):
         self.infoLayout.setContentsMargins(pad_x, pad_y, pad_x, pad_y)
         self._equalizeHeaderButtons()
         self._squareFooterButtons()
-        # 헤더바 2줄의 칩 · 정렬 버튼 폭(숫자 세 자리 · 가장 긴 이름) — 창 최소폭 계산 전에 건다
+        # 헤더바 2줄의 칩 · 정렬 버튼 폭(지금 글 · 가장 긴 이름) — 창 최소폭 계산 전에 건다
         self.filterChipBar.applyWidth()
         self.sortButton.applyWidth()
 
@@ -804,7 +810,7 @@ class VodDownloader(QMainWindow):
         return {
             "메뉴바": self.menuRow.minimumSize().width(),
             "헤더바 1줄": self.headerRow1Needs()[-1] + header,
-            "헤더바 2줄": self.headerRow2Needs(True)[-1] + header,
+            "헤더바 2줄": self._headerRow2Narrowest() + header,
             "목록": self.listView.minimumSizeHint().width(),
             # 띠 행은 목록 좌우 끝까지 간다(바깥 여백 0, #611). 스크롤바는 행 위에 겹쳐 그려져 자리를 차지하지
             # 않으므로 다 접은 카드 폭이 그대로 창 몫이다
@@ -836,21 +842,44 @@ class VodDownloader(QMainWindow):
     def headerRow2Needs(self, failed: bool) -> list[int]:
         """헤더바 2줄이 단계마다 바라는 폭 — 0 칩 · 1 드롭다운 · 2 드롭다운 + 정렬 아이콘 (#529).
 
-        지금 보이는 모양과 무관하다 — 칩 · 드롭다운 · 정렬 두 모양의 고정 폭과 선택 버튼 폭, 사이
-        간격(늘어나는 빈칸 옆에는 간격이 없다)으로 센다. 줄어드는 폭이 큰 것(칩)부터 줄인다(설계 §2).
+        지금 보이는 모양과 무관하다 — 칩 줄(지금 숫자의 칩 폭) · 드롭다운 · 정렬 두 모양의 폭과 선택 버튼 폭,
+        사이 간격(늘어나는 빈칸 옆에는 간격이 없다 — 칩 줄 ↔ 오른쪽 묶음 하나, 묶음 안 정렬 ↔ 선택 하나)으로
+        센다. 줄어드는 폭이 큰 것(칩)부터 줄인다(설계 §2). 칩 폭이 숫자를 따르므로 숫자가 바뀌면 다시 센다
+        (`countsChanged` → `_applyHeaderShape`).
 
         Args:
             failed: 좁은 폭에서 실패 칩이 드롭다운 옆에 남는지(실패 카드가 있는지)
         """
         chips = self.filterChipBar
         sort = self.sortButton
-        tail = self.selectButton.minimumWidth() + 2 * self.filterRowLayout.spacing()
+        tail = (
+            self.selectButton.minimumWidth()
+            + self.filterRowLayout.spacing()
+            + self.viewToolsLayout.spacing()
+        )
         compact = chips.compactWidth(failed)
         return [
             chips.chipsWidth() + sort.textWidth() + tail,
             compact + sort.textWidth() + tail,
             compact + sort.iconWidth() + tail,
         ]
+
+    def _headerRow2Narrowest(self) -> int:
+        """헤더바 2줄을 끝까지 줄인 모양의 폭 — 실패 칩은 늘 있고 숫자 세 자리로 센다(창 최소폭 몫, #651).
+
+        단계 판정(`headerRow2Needs`)은 지금 숫자의 실패 칩 폭을 쓰지만, 창 최소폭은 카드 내용과 무관한
+        고정값이어야 하므로 가장 넓은 숫자로 센다.
+        """
+        tail = (
+            self.selectButton.minimumWidth()
+            + self.filterRowLayout.spacing()
+            + self.viewToolsLayout.spacing()
+        )
+        return (
+            self.filterChipBar.compactWidth(True, reserved=True)
+            + self.sortButton.iconWidth()
+            + tail
+        )
 
     def footerNeeds(self) -> list[int]:
         """하단바가 단계마다 바라는 폭 — 단계 = 뺀 모니터링 칸 수(연결 · 메모리 · 남은 시간 · 여유) (#529).

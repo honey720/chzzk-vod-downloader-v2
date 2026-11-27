@@ -2178,17 +2178,67 @@ def _ring_pixels(win: VodDownloader, widget: QWidget) -> dict[str, QColor]:
     }
 
 
-class TestLiftedFocusRing:
-    """고른 칩 · 켠 선택 버튼의 키보드 focus ring은 면에서 1px 띄워 바 면 위에 그린다(#611 176u)."""
+def _distance(a: QColor, b: QColor) -> int:
+    return abs(a.red() - b.red()) + abs(a.green() - b.green()) + abs(a.blue() - b.blue())
+
+
+def _left_profile(win: VodDownloader, widget: QWidget, token: str) -> list[int | None]:
+    """줄마다 왼쪽에서 처음으로 `token` 색이 절반 넘게 덮인 화소의 x(위젯 좌표) — 모서리 반경 · 크기를 본다.
+
+    덮인 정도 = (화소 ↔ barBg 거리) / (`token` ↔ barBg 거리). 줄에 그런 화소가 없으면 None.
+    """
+    image = win.grab().toImage()
+    rect = _rect(win, widget)
+    tokens = theme.current_tokens()
+    bar, target = QColor(tokens["barBg"]), QColor(tokens[token])
+    full = _distance(target, bar)
+    profile: list[int | None] = []
+    for y in range(rect.top(), rect.bottom() + 1):
+        found = None
+        for x in range(rect.left(), rect.center().x()):
+            if _distance(_pixel(image, x, y), bar) * 2 > full:
+                found = x - rect.left()
+                break
+        profile.append(found)
+    return profile
+
+
+def _wraps_tightly(face: list[int | None], ring: list[int | None]) -> bool:
+    """테두리 윤곽이 면 윤곽 바로 바깥에 붙는지 — 줄마다 테두리 x가 면 x와 같거나 1px 바깥이다.
+
+    면은 1px 투명 테두리 안쪽에 칠해지고 초점 테두리는 그 1px 자리에 그려진다. 면이 없는 줄(위 · 아래 끝)은
+    테두리만 있어도 된다. 간격(2px 이상 떨어짐) · 다른 반경(모서리 줄에서 어긋남)이면 거짓이다.
+    """
+    if len(face) != len(ring):
+        return False
+    for f, r in zip(face, ring, strict=True):
+        if f is None:
+            continue
+        if r is None or not 0 <= f - r <= 1:
+            return False
+    return True
+
+
+def _hover_over(win: VodDownloader, widget: QWidget, qtbot: QtBot) -> None:
+    """합성 이벤트로 포인터를 위젯 가운데에 올린다(실제 커서는 옮기지 않는다)."""
+    from PySide6.QtTest import QTest
+
+    QTest.mouseMove(win.windowHandle(), widget.mapTo(win, widget.rect().center()))
+    qtbot.waitUntil(widget.underMouse, timeout=3000)
+    _pump()
+
+
+class TestKeyFocusRing:
+    """바 칩 · 선택 버튼의 키보드 focus ring은 가장자리 1px 강조색 테두리 하나다 — 면 · 모양은 그대로(#651)."""
 
     @pytest.mark.parametrize("name", ["filterChip", "selectButton"])
-    def test_keyboard_focus_ring_sits_on_the_bar_face(
+    def test_keyboard_focus_ring_is_one_edge_on_the_chosen_face(
         self, window, scheme: str, name: str, qtbot
     ) -> None:
-        """키보드 초점이면 가장자리 1px는 accent, 그 안 1px는 barBg, 3px 안은 barSelected여야 하고 크기는 그대로여야 한다.
+        """고른 칩 · 켠 선택 버튼에 키보드 초점이 오면 가장자리 1px는 accent, 바로 안쪽은 barSelected여야 한다.
 
         대기 카드 하나, 창 폭 = 최소폭 + 900, 고른 칩 「전체」 · 켠 선택 버튼에 Tab 초점 -> 왼쪽 · 위 변 가운데의
-        가장자리 ≈ accent, 1px 안 ≈ barBg, 3px 안 ≈ barSelected, 바깥 1px ≈ barBg, 초점 전후 위젯 크기 같음
+        가장자리 ≈ accent, 1px 안 ≈ barSelected(간격 없음), 바깥 1px ≈ barBg, 초점 전후 위젯 크기 같음
         """
         win = window(DownloadState.WAITING)
         widget = _chosen_control(win, name)
@@ -2201,10 +2251,51 @@ class TestLiftedFocusRing:
         names = {key: colour.name() for key, colour in seen.items()}
         for edge in ("left", "top"):
             assert _is(seen[f"{edge}_edge"], "accent"), f"{scheme} {name}: {names}"
-            assert _is(seen[f"{edge}_gap"], "barBg"), f"{scheme} {name}: {names}"
+            assert _is(seen[f"{edge}_gap"], "barSelected"), f"{scheme} {name}: {names}"
             assert _is(seen[f"{edge}_face"], "barSelected"), f"{scheme} {name}: {names}"
         assert _is(seen["outside"], "barBg"), f"{scheme} {name}: {names}"
         assert widget.size() == size
+
+    @pytest.mark.parametrize("name", ["filterChip", "selectButton"])
+    def test_keyboard_focus_ring_wraps_the_chosen_face_tightly(
+        self, window, scheme: str, name: str, qtbot
+    ) -> None:
+        """고른 칩 · 켠 선택 버튼에 키보드 초점이 오면 테두리 윤곽이 면 윤곽에 줄마다 0 ~ 1px 바깥으로 붙어야 한다.
+
+        대기 카드 하나, 창 폭 = 최소폭 + 900, 고른 칩 「전체」 · 켠 선택 버튼 -> 면이 있는 줄마다
+        (barSelected가 절반 넘게 덮인 첫 x, 초점 전) − (accent가 절반 넘게 덮인 첫 x, Tab 초점 뒤) ∈ {0, 1}
+        """
+        win = window(DownloadState.WAITING)
+        widget = _chosen_control(win, name)
+        before = _left_profile(win, widget, "barSelected")
+        assert any(x is not None for x in before), "전제: 고른 면이 보인다"
+        _activate_and_focus(win, widget, qtbot)
+        assert widget.property("keyFocus") is True, "전제: 키보드 초점"
+        after = _left_profile(win, widget, "accent")
+        assert _wraps_tightly(before, after), f"{scheme} {name}: 면 {before} · 테두리 {after}"
+
+    def test_keyboard_focus_on_a_hovered_chip_is_one_edge_on_the_hover_face(
+        self, window, scheme: str, qtbot
+    ) -> None:
+        """포인터가 올라간 안 고른 칩에 키보드 초점이 오면 가장자리는 accent, 1px 안은 barHover여야 한다.
+
+        대기 카드 하나, 창 폭 = 최소폭 + 900, 안 고른 칩 「대기」에 포인터 + Tab 초점 -> 왼쪽 변 가운데
+        가장자리 ≈ accent, 1px 안 ≈ barHover, 초점 전후 칩 크기 같음
+        """
+        win = window(DownloadState.WAITING)
+        _chosen_control(win, "filterChip")
+        chip = win.filterChips["waiting"]
+        assert not chip.isChecked(), "전제: 안 고른 칩"
+        size = chip.size()
+        _hover_over(win, chip, qtbot)
+        _activate_and_focus(win, chip, qtbot)
+        _hover_over(win, chip, qtbot)
+        assert chip.property("keyFocus") is True, "전제: 키보드 초점"
+        seen = _ring_pixels(win, chip)
+        names = {key: colour.name() for key, colour in seen.items()}
+        assert _is(seen["left_edge"], "accent"), f"{scheme}: {names}"
+        assert _is(seen["left_gap"], "barHover"), f"{scheme}: {names}"
+        assert chip.size() == size
 
     @pytest.mark.parametrize("name", ["filterChip", "selectButton"])
     def test_mouse_focus_draws_no_ring(self, window, scheme: str, name: str, qtbot) -> None:

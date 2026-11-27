@@ -229,15 +229,10 @@ def test_content_minimum_width_ignores_chip_count_digits(make_window) -> None:
         )
 
 
-def test_chips_reserve_three_digits_from_their_own_font(make_window) -> None:
-    """칩마다 폭은 그 칩의 글꼴로 잰 「이름 999」 폭이어야 한다 — 상수가 아니라 글꼴 · 번역을 따라간다."""
-    from app.widgets.header_controls import CHIP_COUNT_RESERVE
-
+def test_chips_fit_their_shown_text_from_their_own_font(make_window) -> None:
+    """칩마다 폭은 그 칩의 글꼴로 잰 지금 글 「이름 N」 폭이어야 한다 — 세 자리를 비워 두지 않는다(#651)."""
     win = make_window(cards=0)
-    names = win.filterChipBar.names()
     for key, chip in win.filterChips.items():
-        shown = chip.text()
-        chip.setText(f"{names[key]} {CHIP_COUNT_RESERVE}")
+        assert chip.text().endswith(" 0"), f"전제: {key} 칩 숫자 0 — {chip.text()!r}"
         needed = chip.sizeHint().width()
-        chip.setText(shown)
-        assert chip.width() == needed, f"{key} 칩 폭 {chip.width()} ≠ 세 자리 폭 {needed}"
+        assert chip.width() == needed, f"{key} 칩 폭 {chip.width()} ≠ 지금 글 폭 {needed}"

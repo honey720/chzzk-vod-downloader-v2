@@ -22,7 +22,9 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 import CVDv2 as main_module
 import app.theme as theme
+from app.viewmodels.data import ContentItem
 from app.views.mainWindow import VodDownloader
+from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import hold_style
 
 #: 창 최소폭 / 조금 넓게 / 아주 넓게 — `_at_width`가 창 최소폭에서 유도한다.
@@ -140,13 +142,16 @@ class TestStructure:
         assert frame.itemAt(0).layout() is window.urlRowLayout
         assert frame.itemAt(1).layout() is window.filterRowLayout
 
-    def test_second_line_holds_chips_sort_and_select(self, window) -> None:
-        """헤더 2줄 레이아웃은 칩 줄 · 정렬 버튼 · 빈칸 · 선택 버튼 차례여야 한다(#561)."""
+    def test_second_line_holds_chips_then_sort_and_select_on_the_right(self, window) -> None:
+        """헤더 2줄 레이아웃은 칩 줄 · 빈칸 · 오른쪽 묶음(정렬 버튼 · 선택 버튼) 차례여야 한다(#561 · #651)."""
         line = window.filterRowLayout
-        assert [line.itemAt(i).widget() for i in range(line.count())] == [
-            window.filterChipBar,
+        assert line.count() == 3
+        assert line.itemAt(0).widget() is window.filterChipBar
+        assert line.itemAt(1).spacerItem() is not None
+        tools = line.itemAt(2).layout()
+        assert tools is window.viewToolsLayout
+        assert [tools.itemAt(i).widget() for i in range(tools.count())] == [
             window.sortButton,
-            None,
             window.selectButton,
         ]
 
@@ -316,3 +321,63 @@ class TestFreeSpaceGoesToTheUrlInputOnly:
         assert url[0] - url[2] == 900 and url[1] - url[2] == 300, (
             f"URL 입력이 남는 폭을 다 받지 않는다: {url}"
         )
+
+
+def _waiting_item(i: int) -> ContentItem:
+    """대기 카드 하나 — 칩 숫자를 바꾸는 데만 쓴다."""
+    item = ContentItem(
+        f"https://chzzk.naver.com/video/{i}",
+        {"title": f"{i}", "category": "", "channelName": "", "createdDate": "", "duration": 60},
+        [["1080", "u1"]],
+        None,
+        "",
+        "",
+        "video",
+        None,
+    )
+    item.downloadState = DownloadState.WAITING
+    return item
+
+
+def _x_in_window(win: VodDownloader, w: QWidget) -> int:
+    return w.mapTo(win, w.rect().topLeft()).x()
+
+
+class TestViewToolsPlace:
+    """헤더 2줄 오른쪽 묶음(정렬 · 선택)은 1줄 오른쪽 끝선에 맞고 칩 숫자와 무관하게 제자리다(#651)."""
+
+    @pytest.mark.parametrize("which", WIDTHS)
+    def test_sort_right_edge_lines_up_with_the_save_location_button(
+        self, window, which: str
+    ) -> None:
+        """정렬 버튼 오른쪽 끝은 1줄 저장 위치 버튼 오른쪽 끝과 같아야 한다.
+
+        창 폭 = 최소폭 · +300 · +900 -> 두 버튼 모두 보임, 창 좌표 오른쪽 끝 x 같음
+        """
+        _at_width(window, which)
+        sort, save = window.sortButton, window.saveLocationButton
+        assert sort.isVisible() and save.isVisible()
+        assert (
+            _x_in_window(window, sort) + sort.width() == _x_in_window(window, save) + save.width()
+        )
+
+    def test_count_change_widens_the_chip_but_leaves_sort_and_select_in_place(self, window) -> None:
+        """대기 칩 숫자가 한 자리에서 두 자리가 되면 그 칩만 넓어지고 정렬 · 선택 버튼 x는 그대로여야 한다.
+
+        창 폭 = 최소폭 + 900, 대기 카드 1장 -> 10장 -> 대기 칩 폭 증가, 정렬 · 선택 버튼 창 좌표 x 같음
+        """
+        window.contentManager.model.addItem(_waiting_item(0))
+        _at_width(window, "wide")
+        chip = window.filterChips["waiting"]
+        assert chip.isVisible() and chip.text().endswith(" 1"), f"전제: {chip.text()!r}"
+        width = chip.width()
+        sort_x = _x_in_window(window, window.sortButton)
+        select_x = _x_in_window(window, window.selectButton)
+        for i in range(1, 10):
+            window.contentManager.model.addItem(_waiting_item(i))
+        QApplication.processEvents()
+        assert chip.text().endswith(" 10"), f"전제: {chip.text()!r}"
+        assert chip.width() > width
+        assert chip.width() == chip.sizeHint().width()
+        assert _x_in_window(window, window.sortButton) == sort_x
+        assert _x_in_window(window, window.selectButton) == select_x
