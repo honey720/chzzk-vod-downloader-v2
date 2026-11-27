@@ -471,11 +471,12 @@ class SettingDialog(QDialog):
         if choice == CLOSE_BACK:
             event.ignore()
             return
+        # 닫기는 accept · reject가 한다 — 저장이 예외로 실패하면 창이 바꾼 값 그대로 남는다(#644)
+        event.ignore()
         if choice == CLOSE_SAVE:
             self.accept()
         else:
             self.reject()
-        event.accept()
 
     def askClose(self) -> str:
         """닫기 확인 대화상자를 띄워 고른 갈래(`CLOSE_SAVE` · `CLOSE_DISCARD` · `CLOSE_BACK`)를 돌려준다.

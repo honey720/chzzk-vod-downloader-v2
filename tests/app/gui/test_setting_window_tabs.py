@@ -6,6 +6,7 @@
 
 import json
 import os
+import sqlite3
 import sys
 from collections.abc import Callable, Iterator
 
@@ -543,6 +544,37 @@ def test_close_prompt_dont_save_writes_nothing_and_closes(
     assert seen["shown"] is True
     assert read_rows() == before
     assert not dialog.isVisible()
+
+
+def test_close_prompt_save_failure_keeps_the_window_open_with_the_changed_value(
+    opened: Callable[[], SettingDialog], qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """확인 대화상자에서 저장을 눌렀는데 저장이 DB 오류로 실패하면 창이 바꾼 값 그대로 열려 있어야 한다.
+
+    언어 en_US → `update_settings`가 sqlite3.OperationalError → close() → 저장
+    -> close()가 OperationalError를 냄, 행 그대로, 창 보임, 언어 칸 en_US
+    """
+    dialog = opened()
+    before = read_rows()
+    _change_language(dialog)
+
+    def locked(changes: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(settings, "update_settings", locked)
+    answered: list[str] = []
+    save = _click("closeSave")
+
+    def answer(box: QDialog) -> None:
+        answered.append("closeSave")
+        save(box)
+
+    with pytest.raises(sqlite3.OperationalError):
+        _close_answering(qtbot, dialog, answer)
+    assert answered == ["closeSave"]
+    assert read_rows() == before
+    assert dialog.isVisible()
+    assert dialog.language.currentData() == "en_US"
 
 
 @pytest.mark.parametrize("how", ["button", "escape"])
