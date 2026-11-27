@@ -1,15 +1,16 @@
-"""실제 화면 테스트가 OS 입력 경로로 키를 누르게 한다 — Windows SendInput · macOS CGEventPostToPid (#644).
+"""실제 화면 테스트가 OS 키 메시지 · 이벤트로 키를 누르게 한다 — Windows 창 메시지 · macOS CGEventPostToPid (#644).
 
 Qt 테스트 키(`QTest.keyClick`)는 Qt 키 코드를 바로 넣어 OS 키 매퍼를 거치지 않는다. 단축키 후보가 물리 키에서
 만들어지는 결함(Ctrl+Shift+Tab → Backtab)은 OS가 만든 키 이벤트로만 드러난다.
 
-⚠️ 실제 키 입력은 그때 앞에 있는 창으로 간다. Windows는 누르기 전에 앞 창이 대상 창인지 확인하고, 아니면 누르지
-않고 실패한다. macOS는 이 프로세스에만 보낸다(`CGEventPostToPid`).
+두 OS 모두 키를 이 프로세스에만 넣는다 — Windows는 대상 창에 키 메시지를 넣고(`PostMessageW`), macOS는
+이 프로세스에 키 이벤트를 보낸다(`CGEventPostToPid`). 앞 창이 다른 프로그램이어도 그 프로그램은 키를 받지 않는다.
 """
 
 import ctypes
 import os
 import sys
+from collections.abc import Callable
 from ctypes import wintypes
 
 SUPPORTED = sys.platform in ("win32", "darwin")  # OS 키 입력을 낼 수 있는 플랫폼
@@ -21,61 +22,47 @@ CMD = "cmd"  # Command 키(macOS만)
 
 # ---- Windows ----
 _WIN_VK = {
-    CTRL: 0x11,  # VK_CONTROL
-    SHIFT: 0x10,  # VK_SHIFT
-    "tab": 0x09,  # VK_TAB
+    CTRL: (0x11, 0xA2),  # VK_CONTROL · VK_LCONTROL
+    SHIFT: (0x10, 0xA0),  # VK_SHIFT · VK_LSHIFT
 }
-_INPUT_KEYBOARD = 1  # INPUT.type — 키보드
-_KEYEVENTF_KEYUP = 0x0002  # 키 뗌
+_WIN_KEY = {
+    "tab": (0x09, 0x0F),  # VK_TAB · 스캔 코드
+}
+_WM_KEYDOWN = 0x0100  # 키 누름 메시지
+_WM_KEYUP = 0x0101  # 키 뗌 메시지
+_KEY_DOWN_BIT = 0x80  # 키 상태 배열에서 눌림을 뜻하는 비트
+_KEYUP_FLAGS = 0xC0000000  # WM_KEYUP lParam — 앞 상태 눌림(30) · 떼는 중(31)
 
 
-class _KEYBDINPUT(ctypes.Structure):
-    _fields_ = [
-        ("wVk", wintypes.WORD),
-        ("wScan", wintypes.WORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.c_size_t),
-    ]
+def _win_press(hwnd: int, modifiers: list[str], key: str, wait: Callable[[], None]) -> None:
+    """이 스레드의 키 상태에 수정자를 눌러 두고, 창에 WM_KEYDOWN · WM_KEYUP을 넣는다.
 
-
-class _MOUSEINPUT(ctypes.Structure):
-    _fields_ = [
-        ("dx", wintypes.LONG),
-        ("dy", wintypes.LONG),
-        ("mouseData", wintypes.DWORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.c_size_t),
-    ]
-
-
-class _INPUTUNION(ctypes.Union):
-    # 공용체 크기가 MOUSEINPUT(가장 큼)이어야 SendInput이 cbSize를 받아들인다
-    _fields_ = [("ki", _KEYBDINPUT), ("mi", _MOUSEINPUT)]
-
-
-class _INPUT(ctypes.Structure):
-    _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
-
-
-def _win_press(hwnd: int, modifiers: list[str], key: str) -> None:
+    Qt Windows 키 매퍼는 메시지의 가상 키 · 스캔 코드와 `GetKeyState`로 키 이벤트와 단축키 후보를 만든다.
+    `SetKeyboardState`는 이 스레드의 키 상태만 바꾸고, 메시지는 이 창에만 들어가 앞 창이 어느 것이든
+    다른 프로그램은 키를 받지 않는다. Qt가 메시지를 처리하는 동안(wait) 수정자를 눌린 채 두고 되돌린다.
+    """
     user32 = ctypes.WinDLL("user32", use_last_error=True)
-    user32.GetForegroundWindow.restype = wintypes.HWND
-    foreground = user32.GetForegroundWindow() or 0
-    if foreground != hwnd:
-        raise RuntimeError(
-            f"앞 창이 대상 창이 아니다 — 키를 누르지 않았다({foreground:#x} != {hwnd:#x})"
-        )
-    codes = [_WIN_VK[m] for m in modifiers] + [_WIN_VK[key]]
-    events = [(code, 0) for code in codes] + [(code, _KEYEVENTF_KEYUP) for code in reversed(codes)]
-    inputs = (_INPUT * len(events))()
-    for slot, (code, flags) in zip(inputs, events, strict=True):
-        slot.type = _INPUT_KEYBOARD
-        slot.u.ki = _KEYBDINPUT(code, 0, flags, 0, 0)
-    sent = user32.SendInput(len(events), inputs, ctypes.sizeof(_INPUT))
-    if sent != len(events):
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    saved = (ctypes.c_ubyte * 256)()
+    if not user32.GetKeyboardState(saved):
         raise ctypes.WinError(ctypes.get_last_error())
+    held = (ctypes.c_ubyte * 256)(*saved)
+    for modifier in modifiers:
+        for code in _WIN_VK[modifier]:
+            held[code] |= _KEY_DOWN_BIT
+    vk, scan = _WIN_KEY[key]
+    if not user32.SetKeyboardState(held):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        for message, lparam in (
+            (_WM_KEYDOWN, 1 | scan << 16),
+            (_WM_KEYUP, 1 | scan << 16 | _KEYUP_FLAGS),
+        ):
+            if not user32.PostMessageW(hwnd, message, vk, lparam):
+                raise ctypes.WinError(ctypes.get_last_error())
+        wait()
+    finally:
+        user32.SetKeyboardState(saved)
 
 
 # ---- macOS ----
@@ -95,7 +82,7 @@ _MAC_FLAG = {
 _APP_SERVICES = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
 
 
-def _mac_press(modifiers: list[str], key: str) -> None:
+def _mac_press(modifiers: list[str], key: str, wait: Callable[[], None]) -> None:
     quartz = ctypes.CDLL(_APP_SERVICES)
     quartz.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
     quartz.CGEventCreateKeyboardEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
@@ -120,22 +107,21 @@ def _mac_press(modifiers: list[str], key: str) -> None:
         quartz.CGEventSetFlags(event, event_flags)
         quartz.CGEventPostToPid(pid, event)
         quartz.CFRelease(event)
+    wait()
 
 
-def press(window_id: int, modifiers: list[str], key: str) -> None:
-    """수정자를 누른 채 키 하나를 누르고 뗀다 — OS 입력 경로(Windows SendInput · macOS 이 프로세스).
+def press(window_id: int, modifiers: list[str], key: str, wait: Callable[[], None]) -> None:
+    """수정자를 누른 채 키 하나를 누르고 떼고, wait로 Qt가 처리하기를 기다린다 — OS 키 경로로.
 
     Args:
-        window_id: 키를 받을 창의 `winId()` — Windows는 앞 창이 이 창일 때만 누른다
+        window_id: 키를 받을 창의 `winId()`(Windows만 쓴다)
         modifiers: 누르는 차례의 수정자(`CTRL` · `SHIFT` · `CMD`)
         key: "tab" · "[" · "]"(macOS)
-
-    Raises:
-        RuntimeError: Windows에서 앞 창이 대상 창이 아닐 때(키를 누르지 않음)
+        wait: 키를 넣은 뒤 부른다 — Qt가 키를 처리할 때까지 기다린다(Windows는 그동안 수정자를 눌린 채 둔다)
     """
     if sys.platform == "win32":
-        _win_press(window_id, modifiers, key)
+        _win_press(window_id, modifiers, key, wait)
     elif sys.platform == "darwin":
-        _mac_press(modifiers, key)
+        _mac_press(modifiers, key, wait)
     else:
         raise NotImplementedError(f"OS 키 입력이 없는 플랫폼: {sys.platform}")

@@ -268,14 +268,18 @@ def test_real_tab_switch_keys_move_between_tabs(
 ) -> None:
     """OS 입력 경로로 누른 탭 넘기기 키는 `REAL_TAB_KEYS`의 탭으로 넘겨야 한다(#644).
 
-    다운로드 탭 · 초점은 다운로드 탭 버튼 → OS 키 입력(Windows SendInput · macOS CGEventPostToPid)
+    다운로드 탭 · 초점은 다운로드 탭 버튼 → OS 키 경로(Windows 창 키 메시지 · macOS CGEventPostToPid)
     -> currentTab() == expected
     """
     dialog = opened()
     dialog.showTab(TAB_ORDER.index("download"))
     dialog.tabs["download"].setFocus()
-    os_key_input.press(int(dialog.winId()), modifiers, key)
-    qtbot.waitUntil(lambda: dialog.currentTab() == expected, timeout=ACTIVE_WAIT_MS)
+    os_key_input.press(
+        int(dialog.winId()),
+        modifiers,
+        key,
+        lambda: qtbot.waitUntil(lambda: dialog.currentTab() == expected, timeout=ACTIVE_WAIT_MS),
+    )
 
 
 @pytest.mark.parametrize("name", sorted(ITEM_TABS))
