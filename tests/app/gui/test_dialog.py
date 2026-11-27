@@ -67,7 +67,8 @@ def _shown_dialog(qtbot: QtBot) -> SettingDialog:
     """저장 값 `SAVED`로 연 설정 창 — 보이고 활성이다."""
     settings.update_settings(SAVED)
     dialog = SettingDialog()
-    qtbot.addWidget(dialog)
+    # 정리 때 닫기 전에 숨긴다 — 값을 바꾼 채로 닫으면 닫기 확인 대화상자가 뜬다(#644)
+    qtbot.addWidget(dialog, before_close_func=lambda widget: widget.hide())
     dialog.show()
     qtbot.waitExposed(dialog)
     dialog.activateWindow()
@@ -221,10 +222,10 @@ class TestSettingCombosUseTheChoiceMenu:
         assert dialog.isVisible()
         assert finished == []
 
-    def test_ok_writes_the_value_chosen_in_the_menu(self, qtbot: QtBot, name: str) -> None:
-        """메뉴에서 고른 뒤 OK를 누르면 그 값이 저장돼야 한다(#519).
+    def test_save_writes_the_value_chosen_in_the_menu(self, qtbot: QtBot, name: str) -> None:
+        """메뉴에서 고른 뒤 저장을 누르면 그 값이 저장돼야 한다(#519 · #644).
 
-        펼침 → 맨 위 줄 Enter → OK -> load_setting(name) == 맨 위 줄 값
+        펼침 → 맨 위 줄 Enter → 저장 -> load_setting(name) == 맨 위 줄 값
         """
         dialog = _shown_dialog(qtbot)
         combo = _combo(dialog, name)
@@ -233,7 +234,7 @@ class TestSettingCombosUseTheChoiceMenu:
             QTest.keyClick(menu, Qt.Key.Key_Up)
         QTest.keyClick(menu, Qt.Key.Key_Return)
         qtbot.waitUntil(lambda: not menu.isVisible())
-        dialog.dialogButtonBox.button(QDialogButtonBox.StandardButton.Ok).click()
+        dialog.dialogButtonBox.button(QDialogButtonBox.StandardButton.Save).click()
         assert settings.load_setting(name) == combo.itemData(0)
         assert combo.itemData(0) != SAVED[name], "전제: 다른 값을 골랐다"
 

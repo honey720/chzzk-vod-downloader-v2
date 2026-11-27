@@ -400,7 +400,8 @@ QFrame#appMenuBar QPushButton,
 QFrame#headerFrame QPushButton,
 QFrame#headerFrame QToolButton,
 QFrame#headerFrame QLineEdit,
-QFrame#infoFrame QPushButton {
+QFrame#infoFrame QPushButton,
+QFrame#settingsTabs QPushButton {
     border-radius: @controlRadius;
 }
 
@@ -552,41 +553,48 @@ QFrame#appMenuBar QPushButton[role="menu"]:focus {
 
 /* 상태 필터 칩(#536 · #611 — 설계 §13): 고른 칩 = 면 barSelected만(테두리 없음, 강조색 채움 아님 — 채운 강조 버튼은
  * 다운로드 하나 · 바 면에서 두 단계라 호버보다 진하고 포인터를 올려도 그대로 — 176t), 나머지 = 면 · 테두리 없는 글(투명 테두리 1px로 자리만). 실패 칩 글은 실패 색
- * (아래 [alert] 규칙을 상태 규칙 뒤에 둔다). 호버 · 눌림 동안(176l)과 고른 동안(176u)은 text */
+ * (아래 [alert] 규칙을 상태 규칙 뒤에 둔다). 호버 · 눌림 동안(176l)과 고른 동안(176u)은 text.
+ * 설정 창 탭 줄(`QFrame#settingsTabs`)도 같은 칩 규칙이다 — 박스 모양 탭(#644, 설계 §12.1) */
 /* outline: none — Tab 키로 초점이 오면 Fusion이 글 둘레에 자기 초점 사각형(면 + 테두리)을 따로 그린다. 끄지 않으면
  * 가장자리 focus ring 안에 작은 상자가 하나 더 보인다(#651) */
-QFrame#headerFrame QPushButton[role="filter"] {
+QFrame#headerFrame QPushButton[role="filter"],
+QFrame#settingsTabs QPushButton[role="filter"] {
     background-color: transparent;
     border: 1px solid transparent;
     outline: none;
 }
 
-QFrame#headerFrame QPushButton[role="filter"]:checked {
+QFrame#headerFrame QPushButton[role="filter"]:checked,
+QFrame#settingsTabs QPushButton[role="filter"]:checked {
     background-color: @barSelected;
     border-color: transparent;
     color: @text;
 }
 
-QFrame#headerFrame QPushButton[role="filter"]:hover {
+QFrame#headerFrame QPushButton[role="filter"]:hover,
+QFrame#settingsTabs QPushButton[role="filter"]:hover {
     background-color: @barHover;
     border-color: transparent;
     color: @text;
 }
 
-QFrame#headerFrame QPushButton[role="filter"]:pressed {
+QFrame#headerFrame QPushButton[role="filter"]:pressed,
+QFrame#settingsTabs QPushButton[role="filter"]:pressed {
     background-color: @barPressed;
     border-color: transparent;
 }
 
 /* 고른 칩은 포인터를 올려도 고른 면 그대로다 — 호버 규칙 뒤에 둔다(176t) */
-QFrame#headerFrame QPushButton[role="filter"]:checked:hover {
+QFrame#headerFrame QPushButton[role="filter"]:checked:hover,
+QFrame#settingsTabs QPushButton[role="filter"]:checked:hover {
     background-color: @barSelected;
 }
 
 /* 키보드 초점은 고른 칩 · 안 고른 칩 모두 칩 가장자리 1px 강조색 테두리 하나다 — 면 · 크기 · 모서리는 그대로이고
  * 간격 · 두 겹이 없다(#651). 테두리 바깥은 바 면(barBg)이라 강조색이 고른 면 위에서도 보인다. 고른 칩 규칙보다
  * 뒤에 두어 초점이 앞선다. 마우스 초점은 아래 [keyFocus="false"] 규칙이 끈다 */
-QFrame#headerFrame QPushButton[role="filter"]:focus {
+QFrame#headerFrame QPushButton[role="filter"]:focus,
+QFrame#settingsTabs QPushButton[role="filter"]:focus {
     border-color: @accent;
 }
 
@@ -626,7 +634,8 @@ QFrame#appMenuBar QPushButton[keyFocus="false"]:focus,
 QFrame#headerFrame QPushButton[keyFocus="false"]:focus,
 QFrame#infoFrame QPushButton[keyFocus="false"]:focus,
 QFrame#headerFrame QPushButton#selectButton[on="true"][keyFocus="false"]:focus,
-QFrame#infoFrame QPushButton#downloadButton[keyFocus="false"]:focus {
+QFrame#infoFrame QPushButton#downloadButton[keyFocus="false"]:focus,
+QFrame#settingsTabs QPushButton[keyFocus="false"]:focus {
     border-color: transparent;
 }
 

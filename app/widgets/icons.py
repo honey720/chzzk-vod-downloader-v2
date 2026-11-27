@@ -125,6 +125,8 @@ STATUS_GRID = 16.0  # 상태 아이콘 기호를 그리는 격자 한 변 — �
 DOT_MAX = STROKE  # 면으로 칠하는 점의 지름 상한(px) — 이보다 크면 면 그림이다
 INK_MIN = 0.72  # 잉크 긴 변 / 그림 칸 하한 — 이보다 작으면 옆 아이콘보다 작아 보인다
 INK_MAX = 0.95  # 잉크 긴 변 / 그림 칸 상한 — 이보다 크면 버튼 호버 면에 닿아 보인다
+# 폴더 윤곽 모서리 반경 / 칸 — 중지 · 선택 상자(0.12)와 같은 무게로 둥글게, 탭이 짧아 조금 작게(#650)
+FOLDER_CORNER = 0.10
 # 아이콘 그림 칸 크기 토큰(theme.METRICS 키) — 카드 버튼(actionGlyph) · 바 · 하단 칸(barGlyph · narrowIcon) · 메뉴 줄(menuIcon)
 GLYPH_METRICS = ("actionGlyph", "barGlyph", "narrowIcon", "menuIcon")
 
@@ -200,23 +202,75 @@ def _paint_retry(painter: QPainter, s: float, color: QColor, accent: QColor) -> 
     )
 
 
+def _rounded_outline(s: float, coords: list[tuple[float, float]], closed: bool) -> QPainterPath:
+    """칸 비율 꼭짓점을 차례로 이은 선을 꼭짓점마다 둥글게 깎은 경로로 만든다(#650).
+
+    꼭짓점마다 앞뒤 변을 따라 반경만큼 물러난 두 점을 그 꼭짓점을 조절점으로 한 2차 곡선으로 잇는다 —
+    곡선의 양 끝 방향이 두 변과 같아 꺾이는 자리가 없다. 반경은 `FOLDER_CORNER` × 칸이고, 짧은 변에서는
+    변 길이의 절반까지만 깎는다(이웃 모서리의 곡선과 겹치지 않게). `closed`가 아니면 첫 점 · 끝 점은 깎지
+    않는 선 끝이다(둥근 끝은 펜이 그린다).
+    """
+    points = [QPointF(s * x, s * y) for x, y in coords]
+    radius = s * FOLDER_CORNER
+
+    def leg(corner: QPointF, toward: QPointF) -> QPointF:
+        offset = toward - corner
+        length = math.hypot(offset.x(), offset.y())
+        return corner + offset * (min(radius, length / 2) / length)
+
+    def round_corner(path: QPainterPath, before: QPointF, corner: QPointF, after: QPointF) -> None:
+        path.lineTo(leg(corner, before))
+        path.quadTo(corner, leg(corner, after))
+
+    count = len(points)
+    if closed:
+        start = (points[0] + points[1]) / 2  # 첫 변 가운데에서 시작해야 첫 꼭짓점도 깎인다
+        path = QPainterPath(start)
+        for index in range(1, count + 1):
+            round_corner(
+                path, points[index - 1], points[index % count], points[(index + 1) % count]
+            )
+        path.closeSubpath()
+        return path
+    path = QPainterPath(points[0])
+    for index in range(1, count - 1):
+        round_corner(path, points[index - 1], points[index], points[index + 1])
+    path.lineTo(points[-1])
+    return path
+
+
+def _folder_path(s: float, opened: bool) -> QPainterPath:
+    """폴더 윤곽 경로 — 열린 폴더(`folder`)와 닫힌 폴더(`folder_outline`)를 모두 이 함수가 만든다(#650).
+
+    두 폴더 모두 모서리가 둥글다. 열린 폴더는 뒤판 오른쪽 끝에서 시작해 탭 · 왼쪽 변 · 바닥 · 덮개를 한 선으로
+    돌고, 덮개 왼쪽 비탈은 뒤판 왼쪽 변에 닿기 전에 선 끝으로 멈춘다 — 세 선이 한 꼭짓점에 모이면 그 자리만
+    뾰족하게 남는다. 닫힌 폴더는 탭 달린 상자 하나다.
+    """
+    if opened:
+        coords = [
+            (0.78, 0.40),  # 뒤판 오른쪽 끝(선 끝)
+            (0.78, 0.28),
+            (0.46, 0.28),
+            (0.38, 0.20),
+            (0.12, 0.20),
+            (0.12, 0.80),
+            (0.76, 0.80),
+            (0.88, 0.44),
+            (0.34, 0.44),
+            (
+                0.28,
+                0.584,
+            ),  # 덮개 비탈 끝(선 끝) — 왼쪽 변과 칸의 0.16 떨어져 16px에서도 선 사이가 뜬다
+        ]
+        return _rounded_outline(s, coords, closed=False)
+    coords = [(0.12, 0.80), (0.12, 0.22), (0.38, 0.22), (0.46, 0.30), (0.88, 0.30), (0.88, 0.80)]
+    return _rounded_outline(s, coords, closed=True)
+
+
 def _paint_folder(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
     """폴더 열기 — 뒤판(탭 달린)과 앞으로 기운 덮개의 윤곽(열린 폴더). 닫힌 폴더(`folder_outline`)와 모양을 가른다."""
     _stroke(painter, color)
-    path = QPainterPath(QPointF(s * 0.78, s * 0.40))
-    for x, y in (
-        (0.78, 0.28),
-        (0.46, 0.28),
-        (0.38, 0.20),
-        (0.12, 0.20),
-        (0.12, 0.80),
-        (0.76, 0.80),
-        (0.88, 0.44),
-        (0.27, 0.44),
-        (0.12, 0.80),
-    ):
-        path.lineTo(s * x, s * y)
-    painter.drawPath(path)
+    painter.drawPath(_folder_path(s, opened=True))
 
 
 def _paint_scissors(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
@@ -331,13 +385,9 @@ def _paint_chevron_down(painter: QPainter, s: float, color: QColor, accent: QCol
 
 
 def _paint_folder_outline(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
-    """닫힌 폴더 윤곽 — 탭이 있는 상자 하나, 선만. 좌표는 프로토 폴더 윤곽 그림이다."""
+    """닫힌 폴더 윤곽 — 탭이 있는 상자 하나, 선만. 좌표는 프로토 폴더 윤곽 그림이고 모서리는 둥글다(#650)."""
     _stroke(painter, color)
-    painter.drawPolygon(
-        _points(
-            s, [(0.12, 0.80), (0.12, 0.22), (0.38, 0.22), (0.46, 0.30), (0.88, 0.30), (0.88, 0.80)]
-        )
-    )
+    painter.drawPath(_folder_path(s, opened=False))
 
 
 def _paint_link(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:

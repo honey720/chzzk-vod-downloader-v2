@@ -12,8 +12,11 @@ QFormLayout이 암묵적으로 해주던 것 가운데 이 화면이 실제로 �
 
 여기에 레이아웃 교체가 건드리기 쉬운 것 둘을 더 잰다:
 
-  ③ 탭 순서 — 위젯 여섯의 키보드 순서, 그 뒤에 OK/Cancel
-  ④ 창 최소 크기 — 상수가 아니라 레이아웃에서 유도된다(그룹 상자 셋 중 가장 넓은 것)
+  ③ 탭 순서 — 탭 다섯 → 고른 탭 쪽의 위젯 → 저장/취소
+  ④ 창 최소 크기 — 상수가 아니라 레이아웃에서 유도된다(탭 줄과 탭 쪽 다섯 중 가장 넓은 것)
+
+#644에서 그룹 상자 셋(쿠키 · 다운로드 · 일반)이 탭 쪽(일반 · 계정 · 고급)으로 바뀌었다. 재는 성질
+①~⑤는 그대로이고, 상자 대신 탭 쪽마다 그 쪽을 보인 채 잰다(숨은 쪽은 기하가 없다).
 
 전부 **폰트에 의존하지 않는 기하 관계**로 잰다(sizeHint·상대 위치·폭 차이만 본다).
 고장 주입으로 확인한 것: 열 stretch를 빼면 ①이, 라벨 정렬을 빼면 ②(가로)가, 세로 정렬을
@@ -29,7 +32,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialogButtonBox,
     QFormLayout,
-    QGroupBox,
     QLabel,
     QLayout,
     QWidget,
@@ -38,18 +40,25 @@ from PySide6.QtWidgets import (
 import app.theme as theme
 import app.system.settings as settings
 import CVDv2 as main_module
-from app.views.dialog import SettingDialog
+from app.views.dialog import TAB_KEYS, SettingDialog
 from tests.app.gui.card_helpers import hold_style
 from tests.support.settings_db import write_settings
 
-#: 각 그룹 상자의 (라벨, 필드) 짝 — objectName. 도움말 버튼은 라벨 열에 홀로 있다.
+#: 각 탭 쪽의 (라벨, 필드) 짝 — objectName. 도움말 버튼은 라벨 열에 홀로 있다.
 ROWS = {
-    "cookiesBox": [("nidautLabel", "nidaut"), ("nidsesLabel", "nidses")],
-    "downloadBox": [("afterDownloadLabel", "afterDownload")],
-    "commonBox": [("languageLabel", "language"), ("logsFolderLabel", "logsFolder")],
+    "generalPage": [("languageLabel", "language"), ("afterDownloadLabel", "afterDownload")],
+    "accountPage": [("nidautLabel", "nidaut"), ("nidsesLabel", "nidses")],
+    "advancedPage": [("logsFolderLabel", "logsFolder")],
 }
-#: 키보드 순서 — 위에서 아래로, 라벨 열 항목(도움말)은 자기 행 차례에
-TAB_ORDER = ["nidaut", "nidses", "helpButton", "afterDownload", "language", "logsFolder"]
+#: 탭 쪽마다 키보드 순서 — 위에서 아래로, 라벨 열 항목(도움말)은 자기 행 차례에
+TAB_ORDER = {
+    "general": ["language", "afterDownload"],
+    "download": [],
+    "display": [],
+    "account": ["nidaut", "nidses", "helpButton"],
+    "advanced": ["logsFolder"],
+}
+TAB_BUTTONS = [f"settingsTab_{key}" for key in TAB_KEYS]  # 탭 줄 — 쪽 위젯보다 앞
 
 
 def _seed_config() -> None:
@@ -88,17 +97,27 @@ def _at_width(dlg: SettingDialog, extra: int) -> None:
 
 
 def _widget(dlg: SettingDialog, name: str) -> QWidget:
-    w = getattr(dlg, name)
-    assert w.objectName() == name
-    return w
+    """objectName으로 찾은 위젯 — 하나뿐이어야 한다."""
+    found = [w for w in dlg.findChildren(QWidget, name) if w.objectName() == name]
+    assert len(found) == 1, f"{name}: {len(found)}개"
+    return found[0]
+
+
+def _show_page(dlg: SettingDialog, page_name: str) -> QWidget:
+    """그 탭 쪽을 보이고 레이아웃을 정착시킨다 — 숨은 쪽 위젯은 기하가 없다."""
+    dlg.showTab(TAB_KEYS.index(page_name.removesuffix("Page")))
+    QApplication.processEvents()
+    page = _widget(dlg, page_name)
+    assert page.isVisible(), f"{page_name}: 전제 — 보인다"
+    return page
 
 
 def _right(w) -> int:
     return w.geometry().x() + w.geometry().width()
 
 
-def _box_inner_right(box: QGroupBox) -> int:
-    """그룹 상자 안에서 필드가 닿을 수 있는 오른쪽 끝 — 상자 폭에서 레이아웃 오른쪽 여백을 뺀 값."""
+def _box_inner_right(box: QWidget) -> int:
+    """탭 쪽 안에서 필드가 닿을 수 있는 오른쪽 끝 — 쪽 폭에서 레이아웃 오른쪽 여백을 뺀 값."""
     return box.contentsRect().right() + 1 - box.layout().contentsMargins().right()
 
 
@@ -120,7 +139,7 @@ def test_fields_reach_the_inner_right_edge(dialog, extra) -> None:
     """필드는 어느 폭에서든 그룹 상자 안쪽 오른쪽 끝까지 닿는다."""
     _at_width(dialog, extra)
     for box_name, rows in ROWS.items():
-        box = _widget(dialog, box_name)
+        box = _show_page(dialog, box_name)
         for _, field_name in rows:
             field = _widget(dialog, field_name)
             assert _right(field) == _box_inner_right(box), (
@@ -131,14 +150,16 @@ def test_fields_reach_the_inner_right_edge(dialog, extra) -> None:
 def test_extra_width_goes_to_fields_not_labels(dialog) -> None:
     """창을 넓히면 늘어난 만큼 필드만 넓어지고 라벨 열(라벨 x·폭, 필드 x)은 그대로다."""
     _at_width(dialog, 0)
-    narrow = {
-        name: (_widget(dialog, name).geometry().x(), _widget(dialog, name).geometry().width())
-        for rows in ROWS.values()
-        for pair in rows
-        for name in pair
-    }
+    narrow = {}
+    for box_name, rows in ROWS.items():
+        _show_page(dialog, box_name)
+        for pair in rows:
+            for name in pair:
+                geometry = _widget(dialog, name).geometry()
+                narrow[name] = (geometry.x(), geometry.width())
     _at_width(dialog, 240)
-    for rows in ROWS.values():
+    for box_name, rows in ROWS.items():
+        _show_page(dialog, box_name)
         for label_name, field_name in rows:
             label, field = _widget(dialog, label_name), _widget(dialog, field_name)
             assert (label.geometry().x(), label.geometry().width()) == narrow[label_name], (
@@ -159,7 +180,7 @@ def test_labels_hug_their_size_hint_on_the_left(dialog) -> None:
     """라벨은 열 폭이 아니라 자기 sizeHint 폭이고, 상자 안쪽 왼쪽 끝에 붙는다."""
     _at_width(dialog, 240)
     for box_name, rows in ROWS.items():
-        box = _widget(dialog, box_name)
+        box = _show_page(dialog, box_name)
         left = box.contentsRect().left() + box.layout().contentsMargins().left()
         for label_name, _ in rows:
             label = _widget(dialog, label_name)
@@ -200,7 +221,8 @@ def test_labels_sit_where_a_form_layout_would_put_them(dialog) -> None:
     어긋난다(2px, 오너 실기 확인). 대조군은 QFormLayout에게 직접 묻는다.
     """
     _at_width(dialog, 120)
-    for rows in ROWS.values():
+    for box_name, rows in ROWS.items():
+        _show_page(dialog, box_name)
         for label_name, field_name in rows:
             label, field = _widget(dialog, label_name), _widget(dialog, field_name)
             expected_dy, expected_h = _form_reference(
@@ -215,6 +237,7 @@ def test_labels_sit_where_a_form_layout_would_put_them(dialog) -> None:
 def test_help_button_sits_in_the_label_column_at_hint_width(dialog) -> None:
     """도움말 버튼은 라벨 열에 있고, 열이 더 넓어도 자기 sizeHint 폭을 지킨다."""
     _at_width(dialog, 0)
+    _show_page(dialog, "accountPage")
     help_button = _widget(dialog, "helpButton")
     assert help_button.geometry().x() == _widget(dialog, "nidautLabel").geometry().x()
     assert help_button.geometry().width() == help_button.sizeHint().width()
@@ -223,9 +246,10 @@ def test_help_button_sits_in_the_label_column_at_hint_width(dialog) -> None:
 def test_rows_in_a_box_share_columns(dialog) -> None:
     """같은 상자의 행들은 라벨 x 와 필드 x·폭을 공유한다 — 열이 하나로 정렬돼 있다."""
     _at_width(dialog, 120)
-    for rows in ROWS.values():
+    for box_name, rows in ROWS.items():
         if len(rows) < 2:
             continue
+        _show_page(dialog, box_name)
         label_x = {_widget(dialog, label).geometry().x() for label, _ in rows}
         field_span = {
             (_widget(dialog, field).geometry().x(), _widget(dialog, field).geometry().width())
@@ -237,8 +261,14 @@ def test_rows_in_a_box_share_columns(dialog) -> None:
 # ================================================================ ③ 탭 순서
 
 
-def test_tab_order_runs_top_to_bottom_then_ok_cancel(dialog) -> None:
-    """Tab 은 쿠키 두 칸 → 도움말 → 다운로드 후 동작 → 언어 → 로그 폴더 → OK/Cancel 순이다."""
+@pytest.mark.parametrize("key", TAB_KEYS)
+def test_tab_order_runs_tabs_then_the_page_then_save_cancel(dialog, key: str) -> None:
+    """Tab 은 탭 다섯 → 고른 탭 쪽의 칸(위에서 아래로) → 저장/취소 순이다.
+
+    일반: 언어 → 다운로드 후 동작, 계정: 쿠키 두 칸 → 도움말, 고급: 로그 폴더, 다운로드 · 화면: 칸 없음
+    """
+    dialog.showTab(TAB_KEYS.index(key))
+    QApplication.processEvents()
     chain = []
     cursor = dialog
     for _ in range(64):
@@ -247,22 +277,30 @@ def test_tab_order_runs_top_to_bottom_then_ok_cancel(dialog) -> None:
             break
         if cursor.focusPolicy() != Qt.FocusPolicy.NoFocus and cursor.isVisibleTo(dialog):
             chain.append(cursor)
-    names = [w.objectName() for w in chain[: len(TAB_ORDER)]]
-    assert names == TAB_ORDER, f"탭 순서: {names}"
+    expected = TAB_BUTTONS + TAB_ORDER[key]
+    names = [w.objectName() for w in chain[: len(expected)]]
+    assert names == expected, f"탭 순서: {names}"
     button_box = _widget(dialog, "dialogButtonBox")
     assert isinstance(button_box, QDialogButtonBox)
-    tail = chain[len(TAB_ORDER) :]
-    assert tail and all(w.parent() is button_box for w in tail), "OK/Cancel 이 맨 뒤여야 한다"
+    tail = chain[len(expected) :]
+    assert tail and all(w.parent() is button_box for w in tail), "저장/취소가 맨 뒤여야 한다"
     assert {w.text() for w in tail} == {b.text() for b in button_box.buttons()}
 
 
 # ================================================================ ④ 창 최소 크기
 
 
-def test_minimum_width_is_derived_from_the_widest_group_box(dialog) -> None:
-    """창 최소폭은 상수가 아니라 그룹 상자 셋 중 가장 넓은 것 + 바깥 여백이다."""
+def test_minimum_width_is_derived_from_the_tab_row_and_the_widest_page(dialog) -> None:
+    """창 최소폭은 상수가 아니라 탭 줄 · 탭 쪽 다섯 중 가장 넓은 것 + 바깥 여백이다.
+
+    탭 줄 폭 = 탭 sizeHint 폭 합 + 탭 사이 간격(레이아웃 간격 × 4) — 테스트가 따로 더한다
+    """
     outer = dialog.layout().contentsMargins()
-    widest = max(_widget(dialog, name).minimumSizeHint().width() for name in ROWS)
+    tabs = [_widget(dialog, name) for name in TAB_BUTTONS]
+    row = sum(tab.sizeHint().width() for tab in tabs)
+    row += dialog.tabBar.layout().spacing() * (len(tabs) - 1)
+    pages = [_widget(dialog, f"{key}Page").minimumSizeHint().width() for key in TAB_KEYS]
+    widest = max(row, *pages)
     assert dialog.minimumSizeHint().width() == widest + outer.left() + outer.right()
     assert dialog.minimumSize().width() == dialog.minimumSizeHint().width(), (
         "표시 직후 창은 최소 크기에서 시작한다"
@@ -273,12 +311,12 @@ def test_minimum_width_is_derived_from_the_widest_group_box(dialog) -> None:
 
 
 def _rows_top_left(dlg: SettingDialog) -> dict[str, int]:
-    """상자마다 행에 놓인 위젯(라벨·필드·도움말)의 상자 기준 y — 행이 어디 붙어 있는지."""
+    """탭 쪽마다 행에 놓인 위젯(라벨·필드·도움말)의 쪽 기준 y — 행이 어디 붙어 있는지."""
     result = {}
     for box_name, rows in ROWS.items():
-        box = _widget(dlg, box_name)
+        box = _show_page(dlg, box_name)
         names = [name for pair in rows for name in pair]
-        if box_name == "cookiesBox":
+        if box_name == "accountPage":
             names.append("helpButton")
         for name in names:
             result[name] = _widget(dlg, name).mapTo(box, _widget(dlg, name).rect().topLeft()).y()
@@ -301,13 +339,13 @@ def test_extra_height_stays_below_the_rows(dialog) -> None:
     dialog.resize(dialog.sizeHint())
     QApplication.processEvents()
     at_hint = _rows_top_left(dialog)
-    box_heights = {name: _widget(dialog, name).height() for name in ROWS}
+    box_heights = {name: _show_page(dialog, name).height() for name in ROWS}
 
     dialog.resize(dialog.sizeHint().width(), dialog.sizeHint().height() + 240)
     QApplication.processEvents()
     for name in ROWS:
-        assert _widget(dialog, name).height() > box_heights[name], (
-            f"{name}: 상자가 같이 안 늘어났다 — 전제"
+        assert _show_page(dialog, name).height() > box_heights[name], (
+            f"{name}: 탭 쪽이 같이 안 늘어났다 — 전제"
         )
     after = _rows_top_left(dialog)
     moved = {name: (y, after[name]) for name, y in at_hint.items() if after[name] != y}
