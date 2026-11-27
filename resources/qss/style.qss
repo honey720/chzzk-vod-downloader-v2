@@ -455,8 +455,10 @@ QFrame#infoFrame QPushButton#downloadButton:disabled {
 }
 
 /* 선택 버튼(#561) — 선택 모드 안에서는 켠 모양(면 barSelected, 테두리 없음 — #611 · 176t). 도형은 IconButton이 그린다 */
+/* outline: none — 칩과 같은 까닭으로 Fusion의 초점 사각형을 끈다(#651) */
 QFrame#headerFrame QPushButton#selectButton {
     padding: 0px;
+    outline: none;
 }
 
 QFrame#headerFrame QPushButton#selectButton[on="true"] {
@@ -551,9 +553,12 @@ QFrame#appMenuBar QPushButton[role="menu"]:focus {
 /* 상태 필터 칩(#536 · #611 — 설계 §13): 고른 칩 = 면 barSelected만(테두리 없음, 강조색 채움 아님 — 채운 강조 버튼은
  * 다운로드 하나 · 바 면에서 두 단계라 호버보다 진하고 포인터를 올려도 그대로 — 176t), 나머지 = 면 · 테두리 없는 글(투명 테두리 1px로 자리만). 실패 칩 글은 실패 색
  * (아래 [alert] 규칙을 상태 규칙 뒤에 둔다). 호버 · 눌림 동안(176l)과 고른 동안(176u)은 text */
+/* outline: none — Tab 키로 초점이 오면 Fusion이 글 둘레에 자기 초점 사각형(면 + 테두리)을 따로 그린다. 끄지 않으면
+ * 가장자리 focus ring 안에 작은 상자가 하나 더 보인다(#651) */
 QFrame#headerFrame QPushButton[role="filter"] {
     background-color: transparent;
     border: 1px solid transparent;
+    outline: none;
 }
 
 QFrame#headerFrame QPushButton[role="filter"]:checked {

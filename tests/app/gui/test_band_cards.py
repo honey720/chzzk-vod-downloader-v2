@@ -2288,3 +2288,106 @@ class TestKeyFocusRing:
         seen = _ring_pixels(win, widget)
         assert not _is(seen["left_edge"], "accent"), f"{scheme} {name}: {seen['left_edge'].name()}"
         assert _is(seen["left_gap"], "barSelected"), f"{scheme} {name}: {seen['left_gap'].name()}"
+
+
+TAB_CASES = {  # 이름 -> (Tab 키를 받을 앞 위젯, 초점이 갈 위젯, Shift+Tab 여부)
+    "uncheckedChip": ("all", "waiting", False),  # 고른 「전체」에서 Tab -> 안 고른 「대기」
+    "checkedChip": ("waiting", "all", True),  # 안 고른 「대기」에서 Shift+Tab -> 고른 「전체」
+    "selectButton": ("sortButton", "selectButton", False),  # 정렬에서 Tab -> 켠 선택 버튼
+}
+
+
+def _tab_pair(win: VodDownloader, case: str) -> tuple[QWidget, QWidget, bool]:
+    """Tab 키를 받을 앞 위젯 · 초점이 갈 위젯 · Shift+Tab 여부 — 칩이 보이는 폭으로 넓히고 포인터는 밖에 둔다."""
+    from PySide6.QtTest import QTest
+
+    win.resize(win.minimumWidth() + 900, 600)
+    QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
+    _pump()
+    before_name, target_name, back = TAB_CASES[case]
+    if case == "selectButton":
+        win.selectButton.click()
+        _pump()
+        assert win.selectButton.property("on") is True, "전제: 선택 모드"
+    named = {"sortButton": win.sortButton, "selectButton": win.selectButton}
+    before = named.get(before_name) or win.filterChips[before_name]
+    target = named.get(target_name) or win.filterChips[target_name]
+    assert target.isVisible() and not target.underMouse(), "전제: 보이고 포인터는 밖"
+    return before, target, back
+
+
+def _press_tab(win: VodDownloader, before: QWidget, target: QWidget, back: bool, qtbot) -> None:
+    """앞 위젯에 초점을 두고 실제 Tab(또는 Shift+Tab) 키 이벤트로 `target`에 초점을 옮긴다.
+
+    Qt는 Tab 키 이벤트로 초점이 옮겨질 때만 창에 WA_KeyboardFocusChange를 세운다 — setFocus만으로는 서지 않는다.
+    """
+    from PySide6.QtTest import QTest
+
+    _activate_and_focus(win, before, qtbot)
+    key = Qt.Key.Key_Backtab if back else Qt.Key.Key_Tab
+    QTest.keyClick(before, key)
+    qtbot.waitUntil(target.hasFocus, timeout=3000)
+    _pump()
+    assert win.testAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange), "전제: 키보드 초점 이동"
+    assert target.property("keyFocus") is True, "전제: 키보드 초점"
+
+
+def _inner_points(rect: QRect) -> list[tuple[int, int]]:
+    """가장자리 1px와 모서리 반경 자리를 뺀 안쪽 화소(창 좌표) — 가로 띠와 세로 띠를 합친 십자꼴."""
+    radius = int(theme.current_tokens()["controlRadius"].removesuffix("px"))
+    left, top, right, bottom = rect.left(), rect.top(), rect.right(), rect.bottom()
+    points = {
+        (x, y) for x in range(left + radius, right - radius + 1) for y in range(top + 1, bottom)
+    }
+    points |= {
+        (x, y) for x in range(left + 1, right) for y in range(top + radius, bottom - radius + 1)
+    }
+    return sorted(points)
+
+
+class TestTabKeyFocus:
+    """실제 Tab 키로 온 초점에도 칩 · 선택 버튼 안에 따로 상자가 생기지 않는다 — 테두리 한 겹뿐이다(#651)."""
+
+    @pytest.mark.parametrize("case", list(TAB_CASES))
+    def test_tab_key_focus_leaves_the_inside_unchanged(
+        self, window, scheme: str, case: str, qtbot
+    ) -> None:
+        """칩 · 선택 버튼에 Tab 키로 초점이 오면 가장자리 1px 안쪽 화소가 초점 전과 같아야 한다.
+
+        대기 카드 하나, 창 폭 = 최소폭 + 900, 포인터는 창 왼쪽 위, 앞 위젯에서 Tab(고른 칩은 Shift+Tab) ->
+        가장자리 1px · 모서리 반경 자리를 뺀 안쪽 화소 중 초점 전과 색이 다른 것 0개
+        """
+        win = window(DownloadState.WAITING)
+        before, target, back = _tab_pair(win, case)
+        _activate_and_focus(win, before, qtbot)
+        rect = _rect(win, target)
+        points = _inner_points(rect)
+        assert points, "전제: 잴 안쪽 화소가 있다"
+        unfocused = win.grab().toImage()
+        _press_tab(win, before, target, back, qtbot)
+        focused = win.grab().toImage()
+        changed = [
+            (x - rect.left(), y - rect.top())
+            for x, y in points
+            if _distance(_pixel(unfocused, x, y), _pixel(focused, x, y)) > SLACK
+        ]
+        assert not changed, f"{scheme} {case}: 안쪽 {len(changed)}화소 바뀜, 처음 {changed[:5]}"
+
+    def test_tab_key_focus_on_an_unchosen_chip_is_one_accent_edge(
+        self, window, scheme: str, qtbot
+    ) -> None:
+        """안 고른 칩에 Tab 키로 초점이 오면 가장자리 1px는 accent, 바로 안쪽과 바깥은 barBg여야 한다.
+
+        대기 카드 하나, 창 폭 = 최소폭 + 900, 포인터는 창 왼쪽 위, 「전체」에서 Tab -> 「대기」 왼쪽 · 위 변 가운데의
+        가장자리 ≈ accent, 1px · 3px 안 ≈ barBg, 바깥 1px ≈ barBg
+        """
+        win = window(DownloadState.WAITING)
+        before, target, back = _tab_pair(win, "uncheckedChip")
+        _press_tab(win, before, target, back, qtbot)
+        seen = _ring_pixels(win, target)
+        names = {key: colour.name() for key, colour in seen.items()}
+        for edge in ("left", "top"):
+            assert _is(seen[f"{edge}_edge"], "accent"), f"{scheme}: {names}"
+            assert _is(seen[f"{edge}_gap"], "barBg"), f"{scheme}: {names}"
+            assert _is(seen[f"{edge}_face"], "barBg"), f"{scheme}: {names}"
+        assert _is(seen["outside"], "barBg"), f"{scheme}: {names}"
