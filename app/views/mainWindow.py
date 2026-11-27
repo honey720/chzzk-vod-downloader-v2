@@ -385,7 +385,7 @@ class VodDownloader(QMainWindow):
 
         # 헤더바 1줄(#492 — 셸 S0, #495 — S1):
         #   ┌ [URL 입력                              ][📁 폴더 이름 ⌄][+] ┐
-        #   └ [칩 여섯][정렬 ⌄] ……………………………………………………… [☑ 선택] ┘
+        #   └ [칩 여섯] ……………………………………………………… [정렬 ⌄][☑ 선택] ┘
         # 등록 오류는 줄이 아니라 URL 칸 아래 오류 말풍선이다(#536)
         # 남는 폭은 URL 입력이 다 받는다(설계: URL 입력이 남는 폭). 저장 위치 버튼은 고정 폭이다
         # (SaveLocationButton.applyWidth). 설정 톱니(#245)는 메뉴바 「설정」으로 옮겼다.
@@ -415,8 +415,10 @@ class VodDownloader(QMainWindow):
         # 조회 중 상태가 보인다
         self.registerError = ErrorTip(self.urlInput)
 
-        # 헤더바 2줄(#495 — 셸 S1): [상태 칩 여섯][정렬 ▾] ……
-        # 칩 · 정렬 버튼은 고정 폭이다(숫자 세 자리 · 가장 긴 정렬 이름) — 남는 폭은 줄 끝 빈칸이 받는다
+        # 헤더바 2줄(#495 — 셸 S1 · #651): 왼쪽 = 상태 칩(무엇을 볼지), 오른쪽 묶음 = 정렬 · 선택(어떻게 볼지).
+        # 칩 폭은 지금 글에 맞고, 정렬 버튼은 고정 폭(가장 긴 정렬 이름)이다 — 남는 폭은 가운데 빈칸이 받는다.
+        # 오른쪽 묶음은 1줄과 같은 간격이라 오른쪽 끝선이 1줄과 맞는다(정렬 ↔ 저장 위치, 선택 ↔ +). 나중에 들어올
+        # 목록 검색 버튼은 이 묶음 맨 앞(정렬 앞)에 더한다
         self.filterRowLayout = QHBoxLayout()
         self.filterRowLayout.setSpacing(8)
         self.filterRowLayout.setObjectName("filterRowLayout")
@@ -424,10 +426,13 @@ class VodDownloader(QMainWindow):
         self.filterChipBar.setObjectName("filterChipBar")
         self.filterChips = self.filterChipBar.chips
         self.filterRowLayout.addWidget(self.filterChipBar)
+        self.filterRowLayout.addStretch(1)
+        self.viewToolsLayout = QHBoxLayout()
+        self.viewToolsLayout.setObjectName("viewToolsLayout")
+        self.viewToolsLayout.setSpacing(self.urlRowLayout.spacing())
         self.sortButton = SortButton(self.headerFrame)
         self.sortButton.setObjectName("sortButton")
-        self.filterRowLayout.addWidget(self.sortButton)
-        self.filterRowLayout.addStretch(1)
+        self.viewToolsLayout.addWidget(self.sortButton)
         # 선택 버튼(#561 — 설계 §6 C4 「완료 지우기」 → 「지우기」 자리): 체크박스 아이콘, 이름은 툴팁. 누르면 선택
         # 모드로 들어가고 선택 모드 안에서 다시 누르면 나온다. 「완료 지우기」는 없앴다 — 같은 일은 완료 칩 → 모두
         # 선택 → 지우기(프로토 헤더 2줄에 「완료 지우기」가 없다)
@@ -437,7 +442,8 @@ class VodDownloader(QMainWindow):
         self.selectButton.setGlyphMetric("narrowIcon")
         self.selectButton.setIdleToken("text")
         self.selectButton.setProperty("on", False)
-        self.filterRowLayout.addWidget(self.selectButton)
+        self.viewToolsLayout.addWidget(self.selectButton)
+        self.filterRowLayout.addLayout(self.viewToolsLayout)
         self.headerFrameLayout.addLayout(self.filterRowLayout)
 
         # 상단·하단 바는 각자 행(headerRow·infoRow)에 담는다. 바는 창 끝까지 붙어 행 여백도 0이다(#536 —
@@ -601,7 +607,7 @@ class VodDownloader(QMainWindow):
         self.infoLayout.setContentsMargins(pad_x, pad_y, pad_x, pad_y)
         self._equalizeHeaderButtons()
         self._squareFooterButtons()
-        # 헤더바 2줄의 칩 · 정렬 버튼 폭(숫자 세 자리 · 가장 긴 이름) — 창 최소폭 계산 전에 건다
+        # 헤더바 2줄의 칩 · 정렬 버튼 폭(지금 글 · 가장 긴 이름) — 창 최소폭 계산 전에 건다
         self.filterChipBar.applyWidth()
         self.sortButton.applyWidth()
 
@@ -836,15 +842,21 @@ class VodDownloader(QMainWindow):
     def headerRow2Needs(self, failed: bool) -> list[int]:
         """헤더바 2줄이 단계마다 바라는 폭 — 0 칩 · 1 드롭다운 · 2 드롭다운 + 정렬 아이콘 (#529).
 
-        지금 보이는 모양과 무관하다 — 칩 · 드롭다운 · 정렬 두 모양의 고정 폭과 선택 버튼 폭, 사이
-        간격(늘어나는 빈칸 옆에는 간격이 없다)으로 센다. 줄어드는 폭이 큰 것(칩)부터 줄인다(설계 §2).
+        지금 보이는 모양과 무관하다 — 칩 줄(지금 숫자의 칩 폭) · 드롭다운(실패 칩은 세 자리) · 정렬 두 모양의
+        폭과 선택 버튼 폭, 사이 간격(늘어나는 빈칸 옆에는 간격이 없다 — 칩 줄 ↔ 오른쪽 묶음 하나, 묶음 안 정렬 ↔
+        선택 하나)으로 센다. 줄어드는 폭이 큰 것(칩)부터 줄인다(설계 §2). 칩 모양 폭은 숫자를 따르므로 숫자가
+        바뀌면 다시 센다(`countsChanged` → `_applyHeaderShape`).
 
         Args:
             failed: 좁은 폭에서 실패 칩이 드롭다운 옆에 남는지(실패 카드가 있는지)
         """
         chips = self.filterChipBar
         sort = self.sortButton
-        tail = self.selectButton.minimumWidth() + 2 * self.filterRowLayout.spacing()
+        tail = (
+            self.selectButton.minimumWidth()
+            + self.filterRowLayout.spacing()
+            + self.viewToolsLayout.spacing()
+        )
         compact = chips.compactWidth(failed)
         return [
             chips.chipsWidth() + sort.textWidth() + tail,
