@@ -21,7 +21,13 @@ from app.views.mainWindow import VodDownloader
 from app.widgets.widget import ContentItemWidget
 from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
-from tests.app.gui.card_helpers import drop_new_top_levels, enter, hold_style, snapshot_top_levels
+from tests.app.gui.card_helpers import (
+    drop_new_top_levels,
+    enter,
+    hold_style,
+    snapshot_top_levels,
+    tab_reaches_all_controls,
+)
 
 ANSWER_TRIES = 150  # 확인 대화상자가 뜨기를 기다리는 횟수 — 20ms 간격, 3초
 ANSWER_STEP_MS = 20  # 확인 대화상자를 찾는 간격(ms)
@@ -53,7 +59,10 @@ class _Engine:
 
 @pytest.fixture(autouse=True)
 def _environment(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """실제 QSS · 네트워크 차단 · 로그 파일 차단. 테스트가 띄운 창은 끝에 파괴한다."""
+    """실제 QSS · 네트워크 차단 · 로그 파일 차단 · Tab 규칙. 테스트가 띄운 창은 끝에 파괴한다.
+
+    초점 넘김이 카드에 닿는다는 전제(■ → 카드)는 Tab이 모든 컨트롤에 가는 규칙에서만 성립한다 (#653).
+    """
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
     qapp.setPalette(theme.build_palette())
@@ -65,7 +74,8 @@ def _environment(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> Iterato
     monkeypatch.setattr("app.widgets.widget.get_thread_session", no_network)
     monkeypatch.setattr(DownloadLogger, "_setup_logging", lambda self: None)
     before = snapshot_top_levels()
-    yield
+    with tab_reaches_all_controls():
+        yield
     drop_new_top_levels(before)
 
 

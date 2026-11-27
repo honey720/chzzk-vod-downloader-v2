@@ -28,7 +28,7 @@ from app.views.mainWindow import VodDownloader
 from app.views.section_dialog import SectionDeleteButton
 from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
-from tests.app.gui.card_helpers import hold_style
+from tests.app.gui.card_helpers import hold_style, tab_reaches_all_controls
 from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 이름으로 쓴다
     _destroy_windows,
     _make_item,
@@ -428,11 +428,20 @@ class TestConfirmBox:
         failures: list[BaseException] = []
         finished: list[bool] = []  # 테스트가 끝나면 찾기를 멈춘다 — 뒤 테스트의 창을 닫지 않게
 
+        # 확인 창을 처음 찾은 tick — 그 tick에서는 check를 부르지 않는다
+        opened: list[QMessageBox] = []
+
         def run() -> None:
             if finished:
                 return
             box = QApplication.activeModalWidget()
             if not isinstance(box, QMessageBox):
+                QTimer.singleShot(10, run)
+                return
+            if not opened:
+                # 창이 보인 이벤트 루프 턴 안에서 받은 초점은 「창을 연 입력」으로 정해진다(#622). 그 턴이 끝난 뒤
+                # 재도록 한 tick 미룬다 — macOS는 이 tick 안의 processEvents가 그 턴을 끝내지 않는다 (#653)
+                opened.append(box)
                 QTimer.singleShot(10, run)
                 return
             try:
@@ -583,6 +592,12 @@ MOUSE_OPENED = {"focus": True, "keyFocus": False, "accent edge": False}  # 마�
 
 class TestOpeningFocusFollowsTheInput:
     """대화상자가 열리며 받은 첫 초점은 창을 연 입력의 종류를 따른다(#622 188c)."""
+
+    @pytest.fixture(autouse=True)
+    def _tab_rule(self) -> Iterator[None]:
+        """Tab이 모든 컨트롤에 가는 규칙을 세운다 — 창에 보낸 Tab이 카드에 닿아 ✕가 보인다는 전제 (#653)."""
+        with tab_reaches_all_controls():
+            yield
 
     def test_second_confirm_box_follows_the_key_that_closed_the_first(
         self, qtbot: QtBot, tmp_path, scheme: str
