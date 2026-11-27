@@ -889,10 +889,11 @@ class FilterChips(QWidget):
 
         실패 칩은 지금 숫자가 아니라 세 자리(「실패 999」) 폭으로 센다 — 드롭다운도 세 자리 고정 폭이고,
         숫자 글리프 폭이 다른 글꼴(macOS 등)에서 「실패 0」 → 「실패 1」로 문턱이 움직이지 않게 한다(#651).
+        네 자리 이상으로 칩이 그보다 넓어지면 지금 칩 폭으로 센다 — 줄이 가로로 넘치지 않게 한다(#651).
         """
         width = self.dropButton.minimumWidth()
         if failed:
-            width += CHIP_GAP + self._failedReserve
+            width += CHIP_GAP + max(self._failedReserve, self.chips["failed"].minimumWidth())
         return width
 
     @staticmethod

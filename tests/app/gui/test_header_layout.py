@@ -24,6 +24,7 @@ import CVDv2 as main_module
 import app.theme as theme
 from app.viewmodels.data import ContentItem
 from app.views.mainWindow import VodDownloader
+from app.widgets.header_controls import CHIP_GAP
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import hold_style
 
@@ -381,3 +382,27 @@ class TestViewToolsPlace:
         assert chip.width() == chip.sizeHint().width()
         assert _x_in_window(window, window.sortButton) == sort_x
         assert _x_in_window(window, window.selectButton) == select_x
+
+
+class TestFailedChipReserve:
+    """좁은 폭 모양의 필요 폭은 지금 보이는 실패 칩 폭을 덮는다(#651)."""
+
+    def test_compact_need_covers_a_failed_chip_wider_than_three_digits(
+        self, window, monkeypatch
+    ) -> None:
+        """실패 칩이 네 자리 숫자로 넓어지면 드롭다운 모양 필요 폭이 그 칩 폭을 덮어야 한다.
+
+        실패 999 -> 1000(순서 뷰모델 counts · countsChanged)
+        -> compactWidth(True) >= 드롭다운 최소폭 + CHIP_GAP + 실패 칩 최소폭
+        """
+        order = window.contentManager.order
+        chips = window.filterChipBar
+        counts = dict(order.counts())
+        for failed in (999, 1000):
+            monkeypatch.setattr(order, "counts", lambda n=failed: counts | {"failed": n})
+            order.countsChanged.emit()
+            QApplication.processEvents()
+        chip = chips.chips["failed"]
+        assert chip.text().endswith(" 1000"), f"전제: {chip.text()!r}"
+        shown = chips.dropButton.minimumWidth() + CHIP_GAP + chip.minimumWidth()
+        assert chips.compactWidth(True) >= shown
