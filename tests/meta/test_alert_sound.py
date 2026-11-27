@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtWidgets import QMessageBox
+from pytestqt.qtbot import QtBot
 
 from tests import alert_sound
 
@@ -98,7 +99,7 @@ def test_process_without_conftest_has_no_handler() -> None:
 
 
 @windows_only
-def test_warning_box_show_reaches_the_test_handler(qtbot) -> None:
+def test_warning_box_show_reaches_the_test_handler(qtbot: QtBot) -> None:
     """Warning 메시지 상자를 띄우면 접근성 이벤트가 테스트 처리기로 가야 한다 (#664).
 
     QMessageBox(Warning).show() -> update_count()가 show 전보다 큼
