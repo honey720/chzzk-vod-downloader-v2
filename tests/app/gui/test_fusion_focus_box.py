@@ -8,8 +8,6 @@ Fusion은 실제 Tab 키로 초점이 옮겨졌을 때만(창의 WA_KeyboardFocu
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
-import sys
-
 import pytest
 from pytestqt.qtbot import QtBot
 from PySide6.QtCore import QPoint, QRect, Qt, QTimer
@@ -27,6 +25,7 @@ from PySide6.QtWidgets import (
 import app.theme as theme
 import app.widgets.view as view_module
 from app.views.mainWindow import VodDownloader
+from tests.app.gui.card_helpers import tab_reaches_all_controls
 from tests.app.gui.test_dialog_buttons import (  # noqa: F401 — 픽스처는 이름으로 쓴다
     _activate,
     _edit,
@@ -73,17 +72,14 @@ DIALOG_CASES: dict[str, tuple[str, Callable[[QWidget], QWidget], int]] = {
     "sectionOk": ("section", lambda d: d.okButton, 1),
     "sectionCancel": ("section", lambda d: d.cancelButton, 1),
 }
-# focusPolicy가 TabFocus뿐인 버튼 — macOS 기본 설정에서 Qt는 StrongFocus 위젯만 Tab으로 돌아 닿지 않는다
-TAB_ONLY = {"selectBarCancel", "sectionRowDelete"}
 CONFIRM_CASES = ("stop", "cancel")  # 확인 창의 「Stop and delete」 · Cancel
 
 
-def _cases(names: dict[str, object]) -> list[object]:
-    """경우 이름 목록 — TabFocus뿐인 버튼은 macOS에서 건너뛴다(Tab으로 닿지 않아 Fusion 상자가 생길 수 없다)."""
-    mac_skip = pytest.mark.skipif(
-        sys.platform == "darwin", reason="macOS 기본 설정에서 TabFocus 버튼은 Tab으로 닿지 않는다"
-    )
-    return [pytest.param(n, marks=mac_skip) if n in TAB_ONLY else n for n in names]
+@pytest.fixture(autouse=True)
+def _tab_rule() -> Iterator[None]:
+    """Tab이 모든 컨트롤에 가는 규칙을 세운다 — 선택 줄 ✕ · 구간 행 ✕(TabFocus)에 Tab이 닿는다는 전제 (#653)."""
+    with tab_reaches_all_controls():
+        yield
 
 
 def _box_button(dialog: QWidget, name: str) -> QWidget:
@@ -216,7 +212,7 @@ def main_window(tmp_path: Path, basis: type) -> Iterator[VodDownloader]:  # noqa
 class TestMainWindowButtons:
     """메인 창 바 · 선택 줄 버튼은 Tab 키 초점에도 안쪽 그림이 그대로다."""
 
-    @pytest.mark.parametrize("case", _cases(MAIN_CASES))
+    @pytest.mark.parametrize("case", list(MAIN_CASES))
     def test_tab_key_focus_leaves_the_inside_unchanged(
         self,
         qtbot: QtBot,
@@ -276,7 +272,7 @@ class TestMainWindowButtons:
 class TestDialogButtons:
     """설정 · 편집 · 구간 창 버튼은 Tab 키 초점에도 안쪽 그림이 그대로다."""
 
-    @pytest.mark.parametrize("case", _cases(DIALOG_CASES))
+    @pytest.mark.parametrize("case", list(DIALOG_CASES))
     def test_tab_key_focus_leaves_the_inside_unchanged(
         self,
         qtbot: QtBot,
