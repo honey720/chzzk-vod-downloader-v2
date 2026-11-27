@@ -4,6 +4,7 @@ import sys
 
 import app.theme as theme
 from app.system import settings
+from app.viewmodels import card_display
 from app.widgets.choice_combo import ChoiceCombo
 from app.widgets.focus_ring import watch_dialog_buttons
 from app.widgets.header_controls import CHIP_GAP, FilterChip
@@ -11,6 +12,7 @@ from app.widgets.tip_bubble import close_floats_if_left, install_tips
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -53,6 +55,12 @@ TAB_KEYS = (
     "account",
     "advanced",
 )  # 탭 차례 — 탭 버튼 · 쪽 이름의 머리
+#: 화면 탭 체크박스의 설정 키 — 위에서 아래 차례(설계 §14.3). 체크박스 objectName도 이 키다
+DISPLAY_KEYS = (
+    card_display.STATE_TINT_KEY,
+    card_display.COMPACT_THUMBNAIL_KEY,
+    card_display.ANIMATIONS_KEY,
+)
 CLOSE_SAVE = "save"  # 닫기 확인 — 저장하고 닫는다
 CLOSE_DISCARD = "discard"  # 닫기 확인 — 저장하지 않고 닫는다
 CLOSE_BACK = "back"  # 닫기 확인 — 닫지 않고 설정 창으로 돌아간다(기본 · Esc)
@@ -164,8 +172,8 @@ class SettingDialog(QDialog):
 
     탭 줄은 헤더바 상태 필터 칩과 같은 부품(`FilterChip`, `role="filter"`)이고 모양은 전역 QSS
     `QFrame#settingsTabs`가 칠한다. 탭을 누르면 아래 쪽(`QStackedWidget`)이 바뀐다. 항목 자리:
-    일반 = 언어 · 다운로드 후 동작, 계정 = 쿠키 두 칸 · 도움말, 고급 = 로그 폴더. 다운로드 · 화면 탭은
-    뒤따르는 PR이 항목을 더할 자리다.
+    일반 = 언어 · 다운로드 후 동작, 화면 = 완료 · 실패 색조 · 썸네일 줄이기 · 부드러운 애니메이션(#645),
+    계정 = 쿠키 두 칸 · 도움말, 고급 = 로그 폴더. 다운로드 탭은 뒤따르는 PR이 항목을 더할 자리다.
 
     저장 · 취소: 창을 열 때 칸 값을 키마다 적어 두고(`_initial`), 지금 칸 값과 다른 키가 있을 때만 저장을
     켠다. 취소는 늘 켜져 있다 — 바뀐 값이 없으면 그냥 닫고, 있으면 버리고 닫는다(오너 2026-11-27).
@@ -258,9 +266,19 @@ class SettingDialog(QDialog):
         self.generalGridLayout.addWidget(self.afterDownload, 1, _FIELD_COLUMN)
         _pin_rows_to_top(self.generalGridLayout)
 
-        # ---- 다운로드 · 화면 — 뒤따르는 PR이 항목을 더할 자리 ----
-        for key in ("download", "display"):
-            _pin_rows_to_top(_label_field_grid(self.page[key], f"{key}GridLayout"))
+        # ---- 다운로드 — 뒤따르는 PR이 항목을 더할 자리 ----
+        _pin_rows_to_top(_label_field_grid(self.page["download"], "downloadGridLayout"))
+
+        # ---- 화면 — 체크박스 셋(#645, 설계 §14.3). 체크박스 글이 라벨이라 두 열에 걸친다 ----
+        display = self.page["display"]
+        self.displayGridLayout = _label_field_grid(display, "displayGridLayout")
+        self.displayChecks: dict[str, QCheckBox] = {}
+        for row, key in enumerate(DISPLAY_KEYS):
+            check = QCheckBox(display)
+            check.setObjectName(key)
+            self.displayGridLayout.addWidget(check, row, _LABEL_COLUMN, 1, 2)
+            self.displayChecks[key] = check
+        _pin_rows_to_top(self.displayGridLayout)
 
         # ---- 계정 ----
         account = self.page["account"]
@@ -352,6 +370,13 @@ class SettingDialog(QDialog):
         self.afterDownloadLabel.setText(self.tr("After Download"))
         self.languageLabel.setText(self.tr("Language"))
         self.logsFolderLabel.setText(self.tr("Logs Folder"))
+        display_texts = {
+            card_display.STATE_TINT_KEY: self.tr("Tint finished and failed cards"),
+            card_display.COMPACT_THUMBNAIL_KEY: self.tr("Smaller thumbnails"),
+            card_display.ANIMATIONS_KEY: self.tr("Smooth animations"),
+        }
+        for key, check in self.displayChecks.items():
+            check.setText(display_texts[key])
         self.logsFolder.setText(self.tr("Open"))
 
     def tabNames(self) -> dict[str, str]:
@@ -415,6 +440,17 @@ class SettingDialog(QDialog):
 
         self.logsFolder.clicked.connect(self.openLogsFolder)
 
+        # 화면 탭 — 지금 쓰는 값. 애니메이션을 고르지 않았으면 OS 값이다(설계 §14.4) — 손대지 않고 저장하면
+        # 바뀐 키가 아니라 행을 쓰지 않는다. 바꿔 저장하면 그 뒤로는 OS를 보지 않는다
+        checks = self.displayChecks
+        checks[card_display.STATE_TINT_KEY].setChecked(
+            bool(settings.load_setting(card_display.STATE_TINT_KEY))
+        )
+        checks[card_display.COMPACT_THUMBNAIL_KEY].setChecked(
+            bool(settings.load_setting(card_display.COMPACT_THUMBNAIL_KEY))
+        )
+        checks[card_display.ANIMATIONS_KEY].setChecked(card_display.animations_setting())
+
     # ---- 바뀐 값 ----
 
     def values(self) -> dict:
@@ -423,6 +459,7 @@ class SettingDialog(QDialog):
             "cookies": {"NID_AUT": self.nidaut.text(), "NID_SES": self.nidses.text()},
             "afterDownload": self.afterDownload.currentData(),
             "language": self.language.currentData(),
+            **{key: check.isChecked() for key, check in self.displayChecks.items()},
         }
 
     def changes(self) -> dict:
@@ -439,6 +476,8 @@ class SettingDialog(QDialog):
         self.nidses.textChanged.connect(self._refreshButtons)
         self.afterDownload.currentIndexChanged.connect(self._refreshButtons)
         self.language.currentIndexChanged.connect(self._refreshButtons)
+        for check in self.displayChecks.values():
+            check.toggled.connect(self._refreshButtons)
 
     def _refreshButtons(self) -> None:
         """바뀐 값이 있을 때만 저장을 켠다 — 취소는 늘 켜져 있다(오너 2026-11-27, #644)."""

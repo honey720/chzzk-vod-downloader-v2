@@ -707,6 +707,18 @@ Check your connection and cookies, then open this window again.</source>
         <translation>로그 폴더</translation>
     </message>
     <message>
+        <source>Tint finished and failed cards</source>
+        <translation>완료 · 실패 카드 색조</translation>
+    </message>
+    <message>
+        <source>Smaller thumbnails</source>
+        <translation>썸네일 줄이기</translation>
+    </message>
+    <message>
+        <source>Smooth animations</source>
+        <translation>부드러운 애니메이션</translation>
+    </message>
+    <message>
         <source>How to get a Chzzk cookie&lt;br&gt;1. Log in to &lt;a href=&apos;{}&apos;&gt;Chzzk&lt;/a&gt;.&lt;br&gt;2. Press F12 to open the developer tool. &lt;br&gt;3. Click Cookies &gt; https://chzzk.naver.com on the Application tab. &lt;br&gt;4. Add the values of &apos;NID_AUT&apos; and &apos;NID_SES&apos;.</source>
         <translation>치지직 쿠키 얻는 방법&lt;br&gt;&lt;br&gt;1. &lt;a href=&apos;{}&apos;&gt;치지직&lt;/a&gt;에 로그인 하세요. &lt;br&gt;2. F12를 눌러 개발자 도구를 열어주세요. &lt;br&gt;3. Application 탭에서 Cookies &gt; https://chzzk.naver.com을 클릭하세요. &lt;br&gt;4. &apos;NID_AUT&apos;, &apos;NID_SES&apos; Name의 Value 값을 붙여 넣으세요.</translation>
     </message>

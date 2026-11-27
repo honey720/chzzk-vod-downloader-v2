@@ -54,7 +54,7 @@ ROWS = {
 TAB_ORDER = {
     "general": ["language", "afterDownload"],
     "download": [],
-    "display": [],
+    "display": ["cardStateTint", "cardCompactThumbnail", "animations"],  # 체크박스 셋(#645)
     "account": ["nidaut", "nidses", "helpButton"],
     "advanced": ["logsFolder"],
 }
@@ -265,7 +265,8 @@ def test_rows_in_a_box_share_columns(dialog) -> None:
 def test_tab_order_runs_tabs_then_the_page_then_save_cancel(dialog, key: str) -> None:
     """Tab 은 탭 다섯 → 고른 탭 쪽의 칸(위에서 아래로) → 저장/취소 순이다.
 
-    일반: 언어 → 다운로드 후 동작, 계정: 쿠키 두 칸 → 도움말, 고급: 로그 폴더, 다운로드 · 화면: 칸 없음
+    일반: 언어 → 다운로드 후 동작, 화면: 색조 → 썸네일 줄이기 → 애니메이션, 계정: 쿠키 두 칸 → 도움말,
+    고급: 로그 폴더, 다운로드: 칸 없음
     """
     dialog.showTab(TAB_KEYS.index(key))
     QApplication.processEvents()

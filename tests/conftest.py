@@ -47,6 +47,7 @@ apply_qt_platform_defaults(os.environ, sys.platform)
 start_worker_display(os.environ, sys.platform)
 
 import app.system.settings as settings_module  # noqa: E402 — sys.path 삽입 후에 와야 한다
+import app.system.motion_preference as motion_preference  # noqa: E402
 import app.viewmodels.card_display as card_display  # noqa: E402
 import core.sources.hls_aes_downloader as hls_aes_module  # noqa: E402
 import core.sources.m3u8_downloader as m3u8_module  # noqa: E402
@@ -231,6 +232,16 @@ def _reset_card_display() -> Iterator[None]:
     card_display.use(None)
     yield
     card_display.use(None)
+
+
+@pytest.fixture(autouse=True)
+def _pin_os_animations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OS 애니메이션 설정 읽기(`motion_preference.system_animations`)를 켬으로 고정한다 (#645).
+
+    고정하지 않으면 애니메이션을 고르지 않은 테스트의 카드가 그 머신의 OS 설정(러너의 접근성 설정 ·
+    gsettings 유무)을 따른다. OS 읽기는 tests/app/logic/test_motion_preference.py가 갈래마다 잰다.
+    """
+    monkeypatch.setattr(motion_preference, "system_animations", lambda: True)
 
 
 # ============ 전역 choose_temp_dir 격리 (#192) ============

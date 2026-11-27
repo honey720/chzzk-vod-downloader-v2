@@ -358,9 +358,14 @@ class CardThumbnail(QLabel):
         super().__init__(parent)
         self._markShown = False  # 체크 원을 그리는지 — 선택 모드
         self._markPicked = False  # 고른 카드의 원인지 — 채움 · ✓
+        self._markRect = QRect()  # 원 자리(썸네일 좌표) — `setCompact`가 정한다
+        self.setCompact(compact)
+
+    def setCompact(self, compact: bool) -> None:
+        """썸네일 줄이기에 맞춰 체크 원 지름을 정한다 — 설정 창에서 줄이기를 바꾸면 다시 부른다(#645)."""
         inset = theme.METRICS["cardPickMarkInset"]
         side = theme.METRICS["cardPickMarkCompact" if compact else "cardPickMark"]
-        self._markRect = QRect(inset, inset, side, side)  # 원 자리(썸네일 좌표)
+        self._markRect = QRect(inset, inset, side, side)
 
     def hasPickMark(self) -> bool:
         """체크 원을 그리는지 — 선택 모드에서만 참이다."""
@@ -537,18 +542,6 @@ class Ui_ContentItemWidget(object):
         self.thumbnailLabel = CardThumbnail(self.contentFrame, self.compactThumbnail)
         self.thumbnailLabel.setObjectName("thumbnailLabel")
         self.thumbnailLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        if self.compactThumbnail:
-            self.thumbnailLabel.setFixedSize(
-                theme.METRICS["cardThumbCompactWidth"], theme.METRICS["cardThumbCompactHeight"]
-            )
-        else:
-            self.thumbnailLabel.setFixedSize(
-                theme.METRICS["cardThumbWidth"], theme.METRICS["cardThumbHeight"]
-            )
-        thumb_rows = 2 if self.compactThumbnail else 3
-        self.bodyLayout.addWidget(
-            self.thumbnailLabel, 0, 0, thumb_rows, 1, Qt.AlignmentFlag.AlignTop
-        )
 
         # ---- 1줄: 채널 그림 · 채널명 · 날짜 ----
         self.topRow, self.topLayout = _row(
@@ -624,10 +617,7 @@ class Ui_ContentItemWidget(object):
         self.fileSizeLabel.setObjectName("fileSizeLabel")
         self.fileSizeLabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.resolutionLayout.addWidget(self.fileSizeLabel)
-        if self.compactThumbnail:
-            self.bodyLayout.addWidget(self.statusRow, 2, 0, 1, 2)
-        else:
-            self.bodyLayout.addWidget(self.statusRow, 2, 1)
+        self._arrangeThumbnail()
 
         # ---- 카드 버튼 — 1줄 오른쪽 끝에 겹쳐 놓는다(자리는 widget.py::_placeHover) ----
         # 덮개(hoverShade)는 버튼 밑의 1줄 글을 카드 바탕으로 덮는 그림이다 — 마우스를 받지 않아
@@ -680,6 +670,33 @@ class Ui_ContentItemWidget(object):
         self.retranslateUi(ContentItemWidget)
 
         QMetaObject.connectSlotsByName(ContentItemWidget)
+
+    def _arrangeThumbnail(self) -> None:
+        """`compactThumbnail`에 맞춰 썸네일 크기와 격자 자리(썸네일 · 3줄)를 정한다 (#554 · #645).
+
+        만들 때 한 번, 설정 창에서 썸네일 줄이기를 바꾸면 다시 부른다(`setCompactThumbnail`). 이미 격자에 있는
+        두 위젯은 빼고 다시 넣는다 — 걸친 칸 수는 넣을 때만 정해진다.
+        """
+        compact = self.compactThumbnail
+        if compact:
+            self.thumbnailLabel.setFixedSize(
+                theme.METRICS["cardThumbCompactWidth"], theme.METRICS["cardThumbCompactHeight"]
+            )
+        else:
+            self.thumbnailLabel.setFixedSize(
+                theme.METRICS["cardThumbWidth"], theme.METRICS["cardThumbHeight"]
+            )
+        self.thumbnailLabel.setCompact(compact)
+        self.bodyLayout.removeWidget(self.thumbnailLabel)
+        self.bodyLayout.removeWidget(self.statusRow)
+        thumb_rows = 2 if compact else 3
+        self.bodyLayout.addWidget(
+            self.thumbnailLabel, 0, 0, thumb_rows, 1, Qt.AlignmentFlag.AlignTop
+        )
+        if compact:
+            self.bodyLayout.addWidget(self.statusRow, 2, 0, 1, 2)
+        else:
+            self.bodyLayout.addWidget(self.statusRow, 2, 1)
 
     # setupUi
 

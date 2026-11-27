@@ -132,6 +132,13 @@ def _boolean(value: object) -> bool:
     return value
 
 
+def _optional_boolean(value: object) -> bool | None:
+    """bool 또는 null(None)만 통과한다 — null은 「사용자가 고르지 않음」이다(#645)."""
+    if value is None:
+        return None
+    return _boolean(value)
+
+
 def _string(value: object) -> str:
     """문자열이면 그대로. 내용은 보지 않는다."""
     if not isinstance(value, str):
@@ -289,12 +296,15 @@ SCHEMA: tuple[Setting, ...] = (
     # 마지막 창 크기·위치·최대화 상태 (#253). 빈 값 = 기록 없음(첫 실행) → 초기 크기 규칙
     # (app/views/mainWindow.py). 채워지면 {"x","y","width","height","maximized"}.
     Setting("window", {}, _window),
-    # 카드 화면(#554 — 설계 §12.1). 화면 항목은 설정 단계에서 만든다 — 그때까지 키로만 고른다.
-    # 키 이름은 app/viewmodels/card_display.py 한 곳에서 쓴다(설정 단계에서 바꿀 수 있게)
+    # 카드 화면(#554 — 설계 §12.1). 설정 창 화면 탭이 고른다(#645).
+    # 키 이름은 app/viewmodels/card_display.py 한 곳에서 쓴다
     # 썸네일 줄이기 — 참이면 늘 「위 두 줄 옆」(68×38), 거짓이면 늘 큰 썸네일(110×62)
     Setting("cardCompactThumbnail", False, _boolean),
-    # 부드러운 애니메이션(막대 이어 움직임 · 중지 모션) — 거짓이면 바뀜이 바로 일어난다(설계 §8의 12)
-    Setting("animations", True, _boolean),
+    # 완료 · 실패 색조 — 거짓이면 완료 · 실패 카드 면에 색을 칠하지 않는다(#645)
+    Setting("cardStateTint", True, _boolean),
+    # 부드러운 애니메이션(막대 이어 움직임 · 중지 모션) — 거짓이면 바뀜이 바로 일어난다(설계 §8의 12).
+    # null(행 없음 포함) = 사용자가 고르지 않음 → OS 애니메이션 설정을 따른다(#645, 설계 §14.4)
+    Setting("animations", None, _optional_boolean),
 )
 
 

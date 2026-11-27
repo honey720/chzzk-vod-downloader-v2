@@ -47,6 +47,10 @@ ITEM_TABS = {
     "helpButton": "account",
     "logsFolder": "advanced",
     "logsFolderLabel": "advanced",
+    # 화면 탭 체크박스(#645) — 체크박스 글이 라벨이다
+    "cardStateTint": "display",
+    "cardCompactThumbnail": "display",
+    "animations": "display",
 }
 TAB_NAMES = {
     "ko_KR": ["일반", "다운로드", "화면", "계정", "고급"],
@@ -57,6 +61,10 @@ SAVED = {
     "cookies": {"NID_AUT": "aut-saved", "NID_SES": "ses-saved"},
     "afterDownload": "sleep",
     "language": "ko_KR",
+    # 화면 탭(#645) — 표 기본값(켬 · 끔 · null)과 다른 값
+    "cardStateTint": False,
+    "cardCompactThumbnail": True,
+    "animations": False,
 }
 
 
@@ -82,12 +90,21 @@ def _change_language(dialog: SettingDialog) -> None:
     dialog.language.setCurrentIndex(dialog.language.findData("en_US"))
 
 
+def _toggle(key: str) -> Callable[[SettingDialog], None]:
+    """화면 탭 체크박스 하나를 뒤집는 동작(#645)."""
+    return lambda dialog: dialog.displayChecks[key].toggle()
+
+
 #: 칸 → (값을 바꾸는 함수, 그 칸이 쓰는 키, 바꾼 뒤 저장될 값)
 FIELDS: dict[str, tuple[Callable[[SettingDialog], None], str, object]] = {
     "nidaut": (_change_nidaut, "cookies", {"NID_AUT": "aut-typed", "NID_SES": "ses-saved"}),
     "nidses": (_change_nidses, "cookies", {"NID_AUT": "aut-saved", "NID_SES": "ses-typed"}),
     "afterDownload": (_change_after_download, "afterDownload", "shutdown"),
     "language": (_change_language, "language", "en_US"),
+    # 화면 탭(#645) — `SAVED`의 값을 뒤집은 값
+    "cardStateTint": (_toggle("cardStateTint"), "cardStateTint", True),
+    "cardCompactThumbnail": (_toggle("cardCompactThumbnail"), "cardCompactThumbnail", False),
+    "animations": (_toggle("animations"), "animations", True),
 }
 
 
@@ -95,6 +112,8 @@ def _shown_value(dialog: SettingDialog, key: str) -> object:
     """설정 창 칸이 보이는 값 — 키마다 저장할 꼴로."""
     if key == "cookies":
         return {"NID_AUT": dialog.nidaut.text(), "NID_SES": dialog.nidses.text()}
+    if key in dialog.displayChecks:
+        return dialog.displayChecks[key].isChecked()
     return getattr(dialog, key).currentData()
 
 
