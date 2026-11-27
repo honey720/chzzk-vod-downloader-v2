@@ -486,6 +486,21 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """키보드 초점이 이 카드에 있는지 — focus ring · 카드 버튼을 보이는 때."""
         return self._keyFocus
 
+    def heldKeyFocus(self) -> bool:
+        """이 카드가 쥔 초점이 키보드 초점인지 — 창이 비활성이면 비활성이 되기 전의 종류다 (#658)."""
+        return self._keyFocus or bool(self._focusBeforeLeaving)
+
+    def takeFocus(self, keyboard: bool) -> None:
+        """지워지는 카드의 초점을 그 종류 그대로 넘겨받는다 (#658).
+
+        창이 활성이면 바로 초점 이벤트가 온다. 확인 대화상자가 떠 있어 창이 비활성이면 창의 초점 위젯만
+        바뀌고, 창이 다시 활성이 될 때 창 활성 까닭으로 초점이 온다 — 그때도 같은 종류가 되게 창을 떠나기 전
+        종류로 적어 둔다.
+        """
+        self._focusBeforeLeaving = keyboard
+        reason = Qt.FocusReason.OtherFocusReason if keyboard else Qt.FocusReason.MouseFocusReason
+        self.setFocus(reason)
+
     def _setKeyFocus(self, on: bool) -> None:
         """키보드 초점을 켜고 끈다 — 카드 버튼을 맞추고 목록에 알린다 (#550 · #561).
 
