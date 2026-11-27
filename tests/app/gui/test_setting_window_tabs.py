@@ -26,6 +26,9 @@ from tests.qt_platform import NATIVE_SWITCH
 from tests.support import os_key_input
 from tests.support.settings_db import read_rows, read_settings, write_rows
 
+# 모든 테스트가 `opened`로 설정 창을 활성으로 만든다 — 실제 화면 병렬 실행에서는 건너뛴다(#523)
+pytestmark = pytest.mark.os_window
+
 ACTIVE_WAIT_MS = (
     3000  # 창 활성 · 확인 대화상자를 기다리는 한도(ms) — X11 · xvfb는 활성이 비동기로 온다
 )
@@ -249,7 +252,6 @@ REAL_TAB_KEYS = [
 ]
 
 
-@pytest.mark.os_window
 @pytest.mark.skipif(
     os.environ.get(NATIVE_SWITCH) != "1" or not os_key_input.SUPPORTED,
     reason="OS 키 입력은 Windows · macOS 실제 화면에서만 낸다",
