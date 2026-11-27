@@ -1,6 +1,6 @@
-"""설정 창을 연 채 다른 곳이 바꾼 설정을 설정 창의 OK가 되돌리지 않는지.
+"""설정 창을 연 채 다른 곳이 바꾼 설정을 설정 창의 저장이 되돌리지 않는지.
 
-설정 창은 열 때 설정을 읽어 둔다. OK가 읽어 둔 설정 전체를 저장하면, 창을 연 뒤 메인 창이
+설정 창은 열 때 설정을 읽어 둔다. 저장이 읽어 둔 설정 전체를 저장하면, 창을 연 뒤 메인 창이
 바꾼 키(정렬 · 최근 위치 · 즐겨찾기)가 창을 열 때의 값으로 돌아간다. 설정 메뉴 단계에서는 설정 화면을
 연 채 정렬 · 저장 위치를 바꿀 수 있다 — 그 상황을 설정 창을 모달 없이 띄워 만든다.
 
@@ -57,10 +57,17 @@ def open_dialog(window: VodDownloader, qtbot: QtBot) -> Iterator[SettingDialog]:
     QApplication.processEvents()
 
 
-def _press_ok(dialog: SettingDialog) -> None:
-    """설정 창의 OK 버튼을 누른다."""
-    dialog.dialogButtonBox.button(QDialogButtonBox.StandardButton.Ok).click()
+def _press_save(dialog: SettingDialog) -> None:
+    """쿠키 한 칸을 바꿔 저장을 켜고 저장 버튼을 누른다 — 저장은 바뀐 값이 있을 때만 켜진다(#644).
+
+    누른 뒤 바꾼 쿠키가 DB에 있는지 본다 — 저장이 실제로 돌았다는 전제다.
+    """
+    dialog.nidaut.setText("aut-after-open")
+    save = dialog.dialogButtonBox.button(QDialogButtonBox.StandardButton.Save)
+    assert save.isEnabled(), "전제: 값을 바꾸면 저장이 켜진다"
+    save.click()
     QApplication.processEvents()
+    assert read_settings()["cookies"]["NID_AUT"] == "aut-after-open", "전제: 저장이 돌았다"
 
 
 def _pick_sort(win: VodDownloader, by: str, direction: str) -> None:
@@ -75,44 +82,44 @@ def _pick_sort(win: VodDownloader, by: str, direction: str) -> None:
     QApplication.processEvents()
 
 
-def test_ok_keeps_a_sort_chosen_after_the_dialog_opened(
+def test_save_keeps_a_sort_chosen_after_the_dialog_opened(
     window: VodDownloader, open_dialog: SettingDialog
 ) -> None:
-    """설정 창을 연 뒤 고른 정렬은 설정 창의 OK 뒤에도 남아 있어야 한다.
+    """설정 창을 연 뒤 고른 정렬은 설정 창의 저장 뒤에도 남아 있어야 한다.
 
-    설정 창 열림 → 정렬 메뉴에서 채널 · 내림차순 → 설정 창 OK -> 저장된 sortOrder "channel:desc"
+    설정 창 열림 → 정렬 메뉴에서 채널 · 내림차순 → 쿠키 고침 · 설정 창 저장 -> 저장된 sortOrder "channel:desc"
     """
     _pick_sort(window, "channel", "desc")
     assert read_settings()["sortOrder"] == "channel:desc", "전제: 정렬을 고르면 저장된다"
-    _press_ok(open_dialog)
+    _press_save(open_dialog)
     assert read_settings()["sortOrder"] == "channel:desc"
 
 
-def test_ok_keeps_a_location_chosen_after_the_dialog_opened(
+def test_save_keeps_a_location_chosen_after_the_dialog_opened(
     window: VodDownloader, open_dialog: SettingDialog, tmp_path: Path
 ) -> None:
-    """설정 창을 연 뒤 고른 저장 위치는 설정 창의 OK 뒤에도 최근 위치에 남아 있어야 한다.
+    """설정 창을 연 뒤 고른 저장 위치는 설정 창의 저장 뒤에도 최근 위치에 남아 있어야 한다.
 
-    설정 창 열림 → 저장 위치 새 폴더 고름 → 설정 창 OK -> 저장된 recentPaths 맨 앞이 새 폴더
+    설정 창 열림 → 저장 위치 새 폴더 고름 → 쿠키 고침 · 설정 창 저장 -> 저장된 recentPaths 맨 앞이 새 폴더
     """
     chosen = tmp_path / "새 폴더"
     chosen.mkdir()
     assert window.saveLocations.choose(str(chosen))
     first = read_settings()["recentPaths"][0]
     assert Path(first) == chosen, "전제: 고른 위치가 최근 위치 맨 앞에 저장된다"
-    _press_ok(open_dialog)
+    _press_save(open_dialog)
     assert read_settings()["recentPaths"][0] == first
 
 
-def test_ok_keeps_a_favorite_added_after_the_dialog_opened(
+def test_save_keeps_a_favorite_added_after_the_dialog_opened(
     window: VodDownloader, open_dialog: SettingDialog, tmp_path: Path
 ) -> None:
-    """설정 창을 연 뒤 더한 즐겨찾기는 설정 창의 OK 뒤에도 남아 있어야 한다.
+    """설정 창을 연 뒤 더한 즐겨찾기는 설정 창의 저장 뒤에도 남아 있어야 한다.
 
-    설정 창 열림 → 즐겨찾기 "작업"(임시 폴더) 더함 → 설정 창 OK -> 저장된 favoritePaths에 "작업" 하나
+    설정 창 열림 → 즐겨찾기 "작업"(임시 폴더) 더함 → 쿠키 고침 · 설정 창 저장 -> 저장된 favoritePaths에 "작업" 하나
     """
     assert window.saveLocations.add_favorite("작업", str(tmp_path)) == ""
     saved = read_settings()["favoritePaths"]
     assert [entry["name"] for entry in saved] == ["작업"], "전제: 더한 즐겨찾기가 저장된다"
-    _press_ok(open_dialog)
+    _press_save(open_dialog)
     assert read_settings()["favoritePaths"] == saved

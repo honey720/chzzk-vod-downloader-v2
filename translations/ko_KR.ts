@@ -647,6 +647,22 @@ Check your connection and cookies, then open this window again.</source>
         <translation>도움말</translation>
     </message>
     <message>
+        <source>General</source>
+        <translation>일반</translation>
+    </message>
+    <message>
+        <source>Display</source>
+        <translation>화면</translation>
+    </message>
+    <message>
+        <source>Account</source>
+        <translation>계정</translation>
+    </message>
+    <message>
+        <source>Advanced</source>
+        <translation>고급</translation>
+    </message>
+    <message>
         <source>none</source>
         <translation>없음</translation>
     </message>
@@ -657,6 +673,22 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>shutdown</source>
         <translation>시스템 종료</translation>
+    </message>
+    <message>
+        <source>Save the changed settings?</source>
+        <translation>바뀐 설정을 저장할까요?</translation>
+    </message>
+    <message>
+        <source>Save</source>
+        <translation>저장</translation>
+    </message>
+    <message>
+        <source>Don&apos;t Save</source>
+        <translation>저장 안 함</translation>
+    </message>
+    <message>
+        <source>Go back</source>
+        <translation>돌아가기</translation>
     </message>
     <message>
         <source>Warning</source>
@@ -683,10 +715,6 @@ Check your connection and cookies, then open this window again.</source>
         <translation>도움말</translation>
     </message>
     <message>
-        <source>Cookies</source>
-        <translation>쿠키</translation>
-    </message>
-    <message>
         <source>NID_AUT</source>
         <translation>NID_AUT</translation>
     </message>
@@ -701,10 +729,6 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>After Download</source>
         <translation>다운로드 후</translation>
-    </message>
-    <message>
-        <source>Common</source>
-        <translation>일반</translation>
     </message>
 </context>
 <context>
