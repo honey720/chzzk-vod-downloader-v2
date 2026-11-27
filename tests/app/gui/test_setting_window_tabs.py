@@ -278,6 +278,18 @@ def _focus_name() -> str:
     return "" if focused is None else focused.objectName()
 
 
+def _open_settled(opened: Callable[[], SettingDialog], qtbot: QtBot) -> SettingDialog:
+    """설정 창을 열고 창 열림 구간이 끝날 때까지 기다린다 — 그 뒤 받은 포커스는 받은 까닭을 따른다.
+
+    창 열림 구간(`KeyFocusMarker` — 보임부터 그 이벤트 루프 턴 끝까지)에 받은 포커스는 창을 연 입력의
+    종류를 따른다. 창이 이미 노출 · 활성이면 `opened`가 이벤트 루프를 돌리지 않고 돌아와(macOS 실제 화면)
+    첫 키가 그 구간 안에서 처리된다. 사람은 창이 보이는 그 턴 안에 키를 누를 수 없다.
+    """
+    dialog = opened()
+    qtbot.waitUntil(lambda: not dialog._keyFocus._opening, timeout=ACTIVE_WAIT_MS)
+    return dialog
+
+
 #: 탭 버튼 포커스에서 누른 키 → (앞서 누를 키들, 누를 키, 넘어간 탭). 창은 일반 탭 버튼 포커스로 열린다
 TAB_BUTTON_SWITCHES = {
     "next": ([], _NEXT_TAB, "download"),
@@ -289,7 +301,7 @@ TAB_BUTTON_SWITCHES = {
 
 @pytest.mark.parametrize("case", sorted(TAB_BUTTON_SWITCHES))
 def test_tab_switch_key_on_a_tab_button_moves_keyboard_focus_to_the_new_tab_button(
-    opened: Callable[[], SettingDialog], case: str
+    opened: Callable[[], SettingDialog], qtbot: QtBot, case: str
 ) -> None:
     """탭 버튼에 포커스가 있을 때 탭 넘기기 키를 누르면 포커스가 새 탭 버튼으로 가고 focus ring이 그려져야 한다(#659).
 
@@ -297,7 +309,7 @@ def test_tab_switch_key_on_a_tab_button_moves_keyboard_focus_to_the_new_tab_butt
     -> currentTab() == 넘어간 탭, 포커스 = 그 탭 버튼, keyFocus True
     """
     before, modifiers, expected = TAB_BUTTON_SWITCHES[case]
-    dialog = opened()
+    dialog = _open_settled(opened, qtbot)
     for earlier in before:
         _key(earlier)
     assert QApplication.focusWidget() in dialog.tabs.values(), "전제: 탭 버튼 포커스"
@@ -334,7 +346,7 @@ FIELD_SWITCHES = {
 
 @pytest.mark.parametrize("case", sorted(FIELD_SWITCHES))
 def test_tab_switch_key_in_a_field_moves_focus_to_the_new_tab(
-    opened: Callable[[], SettingDialog], case: str
+    opened: Callable[[], SettingDialog], qtbot: QtBot, case: str
 ) -> None:
     """탭 안 칸에 포커스가 있을 때 다음 탭 키를 누르면 새 탭의 첫 Tab 위젯(칸이 없으면 탭 버튼)으로 가야 한다(#659).
 
@@ -342,7 +354,7 @@ def test_tab_switch_key_in_a_field_moves_focus_to_the_new_tab(
     -> currentTab() == 넘어간 탭, 포커스 = 정한 위젯(보임), 버튼이면 keyFocus True
     """
     keys, field, expected_tab, expected_focus = FIELD_SWITCHES[case]
-    dialog = opened()
+    dialog = _open_settled(opened, qtbot)
     for earlier in keys:
         _key(earlier)
     assert _focus_name() == field, "전제: 칸 포커스"
@@ -356,14 +368,14 @@ def test_tab_switch_key_in_a_field_moves_focus_to_the_new_tab(
 
 
 def test_tab_switch_key_skips_controls_tab_does_not_stop_at(
-    opened: Callable[[], SettingDialog],
+    opened: Callable[[], SettingDialog], qtbot: QtBot
 ) -> None:
     """Tab이 글 칸에만 가는 규칙에서 Tab이 멈추지 않는 위젯만 있는 탭으로 넘기면 포커스가 탭 버튼으로 가야 한다(#659).
 
     tabFocusBehavior = TabFocusTextControls(macOS 「키보드 탐색」 꺼짐), logsFolder 포커스 정책 = TabFocus
     계정 탭 nidaut 포커스에서 Control+Tab -> 고급 탭, 포커스 = 고급 탭 버튼
     """
-    dialog = opened()
+    dialog = _open_settled(opened, qtbot)
     dialog.logsFolder.setFocusPolicy(Qt.FocusPolicy.TabFocus)  # Tab만 받는 위젯 — macOS 단추 정책
     for earlier in [_NEXT_TAB] * 3 + [Qt.KeyboardModifier.NoModifier]:
         _key(earlier)
@@ -482,7 +494,7 @@ def test_real_tab_switch_keys_move_keyboard_focus_to_the_new_tab(
     -> 포커스 위젯 objectName == focus, keyFocus True
     """
     _, before, modifiers, key, focus = REAL_FOCUS_KEYS[case]
-    dialog = opened()
+    dialog = _open_settled(opened, qtbot)
     hwnd = int(dialog.winId())
     for earlier_modifiers, earlier_key in before:
         os_key_input.press(
