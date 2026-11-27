@@ -51,6 +51,9 @@ _APPLIED_OS: dict[str, bool | None] = {"value": None}
 def animations_setting(os_value: bool | None = None) -> bool:
     """지금 쓸 애니메이션 켬 여부를 돌려준다 — 사용자가 고른 값, 고르지 않았으면 OS 설정.
 
+    값을 셈하기만 하고 카드에 건 OS 값(`os_value_changed`의 기준)은 바꾸지 않는다 — 설정 창이 처음 값을
+    정하려고 부르기 때문이다. 기준은 카드가 쓰는 값을 정하는 `refresh`만 적는다(#645).
+
     Args:
         os_value: 이미 읽은 OS 값. 주면 OS를 다시 읽지 않는다 — 비교한 값과 건 값이 어긋나지 않게
             (None이면 여기서 읽는다)
@@ -59,7 +62,6 @@ def animations_setting(os_value: bool | None = None) -> bool:
     if chosen is not None:
         return bool(chosen)
     value = motion_preference.system_animations() if os_value is None else os_value
-    _APPLIED_OS["value"] = value
     if _LOGGED["os"] != value:
         _LOGGED["os"] = value
         logger.info("애니메이션: OS 설정을 따름(%s)", "켬" if value else "끔")
@@ -93,14 +95,18 @@ def follows_os() -> bool:
 def refresh(os_value: bool | None = None) -> CardDisplay:
     """설정에서 다시 읽어 들고 있는 값을 바꾼다. 바꾼 값을 돌려준다.
 
-    `os_value`는 `animations_setting`에 그대로 넘긴다.
+    OS를 따르는 중이면 OS 값을 한 번 읽어(`os_value`를 주면 그 값) 카드에 건 OS 값으로 적는다.
     """
+    following = follows_os()
+    if following and os_value is None:
+        os_value = motion_preference.system_animations()
     display = CardDisplay(
         compact_thumbnail=bool(settings.load_setting(COMPACT_THUMBNAIL_KEY)),
         animations=animations_setting(os_value),
         state_tint=bool(settings.load_setting(STATE_TINT_KEY)),
     )
     _STATE["current"] = display
+    _APPLIED_OS["value"] = os_value if following else None
     return display
 
 

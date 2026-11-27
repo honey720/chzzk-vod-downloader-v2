@@ -365,6 +365,25 @@ def test_reactivating_the_app_compares_with_the_os_value_on_the_cards(
     assert calls == [1, 1]
 
 
+def test_opening_the_setting_dialog_keeps_the_os_value_on_the_cards(
+    window: VodDownloader, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """카드에 OS 켬을 건 뒤 OS가 끔으로 바뀐 채 설정 창을 열었다 닫아도 앱이 다시 활성이 되면 끔이어야 한다.
+
+    행 없음, current()(OS 켬) → OS 끔 → SettingDialog 만들고 취소 → 앱 활성 -> current().animations 거짓
+    """
+    card_display.use(None)
+    assert card_display.current().animations is True, "전제: 카드에 OS 켬을 건다"
+    monkeypatch.setattr(motion_preference, "system_animations", lambda: False)
+    dialog = SettingDialog()
+    qtbot.addWidget(dialog)
+    assert dialog.displayChecks[card_display.ANIMATIONS_KEY].isChecked() is False, "전제: OS 끔"
+    dialog.reject()
+    assert card_display.current().animations is True, "전제: 창을 열고 닫아도 카드는 그대로"
+    _activate_app()
+    assert card_display.current().animations is False
+
+
 def test_reactivating_the_app_keeps_the_chosen_value(
     window: VodDownloader, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -216,3 +216,17 @@ def test_os_value_changed_after_use_records_now_and_is_false(
     card_display.use(card_display.CardDisplay(animations=False))
     assert card_display.os_value_changed(False) is False
     assert card_display.os_value_changed(True) is True
+
+
+def test_animations_setting_does_not_move_the_os_value_on_the_cards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """animations_setting을 불러도 카드에 건 OS 값은 그대로여야 한다.
+
+    OS 켬으로 refresh → OS 끔 → animations_setting() 거짓 → os_value_changed(False) 참
+    """
+    _os_animations(monkeypatch, True)
+    card_display.refresh()
+    _os_animations(monkeypatch, False)
+    assert card_display.animations_setting() is False
+    assert card_display.os_value_changed(False) is True
