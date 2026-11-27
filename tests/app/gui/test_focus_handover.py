@@ -426,6 +426,32 @@ class TestDeletedCardHandsFocusOn:
         assert win.listView.focusRing().target() is running
         assert _ring_on_card(win)
 
+    def test_next_card_takes_the_focus_after_deleting_cards_before_it(
+        self, downloading, qtbot
+    ) -> None:
+        """초점 카드와 그 앞 카드들을 함께 지우면 초점 위젯이 지운 자리 다음 카드여야 한다.
+
+        카드 6장(첫 카드 받는 중), 선택 모드 · 둘째 ~ 다섯째(대기) 고름 · 첫 카드에 Tab 초점 · ↓ 네 번으로
+        다섯째 카드 -> Delete 키(확인 대화상자 없음) -> 카드 2장, 초점 위젯 = 여섯째 카드, focus ring이 여섯째 카드
+        """
+        win, running = downloading(6)
+        view = win.listView
+        cards = [view.widgetFor(win.contentManager.model.itemAt(row)) for row in range(6)]
+        view.setSelecting(True)
+        for card in cards[1:5]:
+            view.cardPicked(card, Qt.KeyboardModifier.NoModifier)
+        assert len(view.selectedItems()) == 4, "전제: 넷을 골랐다"
+        _tab_to(win, running, qtbot)
+        for _ in range(4):
+            QTest.keyClick(win.windowHandle(), Qt.Key.Key_Down)
+        qtbot.waitUntil(cards[4].hasFocus, timeout=3000)
+        QTest.keyClick(win.windowHandle(), Qt.Key.Key_Delete)
+        _pump()
+        assert win.contentManager.model.rowCount() == 2, "전제: 카드가 지워졌다"
+        assert QApplication.focusWidget() is cards[5]
+        assert view.focusRing().target() is cards[5]
+        assert _ring_on_card(win)
+
 
 class TestBarControlHandover:
     """바 컨트롤 사이에서 저절로 넘어간 초점도 같은 판단을 따라야 한다(`KeyFocusMarker`)."""

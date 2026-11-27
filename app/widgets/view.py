@@ -911,6 +911,10 @@ class ContentListView(QScrollArea):
                 self._newCards.remove(widget)
             if self._ring.target() is widget:
                 self._ring.follow(None)  # 지워질 카드에서 뗀다 — 초점이 옮겨 가면 다시 따라간다
+            held = self._heldFocus
+            if held is not None and self._layout.indexOf(widget) < held[2]:
+                # 여러 장 지우기에서 초점 카드 앞의 카드가 빠지면 적어 둔 자리도 당긴다(#658)
+                self._heldFocus = (held[0], held[1], held[2] - 1)
             self._layout.removeWidget(widget)
             kept = getattr(self._model, "isKept", None)
             if kept is not None and kept(item):
