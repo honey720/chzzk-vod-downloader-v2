@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtCore import (
     QEvent,
+    QKeyCombination,
     QMetaObject,
     QSize,
     Qt,
@@ -52,6 +53,24 @@ TAB_KEYS = (
 CLOSE_SAVE = "save"  # 닫기 확인 — 저장하고 닫는다
 CLOSE_DISCARD = "discard"  # 닫기 확인 — 저장하지 않고 닫는다
 CLOSE_BACK = "back"  # 닫기 확인 — 닫지 않고 설정 창으로 돌아간다(기본 · Esc)
+
+
+def _tab_switch_keys(standard: QKeySequence.StandardKey) -> list[QKeySequence]:
+    """탭 넘기기 표준 키의 OS 키 전부에, Shift+Backtab 키마다 같은 Shift+Tab 키를 더해 돌려준다.
+
+    Qt 표준 키 PreviousChild는 `Ctrl+Shift+Backtab`이다. 그런데 실제 키보드로 Ctrl+Shift+Tab을 누르면
+    단축키 후보는 OS 키 배치(Windows · macOS 키 매퍼)가 물리 키 Tab으로 만든 `Ctrl+Shift+Tab`이라
+    Backtab 키와 맞지 않는다 — 앞 탭 키가 듣지 않았다(오너 실기 2026-11-27, #644). `QKeySequence(표준 키)`는
+    첫 키만 담으므로 `keyBindings`로 전부 받는다.
+    """
+    keys = QKeySequence.keyBindings(standard)
+    for key in list(keys):
+        combo = key[0]
+        if combo.key() == Qt.Key.Key_Backtab:
+            tab = QKeySequence(QKeyCombination(combo.keyboardModifiers(), Qt.Key.Key_Tab))
+            if tab not in keys:
+                keys.append(tab)
+    return keys
 
 
 class _FormLabel(QLabel):
@@ -119,16 +138,17 @@ def _pin_rows_to_top(grid: QGridLayout) -> None:
 
 
 class SettingDialog(QDialog):
-    """설정 창 — 탭 다섯 · 바뀐 값이 있을 때만 켜지는 저장 · 취소 · 닫기 확인 (#644).
+    """설정 창 — 탭 다섯 · 바뀐 값이 있을 때만 켜지는 저장 · 늘 켜진 취소 · 닫기 확인 (#644).
 
     탭 줄은 헤더바 상태 필터 칩과 같은 부품(`FilterChip`, `role="filter"`)이고 모양은 전역 QSS
     `QFrame#settingsTabs`가 칠한다. 탭을 누르면 아래 쪽(`QStackedWidget`)이 바뀐다. 항목 자리:
     일반 = 언어 · 다운로드 후 동작, 계정 = 쿠키 두 칸 · 도움말, 고급 = 로그 폴더. 다운로드 · 화면 탭은
     뒤따르는 PR이 항목을 더할 자리다.
 
-    저장 · 취소: 창을 열 때 칸 값을 키마다 적어 두고(`_initial`), 지금 칸 값과 다른 키가 있을 때만 두
-    버튼을 켠다. 저장(버튼 · Ctrl+S · `accept`)은 바뀐 키만 `update_settings`로 한 번에 쓰고 닫는다 —
-    창을 연 뒤 다른 곳이 바꾼 키를 되돌리지 않는다(#519). 취소(버튼 · Esc · `reject`)는 아무것도 쓰지
+    저장 · 취소: 창을 열 때 칸 값을 키마다 적어 두고(`_initial`), 지금 칸 값과 다른 키가 있을 때만 저장을
+    켠다. 취소는 늘 켜져 있다 — 바뀐 값이 없으면 그냥 닫고, 있으면 버리고 닫는다(오너 2026-11-27).
+    저장(버튼 · Ctrl+S · `accept`)은 바뀐 키만 `update_settings`로 한 번에 쓰고 닫는다 — 창을 연 뒤
+    다른 곳이 바꾼 키를 되돌리지 않는다(#519). 취소(버튼 · Esc · `reject`)는 아무것도 쓰지
     않고 닫는다. 바뀐 값이 있는 채로 창을 닫으면(제목 줄 ✕ · `close`) 확인 대화상자를 띄운다 — 저장 /
     저장 안 함 / 돌아가기, 기본은 돌아가기.
 
@@ -284,12 +304,12 @@ class SettingDialog(QDialog):
         # Ctrl+S 저장(macOS Cmd+S). 바뀐 값이 없으면 저장 버튼처럼 아무 일도 하지 않는다
         self.saveShortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.Save), dialog)
         self.saveShortcut.activated.connect(self._onSaveShortcut)
-        # Ctrl+Tab · Ctrl+Shift+Tab 탭 넘기기 — Qt 탭 위젯과 같은 키
-        self.nextTabShortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.NextChild), dialog)
+        # Ctrl+Tab · Ctrl+Shift+Tab 탭 넘기기 — Qt 탭 위젯과 같은 키(OS 표준 키 전부)
+        self.nextTabShortcut = QShortcut(dialog)
+        self.nextTabShortcut.setKeys(_tab_switch_keys(QKeySequence.StandardKey.NextChild))
         self.nextTabShortcut.activated.connect(self._nextTab)
-        self.prevTabShortcut = QShortcut(
-            QKeySequence(QKeySequence.StandardKey.PreviousChild), dialog
-        )
+        self.prevTabShortcut = QShortcut(dialog)
+        self.prevTabShortcut.setKeys(_tab_switch_keys(QKeySequence.StandardKey.PreviousChild))
         self.prevTabShortcut.activated.connect(self._previousTab)
         QMetaObject.connectSlotsByName(dialog)
         self.showTab(0)
@@ -392,17 +412,15 @@ class SettingDialog(QDialog):
         return bool(self.changes())
 
     def _connectChanges(self) -> None:
-        """칸 값이 바뀔 때마다 저장 · 취소 켜짐을 다시 맞춘다."""
+        """칸 값이 바뀔 때마다 저장 켜짐을 다시 맞춘다."""
         self.nidaut.textChanged.connect(self._refreshButtons)
         self.nidses.textChanged.connect(self._refreshButtons)
         self.afterDownload.currentIndexChanged.connect(self._refreshButtons)
         self.language.currentIndexChanged.connect(self._refreshButtons)
 
     def _refreshButtons(self) -> None:
-        """바뀐 값이 있을 때만 저장 · 취소를 켠다."""
-        dirty = self.isDirty()
-        self.saveButton.setEnabled(dirty)
-        self.cancelButton.setEnabled(dirty)
+        """바뀐 값이 있을 때만 저장을 켠다 — 취소는 늘 켜져 있다(오너 2026-11-27, #644)."""
+        self.saveButton.setEnabled(self.isDirty())
 
     def _onSaveShortcut(self) -> None:
         """Ctrl+S — 바뀐 값이 있으면 저장하고 닫는다."""

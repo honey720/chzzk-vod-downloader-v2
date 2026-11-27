@@ -5,6 +5,8 @@
 """
 
 import json
+import os
+import sys
 from collections.abc import Callable, Iterator
 
 import pytest
@@ -19,6 +21,8 @@ import app.theme as theme
 import CVDv2 as main_module
 from app.views.dialog import SettingDialog
 from tests.app.gui.card_helpers import hold_style
+from tests.qt_platform import NATIVE_SWITCH
+from tests.support import os_key_input
 from tests.support.settings_db import read_rows, read_settings, write_rows
 
 ACTIVE_WAIT_MS = (
@@ -211,6 +215,69 @@ def test_ctrl_tab_moves_to_the_next_and_ctrl_shift_tab_to_the_previous_tab(
     assert dialog.currentTab() == "advanced"
 
 
+#: 물리 Control 키의 Qt 수정자 — macOS에서 Qt Ctrl은 Command 키이고 Control 키는 Meta다
+_PHYSICAL_CTRL = (
+    Qt.KeyboardModifier.MetaModifier
+    if sys.platform == "darwin"
+    else Qt.KeyboardModifier.ControlModifier
+)
+
+
+def test_ctrl_shift_tab_as_the_tab_key_moves_to_the_previous_tab(
+    opened: Callable[[], SettingDialog],
+) -> None:
+    """물리 키 Tab에 Control · Shift를 얹은 키를 받으면 앞 탭으로 넘겨야 한다(#644).
+
+    키 = Key_Tab + 물리 Control + Shift(OS 키 매퍼가 실제 Ctrl+Shift+Tab에서 만드는 단축키 후보)
+    다운로드 탭에서 -> 일반
+    """
+    dialog = opened()
+    dialog.showTab(TAB_ORDER.index("download"))
+    QTest.keyClick(dialog, Qt.Key.Key_Tab, _PHYSICAL_CTRL | Qt.KeyboardModifier.ShiftModifier)
+    assert dialog.currentTab() == "general"
+
+
+#: 실제 키 입력 경우 — (OS, 수정자, 키, 다운로드 탭에서 누른 뒤 탭). 물리 키 이름(`os_key_input`)
+REAL_TAB_KEYS = [
+    ("win32", [os_key_input.CTRL], "tab", "display"),
+    ("win32", [os_key_input.CTRL, os_key_input.SHIFT], "tab", "general"),
+    ("darwin", [os_key_input.CTRL], "tab", "display"),
+    ("darwin", [os_key_input.CTRL, os_key_input.SHIFT], "tab", "general"),
+    ("darwin", [os_key_input.CMD, os_key_input.SHIFT], "]", "display"),
+    ("darwin", [os_key_input.CMD, os_key_input.SHIFT], "[", "general"),
+]
+
+
+@pytest.mark.os_window
+@pytest.mark.skipif(
+    os.environ.get(NATIVE_SWITCH) != "1" or not os_key_input.SUPPORTED,
+    reason="OS 키 입력은 Windows · macOS 실제 화면에서만 낸다",
+)
+@pytest.mark.parametrize(
+    ("platform", "modifiers", "key", "expected"),
+    [case for case in REAL_TAB_KEYS if case[0] == sys.platform],
+    ids=lambda value: "+".join(value) if isinstance(value, list) else str(value),
+)
+def test_real_tab_switch_keys_move_between_tabs(
+    opened: Callable[[], SettingDialog],
+    qtbot: QtBot,
+    platform: str,
+    modifiers: list[str],
+    key: str,
+    expected: str,
+) -> None:
+    """OS 입력 경로로 누른 탭 넘기기 키는 `REAL_TAB_KEYS`의 탭으로 넘겨야 한다(#644).
+
+    다운로드 탭 · 초점은 다운로드 탭 버튼 → OS 키 입력(Windows SendInput · macOS CGEventPostToPid)
+    -> currentTab() == expected
+    """
+    dialog = opened()
+    dialog.showTab(TAB_ORDER.index("download"))
+    dialog.tabs["download"].setFocus()
+    os_key_input.press(int(dialog.winId()), modifiers, key)
+    qtbot.waitUntil(lambda: dialog.currentTab() == expected, timeout=ACTIVE_WAIT_MS)
+
+
 @pytest.mark.parametrize("name", sorted(ITEM_TABS))
 def test_each_moved_item_sits_on_its_tab(opened: Callable[[], SettingDialog], name: str) -> None:
     """옮긴 항목은 정한 탭 쪽 안에 있어야 하고, 그 탭을 고르면 보여야 한다.
@@ -245,21 +312,23 @@ def test_every_widget_shows_tips_in_the_bubble(opened: Callable[[], SettingDialo
 # ================================================================ 저장 · 취소 켜짐
 
 
-def test_save_and_cancel_are_off_when_nothing_changed(opened: Callable[[], SettingDialog]) -> None:
-    """칸을 바꾸지 않으면 저장 · 취소가 꺼져 있어야 한다.
+def test_save_is_off_and_cancel_on_when_nothing_changed(
+    opened: Callable[[], SettingDialog],
+) -> None:
+    """칸을 바꾸지 않으면 저장은 꺼지고 취소는 켜져 있어야 한다(오너 2026-11-27).
 
-    `SAVED`로 연다 -> 저장 · 취소 isEnabled() 거짓
+    `SAVED`로 연다 -> 저장 isEnabled() 거짓, 취소 isEnabled() 참
     """
     dialog = opened()
     assert not _save(dialog).isEnabled()
-    assert not _cancel(dialog).isEnabled()
+    assert _cancel(dialog).isEnabled()
 
 
 @pytest.mark.parametrize("field", sorted(FIELDS))
-def test_changing_a_field_turns_save_and_cancel_on(
+def test_changing_a_field_turns_save_on_and_keeps_cancel_on(
     opened: Callable[[], SettingDialog], field: str
 ) -> None:
-    """칸 하나를 바꾸면 저장 · 취소가 켜져야 한다.
+    """칸 하나를 바꾸면 저장이 켜지고 취소는 켜진 채여야 한다.
 
     칸 값을 `FIELDS`의 값으로 -> 저장 · 취소 isEnabled() 참
     """
@@ -269,12 +338,12 @@ def test_changing_a_field_turns_save_and_cancel_on(
     assert _cancel(dialog).isEnabled()
 
 
-def test_typing_back_the_saved_value_turns_save_and_cancel_off(
+def test_typing_back_the_saved_value_turns_save_off_and_keeps_cancel_on(
     opened: Callable[[], SettingDialog],
 ) -> None:
-    """바꾼 칸을 연 때의 값으로 되돌리면 저장 · 취소가 다시 꺼져야 한다.
+    """바꾼 칸을 연 때의 값으로 되돌리면 저장은 다시 꺼지고 취소는 켜진 채여야 한다.
 
-    NID_AUT "aut-typed" → "aut-saved", 다운로드 후 동작 shutdown → sleep -> 저장 · 취소 꺼짐
+    NID_AUT "aut-typed" → "aut-saved", 다운로드 후 동작 shutdown → sleep -> 저장 꺼짐, 취소 켜짐
     """
     dialog = opened()
     _change_nidaut(dialog)
@@ -282,7 +351,7 @@ def test_typing_back_the_saved_value_turns_save_and_cancel_off(
     dialog.nidaut.setText("aut-saved")
     dialog.afterDownload.setCurrentIndex(dialog.afterDownload.findData("sleep"))
     assert not _save(dialog).isEnabled()
-    assert not _cancel(dialog).isEnabled()
+    assert _cancel(dialog).isEnabled()
 
 
 # ================================================================ 저장
@@ -371,6 +440,23 @@ def test_cancel_writes_nothing_and_the_window_opens_again_on_the_saved_value(
     assert read_rows() == before
     assert not dialog.isVisible()
     assert _shown_value(opened(), key) == SAVED[key]
+
+
+def test_cancel_without_changes_writes_nothing_and_closes(
+    opened: Callable[[], SettingDialog],
+) -> None:
+    """칸을 바꾸지 않고 취소를 누르면 아무 행도 바뀌지 않고 확인 없이 창이 닫혀야 한다(오너 2026-11-27).
+
+    취소 누름 -> 행 문자열 전부 그대로, 창 숨음, closePrompt 없음, result() == Rejected
+    """
+    dialog = opened()
+    before = read_rows()
+    QTest.mouseClick(_cancel(dialog), Qt.MouseButton.LeftButton)
+    QApplication.processEvents()
+    assert read_rows() == before
+    assert not dialog.isVisible()
+    assert dialog.closePrompt is None
+    assert dialog.result() == QDialog.DialogCode.Rejected
 
 
 def test_escape_writes_nothing_and_closes(opened: Callable[[], SettingDialog]) -> None:
