@@ -18,8 +18,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, QPointF
-from PySide6.QtGui import QEnterEvent, QHelpEvent
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QEnterEvent, QGuiApplication, QHelpEvent
 from PySide6.QtWidgets import QApplication, QLabel, QStyle, QToolTip, QWidget
 
 
@@ -114,6 +114,25 @@ def hold_style(style) -> QStyle:
     """
     _STYLE_REFS.append(style)
     return style
+
+
+@contextmanager
+def tab_reaches_all_controls() -> Iterator[None]:
+    """Tab이 모든 컨트롤에 가는 규칙(`TabFocusAllControls`)을 세우고, 끝나면 원래 값으로 되돌린다 (#653).
+
+    macOS는 시스템 설정 「키보드 탐색」이 꺼져 있으면(기본값) Tab이 `Qt.TabFocus` 정책인 위젯을 건너뛴다 —
+    카드(`ContentItemWidget`)가 그렇다. Qt가 꺼진 위젯의 초점을 다음 위젯으로 넘길 때도 같은 규칙이라 ■이
+    꺼지면 초점이 카드를 건너뛴다. 카드에 Tab · 넘김이 닿는다는 전제를 쓰는 테스트는 이 규칙을 스스로 세운다.
+    """
+    hints = QGuiApplication.styleHints()
+    before = hints.tabFocusBehavior()
+    if not isinstance(before, Qt.TabFocusBehavior):
+        before = Qt.TabFocusBehavior(int(before))  # macOS 기본값 3(글 칸 | 목록)은 열거 이름이 없다
+    hints.setTabFocusBehavior(Qt.TabFocusBehavior.TabFocusAllControls)
+    try:
+        yield
+    finally:
+        hints.setTabFocusBehavior(before)
 
 
 def snapshot_top_levels() -> set:
