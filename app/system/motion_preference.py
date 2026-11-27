@@ -7,7 +7,9 @@ Qt 6.11에는 움직임 줄이기 힌트가 없어(`QAccessibilityHints`는 대�
 - macOS: ``NSWorkspace.accessibilityDisplayShouldReduceMotion`` — 손쉬운 사용 › 디스플레이 › 동작 줄이기.
   objc 런타임을 ctypes로 부른다
 - Linux: GNOME 계열 ``gsettings get org.gnome.desktop.interface enable-animations``(하위 프로세스) →
-  읽지 못하면 KDE ``kdeglobals``의 ``[KDE] AnimationDurationFactor``
+  읽지 못하면 KDE ``kdeglobals``의 ``[KDE] AnimationDurationFactor``. 단 ``XDG_CURRENT_DESKTOP``에
+  ``KDE``가 있으면 KDE를 먼저 읽는다 — KDE 세션에 GNOME 스키마가 깔려 있으면 gsettings가 스키마
+  기본값 참을 돌려줘 KDE에서 끈 것을 못 본다
 
 읽지 못하면 켬이다 — 이 모듈이 생기기 전의 기본값이다. 앱 시작 때와 앱이 다시 활성이 될 때 읽는다
 (`app/viewmodels/card_display.py`).
@@ -34,6 +36,8 @@ GSETTINGS_COMMAND = (
 GSETTINGS_TIMEOUT = 1.0  # gsettings 제한 시간(초) — 창이 뜨는 길에서 부르므로 오래 기다리지 않는다
 KDE_SECTION = "KDE"  # kdeglobals의 절 이름
 KDE_FACTOR_KEY = "AnimationDurationFactor"  # 애니메이션 시간 배율 — 0이면 애니메이션 끔
+DESKTOP_ENV = "XDG_CURRENT_DESKTOP"  # 데스크톱 이름 목록(쌍점으로 나눔, 예: "ubuntu:GNOME")
+KDE_DESKTOP = "KDE"  # 위 목록에서 KDE 세션을 뜻하는 이름
 DEFAULT = True  # 읽지 못했을 때의 값 — 이 모듈 전의 기본값(켬)
 
 
@@ -92,9 +96,24 @@ def read_macos() -> bool | None:
 
 
 def read_linux() -> bool | None:
-    """Linux 데스크톱의 애니메이션 켬 여부 — GNOME 계열을 먼저, 못 읽으면 KDE. 둘 다 못 읽으면 None."""
-    value = read_gnome()
-    return value if value is not None else read_kde()
+    """Linux 데스크톱의 애니메이션 켬 여부를 돌려준다 — 둘 다 못 읽으면 None.
+
+    KDE 세션(`XDG_CURRENT_DESKTOP`에 `KDE`)이면 KDE를 먼저, 못 읽으면 GNOME 계열을 읽는다. 그 밖은
+    GNOME 계열을 먼저, 못 읽으면 KDE. KDE 세션에 GNOME 스키마가 깔려 있으면 gsettings가 스키마
+    기본값 참을 돌려주기 때문이다(#645).
+    """
+    readers = (read_kde, read_gnome) if is_kde_session() else (read_gnome, read_kde)
+    for reader in readers:
+        value = reader()
+        if value is not None:
+            return value
+    return None
+
+
+def is_kde_session() -> bool:
+    """`XDG_CURRENT_DESKTOP`의 이름 목록에 `KDE`가 있으면 참(대소문자 무시)."""
+    names = os.environ.get(DESKTOP_ENV, "").split(":")
+    return any(name.strip().upper() == KDE_DESKTOP for name in names)
 
 
 def read_gnome() -> bool | None:

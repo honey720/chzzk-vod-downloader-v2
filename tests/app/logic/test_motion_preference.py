@@ -267,19 +267,101 @@ def test_kde_returns_none_when_the_factor_cannot_be_read(
 
 
 @pytest.mark.parametrize(
+    "desktop",
+    [None, "GNOME", "ubuntu:GNOME", "XFCE"],  # None = XDG_CURRENT_DESKTOP 없음
+    ids=["unset", "gnome", "ubuntu-gnome", "xfce"],
+)
+@pytest.mark.parametrize(
     ("gnome", "kde", "expected"),
     [(False, True, False), (True, False, True), (None, False, False), (None, None, None)],
 )
-def test_linux_asks_kde_only_when_gnome_cannot_answer(
-    monkeypatch: pytest.MonkeyPatch, gnome: bool | None, kde: bool | None, expected: bool | None
+def test_linux_outside_kde_asks_kde_only_when_gnome_cannot_answer(
+    monkeypatch: pytest.MonkeyPatch,
+    desktop: str | None,
+    gnome: bool | None,
+    kde: bool | None,
+    expected: bool | None,
 ) -> None:
-    """Linux 갈래는 GNOME 값이 있으면 그 값, 없으면 KDE 값이어야 한다.
+    """KDE 세션이 아니면 Linux 갈래는 GNOME 값이 있으면 그 값, 없으면 KDE 값이어야 한다.
 
-    (GNOME, KDE) -> expected
+    XDG_CURRENT_DESKTOP=desktop, (GNOME, KDE) -> expected
     """
+    if desktop is None:
+        monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
+    else:
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", desktop)
     monkeypatch.setattr(motion_preference, "read_gnome", lambda: gnome)
     monkeypatch.setattr(motion_preference, "read_kde", lambda: kde)
     assert motion_preference.read_linux() is expected
+
+
+@pytest.mark.parametrize("desktop", ["KDE", "kde", "Plasma:KDE"], ids=["kde", "lower", "listed"])
+@pytest.mark.parametrize(
+    ("gnome", "kde", "expected"),
+    [(True, False, False), (False, True, True), (True, None, True), (None, None, None)],
+)
+def test_linux_in_kde_asks_gnome_only_when_kde_cannot_answer(
+    monkeypatch: pytest.MonkeyPatch,
+    desktop: str,
+    gnome: bool | None,
+    kde: bool | None,
+    expected: bool | None,
+) -> None:
+    """KDE 세션이면 Linux 갈래는 KDE 값이 있으면 그 값, 없으면 GNOME 값이어야 한다.
+
+    XDG_CURRENT_DESKTOP=desktop, (GNOME, KDE) -> expected
+    """
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", desktop)
+    monkeypatch.setattr(motion_preference, "read_gnome", lambda: gnome)
+    monkeypatch.setattr(motion_preference, "read_kde", lambda: kde)
+    assert motion_preference.read_linux() is expected
+
+
+def test_kde_session_with_a_gnome_schema_follows_kde_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """KDE 세션에서 gsettings가 참이어도 kdeglobals 배율이 0이면 Linux 갈래는 거짓이어야 한다.
+
+    XDG_CURRENT_DESKTOP=KDE, gsettings 출력 true, kdeglobals [KDE] AnimationDurationFactor=0
+    -> 거짓, gsettings 부름 0번
+    """
+    calls: list[dict] = []
+    monkeypatch.setattr(motion_preference.subprocess, "run", _fake_run(calls, "true\n"))
+    _kdeglobals(tmp_path, "[KDE]\nAnimationDurationFactor=0\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    assert motion_preference.read_linux() is False
+    assert calls == []
+
+
+def test_kde_session_without_kdeglobals_follows_gsettings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """KDE 세션에서 kdeglobals가 없으면 Linux 갈래는 gsettings 값이어야 한다.
+
+    XDG_CURRENT_DESKTOP=KDE, kdeglobals 없음, gsettings 출력 false -> 거짓, gsettings 부름 1번
+    """
+    calls: list[dict] = []
+    monkeypatch.setattr(motion_preference.subprocess, "run", _fake_run(calls, "false\n"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))  # 빈 폴더 — kdeglobals 없음
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    assert motion_preference.read_linux() is False
+    assert len(calls) == 1
+
+
+def test_gnome_session_with_kde_off_follows_gsettings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """GNOME 세션에서는 kdeglobals 배율이 0이어도 Linux 갈래는 gsettings 값이어야 한다.
+
+    XDG_CURRENT_DESKTOP=GNOME, gsettings 출력 true, kdeglobals [KDE] AnimationDurationFactor=0 -> 참
+    """
+    calls: list[dict] = []
+    monkeypatch.setattr(motion_preference.subprocess, "run", _fake_run(calls, "true\n"))
+    _kdeglobals(tmp_path, "[KDE]\nAnimationDurationFactor=0\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "GNOME")
+    assert motion_preference.read_linux() is True
 
 
 # ================================================================ 갈래 고르기 · 읽지 못함
