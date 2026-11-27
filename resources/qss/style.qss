@@ -219,12 +219,16 @@ QLabel#thumbnailLabel {
 
 /* ---------- 버튼 ---------- */
 
+/* outline: none — Tab 키로 초점이 오면 Fusion이 글 둘레에 자기 초점 사각형(면 + 테두리)을 따로 그린다. 앱의
+ * 키보드 초점 표시는 버튼마다 따로 있다(강조색 테두리 · 그리기 코드). 끄지 않으면 그 안에 작은 상자가 하나 더 보인다.
+ * 바 · 대화상자 · 선택 줄의 모든 버튼이 이 규칙을 받는다 */
 QPushButton {
     background-color: @surfaceAlt;
     color: @text;
     border: 1px solid @border;
     border-radius: @radius;
     padding: 6px @buttonPadX;
+    outline: none;
 }
 
 /* 메뉴바 「VOD 다운」 — 오른쪽 안쪽 여백에 상태 버블 자리를 늘 잡아 둔다(#523, 설계 §2). 버블이 숨어도
