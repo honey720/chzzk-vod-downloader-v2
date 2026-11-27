@@ -659,7 +659,6 @@ class SortButton(DropButton):
         super().__init__("", parent)
         self._order = None
         self._compact = False
-        self._failedReserve = 0  # 「실패 999」 칩 폭(px) — applyWidth가 잰다
         self.menuWidget = ChoiceMenu(self)
         self.menuWidget.anchor = self  # 버튼 왼쪽 끝 맞춤 · 조금 아래(#536)
         self.menuWidget.aboutToShow.connect(self._fillMenu)
@@ -854,7 +853,7 @@ class FilterChips(QWidget):
     def applyWidth(self) -> None:
         """칩마다 지금 글 폭, 드롭다운에 가장 긴 「이름 999」가 들어가는 폭을 건다 — 글꼴 · 번역이 바뀌면 다시 부른다.
 
-        실패 칩의 「실패 999」 폭은 따로 재 둔다(`compactWidth(reserved=True)` — 창 최소폭 몫).
+        실패 칩의 「실패 999」 폭은 따로 재 둔다(`compactWidth` — 좁은 폭 단계 · 창 최소폭 몫).
         """
         names = self.names()
         failed = self.chips["failed"]
@@ -885,17 +884,15 @@ class FilterChips(QWidget):
         widths = [chip.minimumWidth() for chip in self.chips.values()]
         return sum(widths) + CHIP_GAP * (len(widths) - 1)
 
-    def compactWidth(self, failed: bool, reserved: bool = False) -> int:
-        """드롭다운 모양의 폭 — 드롭다운과, `failed`면 실패 칩 · 간격(지금 모양과 무관).
+    def compactWidth(self, failed: bool) -> int:
+        """드롭다운 모양의 폭 — 드롭다운과, `failed`면 실패 칩 · 간격(지금 모양 · 숫자와 무관).
 
-        Args:
-            failed: 실패 칩이 드롭다운 옆에 남는지
-            reserved: 실패 칩을 지금 숫자 대신 세 자리(「실패 999」) 폭으로 셀지 — 창 최소폭 몫
+        실패 칩은 지금 숫자가 아니라 세 자리(「실패 999」) 폭으로 센다 — 드롭다운도 세 자리 고정 폭이고,
+        숫자 글리프 폭이 다른 글꼴(macOS 등)에서 「실패 0」 → 「실패 1」로 문턱이 움직이지 않게 한다(#651).
         """
         width = self.dropButton.minimumWidth()
         if failed:
-            chip = self.chips["failed"]
-            width += CHIP_GAP + (self._failedReserve if reserved else chip.minimumWidth())
+            width += CHIP_GAP + self._failedReserve
         return width
 
     @staticmethod
