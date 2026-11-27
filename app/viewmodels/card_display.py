@@ -63,6 +63,11 @@ def os_animations() -> bool:
     return motion_preference.system_animations()
 
 
+def follows_os() -> bool:
+    """애니메이션을 사용자가 고르지 않아(행 없음 · null) OS 설정을 따르는 중인지."""
+    return settings.load_setting(ANIMATIONS_KEY) is None
+
+
 def refresh() -> CardDisplay:
     """설정에서 다시 읽어 들고 있는 값을 바꾼다. 바꾼 값을 돌려준다."""
     display = CardDisplay(

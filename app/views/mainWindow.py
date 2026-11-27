@@ -1473,10 +1473,10 @@ class VodDownloader(QMainWindow):
     def _onApplicationState(self, state: Qt.ApplicationState) -> None:
         """앱이 다시 활성이 되면 OS 애니메이션 설정을 다시 읽고, 바뀌었으면 카드 화면 설정을 다시 건다 (#645).
 
-        OS 값이 그대로면 아무것도 하지 않는다 — 활성이 될 때마다 설정 DB를 읽고 카드를 비교하지 않는다. 사용자가
-        애니메이션을 골라 두었으면 다시 걸어도 그 값이 남는다(`applyCardDisplay`가 바뀐 것만 건다).
+        OS 값이 그대로면 아무것도 하지 않는다 — 활성이 될 때마다 카드를 비교하지 않는다. 사용자가 애니메이션을
+        골라 두었으면 OS를 읽지 않는다(Linux는 하위 프로세스라 메인 스레드에서 부르는 횟수를 줄인다).
         """
-        if state != Qt.ApplicationState.ApplicationActive:
+        if state != Qt.ApplicationState.ApplicationActive or not card_display.follows_os():
             return
         now = card_display.os_animations()
         if now == self._osAnimations:

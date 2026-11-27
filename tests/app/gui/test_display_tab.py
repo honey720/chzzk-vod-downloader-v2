@@ -114,7 +114,7 @@ def _save_in_settings(
     qtbot: QtBot, win: VodDownloader, change: Callable[[SettingDialog], None]
 ) -> None:
     """본 창의 설정 동작으로 설정 창을 열고 `change`한 뒤 저장 버튼을 누른다 — 설정 창이 닫힐 때까지 돈다."""
-    seen = {"done": False}
+    seen: dict = {"done": False, "error": None}
     tries = DIALOG_WAIT_MS // POLL_MS
 
     def act() -> None:
@@ -125,7 +125,12 @@ def _save_in_settings(
             if tries > 0:
                 QTimer.singleShot(POLL_MS, act)
             return
-        change(dialog)
+        try:
+            change(dialog)
+        except Exception as error:  # noqa: BLE001 — 창을 닫아 테스트가 멈추지 않게 하고 아래에서 다시 올린다
+            seen["error"] = error
+            dialog.reject()
+            return
         save = dialog.dialogButtonBox.button(QDialogButtonBox.StandardButton.Save)
         if not save.isEnabled():
             dialog.reject()  # 바뀐 값이 없다 — 창을 닫아 테스트가 멈추지 않게 하고 아래 단언이 실패한다
@@ -136,7 +141,9 @@ def _save_in_settings(
     QTimer.singleShot(POLL_MS, act)
     win.onSetting()
     QApplication.processEvents()
-    assert seen["done"], "설정 창이 뜨지 않았다"
+    if seen["error"] is not None:
+        raise seen["error"]
+    assert seen["done"], "설정 창이 뜨지 않았거나 바뀐 값이 없었다"
 
 
 def _toggle(key: str) -> Callable[[SettingDialog], None]:
@@ -374,3 +381,22 @@ def test_reactivating_the_app_with_the_same_os_value_keeps_the_display(
     card_display.use(held)
     _activate_app()
     assert card_display.current() is held
+
+
+def test_reactivating_the_app_does_not_read_the_os_when_the_user_chose(
+    window: VodDownloader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """animations 행이 참 · 거짓이면 앱이 다시 활성이 될 때 OS 설정을 읽지 않아야 한다.
+
+    행 animations = false → 앱 활성 -> OS 읽음 0번
+    """
+    write_rows({"animations": json.dumps(False)})
+    calls: list[int] = []
+
+    def read() -> bool:
+        calls.append(1)
+        return True
+
+    monkeypatch.setattr(motion_preference, "system_animations", read)
+    _activate_app()
+    assert calls == []
