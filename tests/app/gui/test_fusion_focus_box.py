@@ -205,14 +205,17 @@ class TestMainWindowButtons:
     ) -> None:
         """메인 창 버튼에 Tab 키로 초점이 오면 가장자리 안쪽 화소가 초점 전과 같아야 한다.
 
-        대기 카드 하나, 창 폭 = 최소폭 + 900, 포인터는 창 왼쪽 위, 앞 위젯에서 Tab(선택 줄은 선택 모드에서)
+        대기 카드 하나, 창 폭 = 최소폭 + 900, 포인터는 창 왼쪽 위, 앞 위젯에서 Tab(선택 줄은 선택 모드 · 나타나는 fade가 끝난 뒤)
         -> 가장자리 · 모서리 반경 자리를 뺀 안쪽 화소 중 초점 전과 색이 다른 것 0개
         """
         find, edge = MAIN_CASES[case]
         if case == "selectBarCancel":
             main_window.selectButton.click()
+            bar = main_window.selectBar
+            qtbot.waitUntil(
+                lambda: bar.isVisible() and bar.graphicsEffect() is None, timeout=WAIT_MS
+            )
             _pump()
-            assert main_window.selectBar.isVisible(), "전제: 선택 모드"
         changed = _inside_after_tab(qtbot, main_window, find(main_window), edge)
         assert not changed, f"{scheme} {case}: 안쪽 {len(changed)}화소 바뀜, 처음 {changed[:5]}"
 
