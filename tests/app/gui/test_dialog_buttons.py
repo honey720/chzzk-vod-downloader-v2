@@ -148,8 +148,13 @@ def _press_and_hold(qtbot: QtBot, button: QWidget) -> Callable[[], None]:
 
 
 def _setting(qtbot: QtBot) -> SettingDialog:
+    """설정 창 — 쿠키 한 칸을 바꿔 저장 · 취소를 켠 채 연다(바뀐 값이 있을 때만 켜진다, #644).
+
+    정리 때 닫기 전에 숨긴다 — 바뀐 값이 있는 채로 닫으면 닫기 확인 대화상자가 뜬다.
+    """
     dialog = SettingDialog()
-    qtbot.addWidget(dialog)
+    qtbot.addWidget(dialog, before_close_func=lambda widget: widget.hide())
+    dialog.nidaut.setText("aut-for-buttons")
     dialog.show()
     qtbot.waitExposed(dialog)
     _activate(qtbot, dialog)
@@ -196,7 +201,7 @@ def opened(
             box = dialog.dialogButtonBox
             pair = (
                 box.button(QDialogButtonBox.StandardButton.Cancel),
-                box.button(QDialogButtonBox.StandardButton.Ok),
+                box.button(QDialogButtonBox.StandardButton.Save),
             )
         elif name == "edit":
             dialog = _edit(qtbot, win, item)
@@ -305,7 +310,7 @@ class TestSecondaryButton:
 
 @pytest.mark.parametrize("name", WINDOWS)
 class TestPrimaryButton:
-    """주 동작(설정 OK · 편집 Save · 구간 OK)은 강조색 채움, 키보드 초점은 focusOnAccent 테두리다."""
+    """주 동작(설정 Save · 편집 Save · 구간 OK)은 강조색 채움, 키보드 초점은 focusOnAccent 테두리다."""
 
     def test_primary_is_the_accent_fill(self, opened, scheme: str, name: str) -> None:
         """주 동작 버튼은 role primary이고 면 · 가장자리가 accent여야 한다.

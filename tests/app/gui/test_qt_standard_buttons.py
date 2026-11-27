@@ -35,8 +35,8 @@ import CVDv2 as main
 from app.views.dialog import SettingDialog
 from tests.support.settings_db import write_settings
 
-KOREAN = {"ok": "확인", "cancel": "취소", "yes": "예(&Y)", "no": "아니요(&N)"}
-ENGLISH = {"ok": "OK", "cancel": "Cancel", "yes": "&Yes", "no": "&No"}
+KOREAN = {"ok": "확인", "save": "저장", "cancel": "취소", "yes": "예(&Y)", "no": "아니요(&N)"}
+ENGLISH = {"ok": "OK", "save": "Save", "cancel": "Cancel", "yes": "&Yes", "no": "&No"}
 
 #: 스타일의 버튼 배치 힌트마다 확인(AcceptRole)이 취소(RejectRole)보다 앞인가 — Qt
 #: qplatformdialoghelper.cpp의 배치 표에서 이 두 역할의 차례만 옮겨 적는다(제품 코드를 부르지 않는다, #486).
@@ -81,8 +81,9 @@ def translators(qapp, monkeypatch) -> Iterator[Callable[[str], list]]:
 
 
 def _box_texts(box: QDialogButtonBox) -> dict:
+    """설정 창 버튼 상자의 저장 · 취소 문구 — 저장은 확인과 같은 AcceptRole이다(#644)."""
     return {
-        "ok": box.button(QDialogButtonBox.StandardButton.Ok).text(),
+        "save": box.button(QDialogButtonBox.StandardButton.Save).text(),
         "cancel": box.button(QDialogButtonBox.StandardButton.Cancel).text(),
     }
 
@@ -93,7 +94,7 @@ def _layout_order(box: QDialogButtonBox) -> tuple:
     option.initFrom(box)
     hint = LAYOUT(box.style().styleHint(QStyle.StyleHint.SH_DialogButtonLayout, option, box))
     ok, cancel = (
-        box.button(QDialogButtonBox.StandardButton.Ok),
+        box.button(QDialogButtonBox.StandardButton.Save),
         box.button(QDialogButtonBox.StandardButton.Cancel),
     )
     return (ok, cancel) if OK_FIRST[hint] else (cancel, ok)
@@ -119,12 +120,12 @@ def _message_box_texts() -> dict:
 
 
 class TestKorean:
-    def test_setting_dialog_ok_cancel_are_korean(self, qapp, translators) -> None:
+    def test_setting_dialog_save_cancel_are_korean(self, qapp, translators) -> None:
         translators("ko_KR")
         dialog = SettingDialog()
         try:
             assert _box_texts(dialog.dialogButtonBox) == {
-                "ok": KOREAN["ok"],
+                "save": KOREAN["save"],
                 "cancel": KOREAN["cancel"],
             }
         finally:
@@ -169,7 +170,7 @@ class TestEnglish:
         dialog = SettingDialog()
         try:
             assert _box_texts(dialog.dialogButtonBox) == {
-                "ok": ENGLISH["ok"],
+                "save": ENGLISH["save"],
                 "cancel": ENGLISH["cancel"],
             }
         finally:
@@ -240,19 +241,19 @@ class TestPreserved:
 
     @pytest.mark.parametrize("language", ("ko_KR", "en_US"))
     def test_button_order_default_and_escape(self, qapp, qtbot, translators, language) -> None:
-        """버튼 차례가 스타일 배치 힌트와 같고, 기본 버튼은 OK, Esc는 취소여야 한다(#486)."""
+        """버튼 차례가 스타일 배치 힌트와 같고, 기본 버튼은 저장, Esc는 취소여야 한다(#486 · #644)."""
         dialog = self._dialog(qapp, translators, language)
         qtbot.addWidget(dialog)
         box = dialog.dialogButtonBox
         ok, cancel = (
-            box.button(QDialogButtonBox.StandardButton.Ok),
+            box.button(QDialogButtonBox.StandardButton.Save),
             box.button(QDialogButtonBox.StandardButton.Cancel),
         )
         first, second = _layout_order(box)
         assert first.x() < second.x(), (
             f"버튼 차례가 배치 힌트와 다르다(앞 {first.text()} · 뒤 {second.text()})"
         )
-        assert ok.isDefault() and not cancel.isDefault(), "기본 버튼(Enter)이 OK가 아니다"
+        assert ok.isDefault() and not cancel.isDefault(), "기본 버튼(Enter)이 저장이 아니다"
         QTest.keyClick(dialog, Qt.Key.Key_Escape)
         QApplication.processEvents()
         assert dialog.result() == QDialog.DialogCode.Rejected and not dialog.isVisible(), (

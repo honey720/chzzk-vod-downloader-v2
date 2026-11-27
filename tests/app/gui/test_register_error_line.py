@@ -383,9 +383,11 @@ class TestBusyIndicator:
 
 class TestSelectButtonPlace:
     def test_select_button_is_the_last_item_of_the_second_line(self, window) -> None:
-        """선택 버튼은 헤더바 2줄 레이아웃의 마지막 항목이고 하단바에는 없어야 한다(#561)."""
+        """선택 버튼은 헤더바 2줄 마지막 항목(오른쪽 묶음의 끝)이고 하단바에는 없어야 한다(#561 · #651)."""
         line = window.filterRowLayout
-        assert line.itemAt(line.count() - 1).widget() is window.selectButton
+        tools = line.itemAt(line.count() - 1).layout()
+        assert tools is window.viewToolsLayout
+        assert tools.itemAt(tools.count() - 1).widget() is window.selectButton
         assert not window.infoFrame.isAncestorOf(window.selectButton)
 
     def test_its_right_edge_lines_up_with_the_add_button(self, window) -> None:

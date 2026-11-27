@@ -648,6 +648,22 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Settings</translation>
     </message>
     <message>
+        <source>General</source>
+        <translation>General</translation>
+    </message>
+    <message>
+        <source>Display</source>
+        <translation>Display</translation>
+    </message>
+    <message>
+        <source>Account</source>
+        <translation>Account</translation>
+    </message>
+    <message>
+        <source>Advanced</source>
+        <translation>Advanced</translation>
+    </message>
+    <message>
         <source>none</source>
         <translation>none</translation>
     </message>
@@ -660,6 +676,22 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>shutdown</translation>
     </message>
     <message>
+        <source>Save the changed settings?</source>
+        <translation>Save the changed settings?</translation>
+    </message>
+    <message>
+        <source>Save</source>
+        <translation>Save</translation>
+    </message>
+    <message>
+        <source>Don&apos;t Save</source>
+        <translation>Don&apos;t Save</translation>
+    </message>
+    <message>
+        <source>Go back</source>
+        <translation>Go back</translation>
+    </message>
+    <message>
         <source>How to get a Chzzk cookie&lt;br&gt;1. Log in to &lt;a href=&apos;{}&apos;&gt;Chzzk&lt;/a&gt;.&lt;br&gt;2. Press F12 to open the developer tool. &lt;br&gt;3. Click Cookies &gt; https://chzzk.naver.com on the Application tab. &lt;br&gt;4. Add the values of &apos;NID_AUT&apos; and &apos;NID_SES&apos;.</source>
         <translation>How to get a Chzzk cookie&lt;br&gt;1. Log in to &lt;a href=&apos;{}&apos;&gt;Chzzk&lt;/a&gt;.&lt;br&gt;2. Press F12 to open the developer tool. &lt;br&gt;3. Click Cookies &gt; https://chzzk.naver.com on the Application tab. &lt;br&gt;4. Add the values of &apos;NID_AUT&apos; and &apos;NID_SES&apos;.</translation>
     </message>
@@ -670,10 +702,6 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>Warning</source>
         <translation>Warning</translation>
-    </message>
-    <message>
-        <source>Cookies</source>
-        <translation>Cookies</translation>
     </message>
     <message>
         <source>NID_AUT</source>
@@ -694,10 +722,6 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>After Download</source>
         <translation>After Download</translation>
-    </message>
-    <message>
-        <source>Common</source>
-        <translation>Common</translation>
     </message>
     <message>
         <source>Language</source>

@@ -149,12 +149,22 @@ def _chip_shape_need(win: VodDownloader, sort_width: int) -> int:
     return _header_chrome(win) + chip_row + gap + sort_width + gap + clear
 
 
+def _failed_chip_reserve(win: VodDownloader) -> int:
+    """실패 칩에 숫자 세 자리 「이름 999」를 넣었을 때의 폭 — 칩 글꼴로 테스트가 잰다(#651)."""
+    chip = win.filterChips["failed"]
+    shown = chip.text()
+    chip.setText(chip.text().rsplit(" ", 1)[0] + " 999")
+    width = chip.sizeHint().width()
+    chip.setText(shown)
+    return width
+
+
 def _drop_shape_need(win: VodDownloader, sort_width: int, failed: bool) -> int:
     """헤더바 2줄 드롭다운 모양(단계 1 · 2)이 바라는 창 폭 — `sort_width`가 정렬 모양을 정한다."""
     gap = win.filterRowLayout.spacing()
     filters = win.filterChipBar.dropButton.minimumWidth()
     if failed:
-        filters += win.filterChipBar.layout().spacing() + win.filterChips["failed"].minimumWidth()
+        filters += win.filterChipBar.layout().spacing() + _failed_chip_reserve(win)
     clear = win.selectButton.minimumWidth()
     return _header_chrome(win) + filters + gap + sort_width + gap + clear
 
