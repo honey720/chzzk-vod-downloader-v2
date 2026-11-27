@@ -52,11 +52,15 @@ import app.viewmodels.card_display as card_display  # noqa: E402
 import core.sources.hls_aes_downloader as hls_aes_module  # noqa: E402
 import core.sources.m3u8_downloader as m3u8_module  # noqa: E402
 from core.utils.paths import temp_dir_for  # noqa: E402
+from tests.alert_sound import install as mute_alert_sounds  # noqa: E402
 from tests.console_window import install as hide_console_windows  # noqa: E402
 
 # Windows에서 테스트가 띄우는 자식 프로세스가 콘솔 창을 띄우지 않게 한다 (#399) — 수집 중의
 # 호출도 덮도록 모듈을 읽을 때 건다. creationflags를 직접 준 호출(제품의 ffmpeg 등)은 그대로다
 hide_console_windows(subprocess, sys.platform)
+# Windows에서 테스트가 메시지 상자 · 메뉴를 띄울 때 시스템 알림음이 나지 않게 한다 (#664) — Qt가
+# 접근성 이벤트를 플랫폼 플러그인 대신 테스트 처리기로 보낸다. 앱 실행은 이 처리기를 걸지 않는다
+mute_alert_sounds(sys.platform)
 
 # ============ OS 창 활성을 바꾸는 테스트 (#523) ============
 # 창 최소화 · 최소화 풀기 · activateWindow는 실제 화면에서 OS의 포그라운드 창을 바꾼다 — 같은 화면의
