@@ -175,3 +175,44 @@ def test_following_the_os_is_logged_once_per_value(
         if record.name == "app.viewmodels.card_display"
     ]
     assert lines == ["애니메이션: OS 설정을 따름(끔)", "애니메이션: OS 설정을 따름(켬)"]
+
+
+# ================================================================ 활성 때 비교 · 넘긴 OS 값
+
+
+def test_a_given_os_value_is_used_without_reading_the_os(monkeypatch: pytest.MonkeyPatch) -> None:
+    """refresh에 OS 값을 넘기면 animations 행이 없을 때 그 값이어야 하고 OS를 읽지 않아야 한다.
+
+    행 없음, OS 켬, refresh(False) -> animations 거짓, OS 읽음 0번
+    """
+    calls = _os_animations(monkeypatch, True)
+    assert card_display.refresh(False).animations is False
+    assert calls == []
+
+
+@pytest.mark.parametrize(("applied", "now", "expected"), [(True, False, True), (True, True, False)])
+def test_os_value_changed_compares_with_the_value_on_the_cards(
+    monkeypatch: pytest.MonkeyPatch, applied: bool, now: bool, expected: bool
+) -> None:
+    """os_value_changed는 카드에 마지막으로 건 OS 값과 now가 다를 때만 참이어야 한다.
+
+    행 없음, OS applied로 refresh → os_value_changed(now) -> expected
+    """
+    _os_animations(monkeypatch, applied)
+    card_display.refresh()
+    assert card_display.os_value_changed(now) is expected
+
+
+def test_os_value_changed_after_use_records_now_and_is_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """use로 값을 바꾼 뒤 처음 부르면 os_value_changed는 거짓이고 그 값을 기준으로 적어야 한다.
+
+    OS 켬으로 refresh → use(CardDisplay(animations=False)) → os_value_changed(False) 거짓
+    → os_value_changed(True) 참
+    """
+    _os_animations(monkeypatch, True)
+    card_display.refresh()
+    card_display.use(card_display.CardDisplay(animations=False))
+    assert card_display.os_value_changed(False) is False
+    assert card_display.os_value_changed(True) is True

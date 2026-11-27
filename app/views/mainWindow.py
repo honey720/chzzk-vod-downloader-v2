@@ -260,8 +260,7 @@ class VodDownloader(QMainWindow):
         self.contentManager = ContentViewModel(parent=self)
         self.listView.bind(self.contentManager)
         # 앱이 다시 활성이 되면 OS 애니메이션 설정을 다시 본다(#645, 설계 §14.4). 창 메시지(WM_SETTINGCHANGE)는
-        # 받지 않는다. 비교할 값은 창을 만들 때 읽은 OS 값이다
-        self._osAnimations = card_display.os_animations()
+        # 받지 않는다. 비교할 값은 카드에 마지막으로 건 OS 값이다(card_display.os_value_changed)
         QGuiApplication.instance().applicationStateChanged.connect(self._onApplicationState)
         # 헤더바 2줄 — 칩 숫자 · 고른 칩 · 정렬을 순서 뷰모델에 잇는다(#495)
         self.filterChipBar.bind(self.contentManager.order)
@@ -1456,14 +1455,15 @@ class VodDownloader(QMainWindow):
         self.dialog.accepted.connect(self.applyCardDisplay)
         self.dialog.exec_()
 
-    def applyCardDisplay(self) -> None:
+    def applyCardDisplay(self, os_value: bool | None = None) -> None:
         """카드 화면 설정을 다시 읽고, 달라졌으면 목록의 카드와 창 최소폭에 건다 (#645).
 
-        설정 창 저장과 앱이 다시 활성이 될 때 부른다 — 애니메이션을 고르지 않았으면 그때 OS 설정을 다시 읽는다
-        (설계 §14.4). 썸네일 줄이기는 다 접은 카드 폭을 바꾸므로 창 최소폭을 다시 센다.
+        설정 창 저장과 앱이 다시 활성이 될 때 부른다 — 애니메이션을 고르지 않았으면 OS 값을 쓴다(설계 §14.4).
+        활성 때는 비교에 쓴 OS 값을 `os_value`로 넘겨 다시 읽지 않는다. 썸네일 줄이기는 다 접은 카드 폭을
+        바꾸므로 창 최소폭을 다시 센다.
         """
         before = card_display.current()
-        after = card_display.refresh()
+        after = card_display.refresh(os_value)
         if after == before:
             return
         self.listView.applyDisplay(before, after)
@@ -1473,16 +1473,16 @@ class VodDownloader(QMainWindow):
     def _onApplicationState(self, state: Qt.ApplicationState) -> None:
         """앱이 다시 활성이 되면 OS 애니메이션 설정을 다시 읽고, 바뀌었으면 카드 화면 설정을 다시 건다 (#645).
 
-        OS 값이 그대로면 아무것도 하지 않는다 — 활성이 될 때마다 카드를 비교하지 않는다. 사용자가 애니메이션을
+        OS 값이 카드에 건 OS 값과 같으면 아무것도 하지 않는다 — 활성이 될 때마다 카드를 비교하지 않는다. 다르면
+        그 값을 그대로 건다(다시 읽으면 비교한 값과 건 값이 어긋날 수 있다). 사용자가 애니메이션을
         골라 두었으면 OS를 읽지 않는다(Linux는 하위 프로세스라 메인 스레드에서 부르는 횟수를 줄인다).
         """
         if state != Qt.ApplicationState.ApplicationActive or not card_display.follows_os():
             return
         now = card_display.os_animations()
-        if now == self._osAnimations:
+        if not card_display.os_value_changed(now):
             return
-        self._osAnimations = now
-        self.applyCardDisplay()
+        self.applyCardDisplay(now)
 
     def _onSaveLocationChanged(self) -> None:
         """저장 위치를 골랐다 — 카드의 경로 표시 기준을 바꾸고 로그에 남긴다 (#245 · #148 · #495).

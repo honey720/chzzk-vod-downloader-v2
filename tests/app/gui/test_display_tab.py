@@ -342,6 +342,29 @@ def test_reactivating_the_app_follows_a_changed_os_setting(
     assert card_display.current().animations is False
 
 
+def test_reactivating_the_app_compares_with_the_os_value_on_the_cards(
+    window: VodDownloader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """카드에 건 OS 값이 켬이고 그 뒤 OS가 끔이면 앱이 다시 활성이 될 때 OS를 한 번만 읽고 끔이어야 한다.
+
+    행 없음, OS 읽기가 켬 → 끔 → 끔…을 냄, current()(카드에 켬을 건다) → 앱 활성
+    -> current().animations 거짓, OS 읽음 2번(current 한 번 · 활성 한 번)
+    """
+    answers = iter([True])
+    calls: list[int] = []
+
+    def read() -> bool:
+        calls.append(1)
+        return next(answers, False)
+
+    monkeypatch.setattr(motion_preference, "system_animations", read)
+    card_display.use(None)
+    assert card_display.current().animations is True, "전제: 카드에 OS 켬을 건다"
+    _activate_app()
+    assert card_display.current().animations is False
+    assert calls == [1, 1]
+
+
 def test_reactivating_the_app_keeps_the_chosen_value(
     window: VodDownloader, monkeypatch: pytest.MonkeyPatch
 ) -> None:
