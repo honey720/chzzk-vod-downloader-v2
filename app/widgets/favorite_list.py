@@ -102,7 +102,8 @@ class FavoriteList(QFrame):
     def setEntries(self, entries: list[dict], selected: int) -> None:
         """줄을 `entries`(`{"name", "path"}`) 차례로 다시 만들고 `selected` 번호의 줄을 고른다.
 
-        번호가 범위 밖이면 마지막 줄을 고른다(목록이 비었으면 고른 줄 없음).
+        번호가 범위 밖이면(음수 포함) 마지막 줄을 고른다(목록이 비었으면 고른 줄 없음). `selectionChanged`는
+        고른 번호가 다시 그리기 전과 다를 때만 낸다 — 다시 그리기만 하고 번호가 같으면 내지 않는다.
         """
         for row in self._rows:
             self._layout.removeWidget(row)
@@ -114,8 +115,20 @@ class FavoriteList(QFrame):
             self._layout.insertWidget(index, row)
             self._rows.append(row)
         self.emptyLabel.setVisible(not entries)
-        self._selected = NO_SELECTION
-        self.select(min(selected, len(entries) - 1))
+        if not entries:
+            target = NO_SELECTION
+        elif 0 <= selected < len(entries):
+            target = selected
+        else:
+            target = len(entries) - 1
+        previous = self._selected
+        self._selected = target
+        for number, row in enumerate(self._rows):
+            row.setProperty("selected", number == target)
+            theme.repolish(row)
+        # 알림은 고른 번호가 다시 그리기 전과 다를 때만 — select()와 같은 규칙이다
+        if target != previous:
+            self.selectionChanged.emit(target)
 
     def count(self) -> int:
         """줄 수."""
