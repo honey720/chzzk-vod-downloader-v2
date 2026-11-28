@@ -104,6 +104,8 @@ def _command(menu, name: str) -> QAction:
 
 # 「W」 폴더 이름 최대 길이(1바이트 글자) — 리눅스 · macOS 이름 한도 255바이트 안
 WIDE_NAME_MAX = 150
+# 「W」 폴더 이름 최소 길이 — 이보다 짧으면 창보다 넓다는 전제가 서지 않는다
+WIDE_NAME_MIN = 100
 # 만들 폴더 경로 최대 길이 — Windows 폴더 만들기 한도 248자(MAX_PATH 260 − 12) 미만(#669)
 DIR_PATH_MAX = 247
 
@@ -112,8 +114,11 @@ def _wide_dir(tmp_path: Path) -> Path:
     """카드 표기로 줄여도 창보다 넓은 이름의 폴더를 만든다 — 글자당 폭이 넓은 「W」로 짓는다.
 
     이름 길이는 `tmp_path`가 길수록 줄여 경로 전체를 `DIR_PATH_MAX` 안에 둔다(#669).
+    `tmp_path`가 너무 길어 이름이 `WIDE_NAME_MIN`보다 짧아지면 전제 실패로 멈춘다.
     """
-    deep = tmp_path / ("W" * min(WIDE_NAME_MAX, DIR_PATH_MAX - len(str(tmp_path)) - 1))
+    length = min(WIDE_NAME_MAX, DIR_PATH_MAX - len(str(tmp_path)) - 1)
+    assert length >= WIDE_NAME_MIN, f"전제: tmp_path가 {len(str(tmp_path))}자라 넓은 이름을 못 지음"
+    deep = tmp_path / ("W" * length)
     deep.mkdir()
     return deep
 
