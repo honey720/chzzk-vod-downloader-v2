@@ -672,3 +672,20 @@ def test_highest_resolution_choice_saves_best_and_picks_the_top(
     _in_settings(win, _choose_resolution("best"))
     assert read_settings()["defaultResolution"] == "best"
     assert _register(qtbot, win, 2) == (1080, "u1080")
+
+
+def test_favorite_added_in_the_tab_leaves_the_recent_list(
+    open_window: Callable[[], VodDownloader],
+    folders: Callable[[str], str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """최근 목록에 있는 경로를 다운로드 탭에서 즐겨찾기로 더해 저장하면 최근 목록에서 빠져야 한다.
+
+    recentPaths [가, 나], 더하기(폴더 「가」 · 별칭 「가」) 저장 -> recentPaths [나]
+    """
+    write_settings({"recentPaths": [folders("가"), folders("나")]})
+    win = open_window()
+    _pick_folder(monkeypatch, folders("가"))
+    _type_name(monkeypatch, "가")
+    _in_settings(win, _click("favoriteAdd"))
+    assert read_settings()["recentPaths"] == [folders("나")]

@@ -187,14 +187,19 @@ class SaveLocations(QObject):
         """설정 창 저장 뒤 기본 위치 · 즐겨찾기를 설정에서 다시 읽는다 (#646).
 
         지금 위치가 기본 위치였으면 새 기본 위치로 함께 옮긴다 — 다른 위치를 골라 두었으면 그대로
-        둔다(그 뒤에 등록하는 카드의 위치를 사용자가 고른 것이다). 바뀐 것이 없어도 `changed`를 한 번
-        낸다 — 버튼 글(별칭)과 메뉴가 새 목록을 보게.
+        둔다(그 뒤에 등록하는 카드의 위치를 사용자가 고른 것이다). 즐겨찾기가 된 경로는 최근에서 뺀다 —
+        메뉴에서 더할 때(`add_favorite`)와 같다. 바뀐 것이 없어도 `changed`를 한 번 낸다 — 버튼 글(별칭)과
+        메뉴가 새 목록을 보게.
         """
         follow = self.is_default()
         self._default = normalize_path(default_path)
         if follow:
             self._current = self._default
         self._favorites = [dict(entry) for entry in settings.load_setting("favoritePaths")]
+        favorite_paths = {entry["path"] for entry in self._favorites}
+        recent = [path for path in self._recent if path not in favorite_paths]
+        if recent != self._recent:
+            self._saveRecent(recent)
         self.changed.emit()
 
     def _saveRecent(self, recent: list[str]) -> None:
