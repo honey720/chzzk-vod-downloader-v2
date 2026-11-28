@@ -133,7 +133,7 @@ def pick_preferred(resolutions: Sequence[int], preferred: int | None) -> int:
     `preferred`가 None이면 0번(가장 높은 것 — 2.11까지의 기본 선택)이다. 정수면 그 해상도 이하인 첫
     항목이다 — 내림차순이라 그 해상도, 없으면 그보다 낮은 것 중 가장 높은 것이다. 해상도가 같은 항목이
     여럿이면 앞 항목이라 가장 높은 것을 고를 때와 같은 규칙이다. 이하인 항목이 없으면(모두 더 높음)
-    마지막 항목(가장 낮은 것)이다. 목록이 비었으면 0이다.
+    가장 낮은 해상도의 앞 항목이다. 목록이 비었으면 0이다.
 
     Args:
         resolutions: 내림차순 해상도(짧은 변 px)
@@ -144,4 +144,4 @@ def pick_preferred(resolutions: Sequence[int], preferred: int | None) -> int:
     for index, resolution in enumerate(resolutions):
         if resolution <= preferred:
             return index
-    return len(resolutions) - 1
+    return resolutions.index(resolutions[-1])  # 가장 낮은 해상도가 여럿이면 그 가운데 앞 항목

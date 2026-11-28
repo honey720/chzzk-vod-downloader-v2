@@ -50,6 +50,14 @@ def test_same_resolution_picks_the_first_of_them() -> None:
     assert pick_preferred([1080, 720, 720, 360], 720) == 1
 
 
+def test_lowest_resolution_twice_picks_the_first_of_them() -> None:
+    """원하는 해상도보다 낮은 항목이 없고 가장 낮은 해상도가 둘이면 둘 중 앞 번호여야 한다.
+
+    [1080, 720, 720], 144 -> 1
+    """
+    assert pick_preferred([1080, 720, 720], 144) == 1
+
+
 def test_empty_list_picks_zero() -> None:
     """목록이 비면 원하는 해상도와 무관하게 0이어야 한다.
 
