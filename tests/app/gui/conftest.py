@@ -3,9 +3,14 @@
 from collections.abc import Iterator
 
 import pytest
+from PySide6.QtTest import QTest
 
 from app.widgets import tip_bubble
 from tests.app.gui.mouse_buttons import release_left_by
+from tests.app.gui.pointer_moves import PointerMoves
+
+# 프로세스 하나에 하나 — 마지막 자리를 테스트 사이에도 기억한다
+_POINTER_MOVES = PointerMoves(QTest.mouseMove)
 
 
 @pytest.fixture(autouse=True)
@@ -31,3 +36,13 @@ def _release_held_mouse_buttons(request: pytest.FixtureRequest) -> Iterator[None
     message = release_left_by(request.node.nodeid)
     if message is not None:
         pytest.fail(message, pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _pointer_moves_hover(monkeypatch: pytest.MonkeyPatch) -> None:
+    """창 경로 `QTest.mouseMove`가 필요하면 1px 옆 이동을 먼저 하게 한다(#667).
+
+    창의 첫 이동이거나 바로 앞 이동과 화면 좌표가 같으면 hover가 서지 않는다 — 까닭은
+    `tests/app/gui/pointer_moves.py`. 테스트 본문은 그대로 `QTest.mouseMove`를 부른다.
+    """
+    monkeypatch.setattr(QTest, "mouseMove", _POINTER_MOVES)
