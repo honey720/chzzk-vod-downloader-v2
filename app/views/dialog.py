@@ -158,6 +158,53 @@ class _FormLabel(QLabel):
         return QSize(hint.width(), hint.height() * 7 // 4)
 
 
+class _ListFormLabel(_FormLabel):
+    """글자 가운데를 목록 첫 줄 글자 가운데에 맞추는 폼 라벨 — 즐겨찾기 행 (#646).
+
+    목록은 테두리 · 안쪽 여백 · 줄 위 여백만큼 첫 줄 글자가 칸 위쪽 끝보다 아래에 온다. 다른 행처럼
+    칸 위쪽 끝에 붙이면 라벨 글자가 첫 줄 글자보다 위에 뜬다(오너 실기). 모자란 만큼을 위 여백으로 둔다 —
+    여백은 글자가 그려지는 자리(contentsRect) 밖이라 폼 규칙(×7/4) 높이 안의 가운데 정렬은 그대로다.
+    여백은 레이아웃이 sizeHint를 물을 때마다 목록에 다시 묻는다 — 글꼴 · QSS가 바뀌어도 따라간다.
+    """
+
+    def __init__(self, parent: QWidget, anchor: FavoriteList) -> None:
+        super().__init__(parent)
+        self._anchor = anchor
+
+    def _topInset(self) -> int:
+        own_center = QLabel.sizeHint(self).height() * 7 // 8  # 폼 규칙 높이(×7/4)의 가운데
+        return max(self._anchor.firstLineCenter() - own_center, 0)
+
+    def sizeHint(self) -> QSize:
+        inset = self._topInset()
+        if self.contentsMargins().top() != inset:
+            self.setContentsMargins(0, inset, 0, 0)
+        hint = QLabel.sizeHint(self)
+        text_height = hint.height() - inset
+        return QSize(hint.width(), text_height * 7 // 4 + inset)
+
+
+class _RowHeightPathLabel(PathLabel):
+    """높이를 같은 행 폼 라벨의 높이와 같게 내는 경로 라벨 — 기본 저장 위치 줄 (#646).
+
+    경로는 두 줄(경로 · 버튼)의 위 줄이다. 글자 높이 그대로면 경로 글자가 행 위쪽에 붙고, 폼 라벨 글자는
+    ×7/4 높이의 가운데에 와서 둘의 글자 줄이 어긋난다(오너 실기). 높이를 라벨과 같게 두면 둘 다 행 위쪽
+    끝에서 같은 높이 안의 가운데에 그려져 기준선이 같다.
+    """
+
+    def __init__(self, parent: QWidget, match: QLabel) -> None:
+        super().__init__(parent)
+        self._match = match
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        return QSize(hint.width(), max(hint.height(), self._match.sizeHint().height()))
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        return QSize(hint.width(), max(hint.height(), self._match.sizeHint().height()))
+
+
 def _label_field_grid(page: QWidget, object_name: str) -> QGridLayout:
     """탭 쪽 안의 「라벨 열 + 필드 열」 격자를 만든다 (v2.9.7 S2 — QFormLayout 대체).
 
@@ -315,12 +362,14 @@ class SettingDialog(QDialog):
             self.downloadPathLabel, 0, _LABEL_COLUMN, _LABEL_ALIGNMENT
         )
         # 경로 줄 — 카드 편집 창의 저장 위치 줄과 같은 부품(경로 · 찾기… · 기본 위치). 경로가 위 줄 전체를
-        # 쓰고 버튼은 아래 줄이다 — 한 줄이면 창 최소폭에서 경로가 「/…」만 남는다(offscreen 스크린샷)
+        # 쓰고 버튼은 아래 줄이다 — 한 줄이면 창 최소폭에서 경로가 「/…」만 남는다(offscreen 스크린샷).
+        # 경로 줄은 라벨과 같은 높이라 글자 기준선이 라벨과 같고, 버튼 줄 왼쪽 끝은 경로 글자 왼쪽 끝이다.
+        # 두 줄 사이 간격은 레이아웃 기본 세로 간격 — 격자의 행 사이 간격과 같은 스타일 값이다
         self.downloadPathRow = QWidget(download)
         self.downloadPathRow.setObjectName("downloadPathRow")
         pathRow = QVBoxLayout(self.downloadPathRow)
         pathRow.setContentsMargins(0, 0, 0, 0)
-        self.downloadPath = PathLabel(self.downloadPathRow)
+        self.downloadPath = _RowHeightPathLabel(self.downloadPathRow, self.downloadPathLabel)
         self.downloadPath.setObjectName("downloadPath")
         self.downloadPathBrowse = QPushButton(self.downloadPathRow)
         self.downloadPathBrowse.setObjectName("downloadPathBrowse")
@@ -334,15 +383,16 @@ class SettingDialog(QDialog):
         pathRow.addWidget(self.downloadPath)
         pathRow.addLayout(pathButtons)
         self.downloadGridLayout.addWidget(self.downloadPathRow, 0, _FIELD_COLUMN)
-        self.favoritesLabel = _FormLabel(download)
-        self.favoritesLabel.setObjectName("favoritesLabel")
-        self.downloadGridLayout.addWidget(self.favoritesLabel, 1, _LABEL_COLUMN, _LABEL_ALIGNMENT)
         # 즐겨찾기 — 목록 | 버튼 다섯(더하기 · 별칭 · 위 · 아래 · 지우기). 끌기 없음(설계 §14.6)
         self.favoritesBox = QWidget(download)
         self.favoritesBox.setObjectName("favoritesBox")
         favoritesRow = QHBoxLayout(self.favoritesBox)
         favoritesRow.setContentsMargins(0, 0, 0, 0)
         self.favoriteList = FavoriteList(self.favoritesBox)
+        # 라벨 글자는 목록 첫 줄 글자 높이에 맞춘다
+        self.favoritesLabel = _ListFormLabel(download, self.favoriteList)
+        self.favoritesLabel.setObjectName("favoritesLabel")
+        self.downloadGridLayout.addWidget(self.favoritesLabel, 1, _LABEL_COLUMN, _LABEL_ALIGNMENT)
         favoritesRow.addWidget(self.favoriteList, 1)
         favoriteButtons = QVBoxLayout()
         favoriteButtons.setContentsMargins(0, 0, 0, 0)

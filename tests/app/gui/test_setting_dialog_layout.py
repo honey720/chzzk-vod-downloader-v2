@@ -24,10 +24,12 @@ AlignVCenter로 되돌리거나 라벨을 평범한 QLabel(×7/4 없음)로 되�
 생성 순서를 바꾸면 ③이, QFormLayout으로 되돌리면 첫 게이트가 실패한다.
 """
 
+import os
+import tempfile
 from collections.abc import Iterator
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QDialogButtonBox,
@@ -55,6 +57,8 @@ ROWS = {
     "accountPage": [("nidautLabel", "nidaut"), ("nidsesLabel", "nidses")],
     "advancedPage": [("logsFolderLabel", "logsFolder")],
 }
+#: 목록 첫 줄 글자에 맞추는 라벨 — 폼 규칙 대조군 대신 `test_favorites_label_text_sits_on_the_first_row`가 잰다(#646)
+LIST_LABELS = {"favoritesLabel"}
 #: 탭 쪽마다 키보드 순서 — 위에서 아래로, 라벨 열 항목(도움말)은 자기 행 차례에
 TAB_ORDER = {
     "general": ["language", "afterDownload"],
@@ -239,6 +243,8 @@ def test_labels_sit_where_a_form_layout_would_put_them(dialog) -> None:
     for box_name, rows in ROWS.items():
         _show_page(dialog, box_name)
         for label_name, field_name in rows:
+            if label_name in LIST_LABELS:
+                continue
             label, field = _widget(dialog, label_name), _widget(dialog, field_name)
             expected_dy, expected_h = _form_reference(
                 label.font(), label.text(), field.geometry().height()
@@ -366,3 +372,96 @@ def test_extra_height_stays_below_the_rows(dialog) -> None:
     after = _rows_top_left(dialog)
     moved = {name: (y, after[name]) for name, y in at_hint.items() if after[name] != y}
     assert moved == {}, f"창을 키웠더니 행이 움직였다 (이름: sizeHint 높이 y → 키운 뒤 y): {moved}"
+
+
+# ================================================================ ⑥ 다운로드 탭 두 줄 행의 글자 줄(#646)
+
+TEXT_LINE_TOLERANCE = 1  # 라벨 · 칸 글자 가운데의 세로 차이 허용(px) — 정수 기하의 반올림 몫
+
+
+def _page_rect(widget: QWidget, page: QWidget) -> QRect:
+    """위젯 사각형을 탭 쪽 좌표로 옮긴다."""
+    return QRect(widget.mapTo(page, widget.rect().topLeft()), widget.size())
+
+
+def _text_center_y(label: QLabel, page: QWidget) -> float:
+    """세로 가운데 정렬 라벨의 글자 가운데 — 글자가 그려지는 자리(contentsRect)의 가운데, 쪽 좌표."""
+    assert label.isVisible(), f"{label.objectName()}: 전제 — 보인다"
+    assert label.alignment() & Qt.AlignmentFlag.AlignVCenter, (
+        f"{label.objectName()}: 전제 — 세로 가운데"
+    )
+    area = label.contentsRect()
+    top = label.mapTo(page, area.topLeft()).y()
+    return top + area.height() / 2
+
+
+def test_default_path_text_sits_on_the_label_line(dialog) -> None:
+    """기본 저장 위치 경로 글자가 라벨 글자와 같은 높이여야 한다.
+
+    다운로드 탭, 창 폭 최소 · +160 · +480
+    -> |라벨 글자 가운데 y - 경로 글자 가운데 y| <= 1, 경로 높이 = 라벨 높이
+    """
+    for extra in (0, 160, 480):
+        _at_width(dialog, extra)
+        page = _show_page(dialog, "downloadPage")
+        label, path = _widget(dialog, "downloadPathLabel"), _widget(dialog, "downloadPath")
+        gap = abs(_text_center_y(label, page) - _text_center_y(path, page))
+        assert gap <= TEXT_LINE_TOLERANCE, f"+{extra}: 라벨 · 경로 글자 가운데 차이 {gap}px"
+        assert path.height() == label.height(), (
+            f"+{extra}: 경로 높이 {path.height()} ≠ 라벨 높이 {label.height()}"
+        )
+
+
+def test_path_buttons_start_at_the_path_left_one_row_gap_below(dialog) -> None:
+    """경로 아래 버튼 줄은 경로 왼쪽 끝에서 시작하고 행 사이 간격만큼 아래여야 한다.
+
+    다운로드 탭, 창 폭 최소 · +480
+    -> 찾기….x = 경로.x(경로 글자 여백 0), 찾기….y - 경로 아래 끝 = 다른 행 사이 간격
+    """
+    for extra in (0, 480):
+        _at_width(dialog, extra)
+        page = _show_page(dialog, "downloadPage")
+        path = _page_rect(_widget(dialog, "downloadPath"), page)
+        browse = _page_rect(_widget(dialog, "downloadPathBrowse"), page)
+        assert _widget(dialog, "downloadPath").contentsMargins().left() == 0, (
+            "전제 — 경로 글자 여백 0"
+        )
+        assert browse.x() == path.x(), f"+{extra}: 찾기… x {browse.x()} ≠ 경로 x {path.x()}"
+        resolution = _page_rect(_widget(dialog, "defaultResolution"), page)
+        favorites = _page_rect(_widget(dialog, "favoritesBox"), page)
+        row_gap = resolution.y() - (favorites.y() + favorites.height())  # 다른 행 사이 간격
+        assert browse.y() - (path.y() + path.height()) == row_gap, (
+            f"+{extra}: 경로 · 버튼 사이 {browse.y() - (path.y() + path.height())} ≠ 행 사이 {row_gap}"
+        )
+
+
+@pytest.mark.parametrize("count", [0, 3])
+def test_favorites_label_text_sits_on_the_first_row(qapp, count: int) -> None:
+    """즐겨찾기 라벨 글자가 목록 첫 줄(빈 목록이면 안내 글) 글자와 같은 높이여야 한다.
+
+    즐겨찾기 0개 · 3개, 창 폭 최소 · +480
+    -> |라벨 글자 가운데 y - 첫 줄 별칭(안내 글) 글자 가운데 y| <= 1
+    """
+    values = settings.default_settings()
+    values["favoritePaths"] = [
+        {"name": f"폴더 {n}", "path": os.path.join(tempfile.gettempdir(), f"fav{n}")}
+        for n in range(count)
+    ]
+    write_settings(values)
+    dlg = SettingDialog()
+    dlg.show()
+    QApplication.processEvents()
+    try:
+        for extra in (0, 480):
+            _at_width(dlg, extra)
+            page = _show_page(dlg, "downloadPage")
+            favorites = dlg.favoriteList
+            first = favorites.row(0).nameLabel if count else favorites.emptyLabel
+            gap = abs(
+                _text_center_y(_widget(dlg, "favoritesLabel"), page) - _text_center_y(first, page)
+            )
+            assert gap <= TEXT_LINE_TOLERANCE, f"+{extra}: 라벨 · 첫 줄 글자 가운데 차이 {gap}px"
+    finally:
+        dlg.hide()
+        dlg.deleteLater()
+        QApplication.processEvents()

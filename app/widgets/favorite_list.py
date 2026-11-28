@@ -82,6 +82,19 @@ class FavoriteList(QFrame):
         width = self.fontMetrics().averageCharWidth() * MIN_CHARS
         return QSize(max(hint.width(), width), hint.height())
 
+    def firstLineCenter(self) -> int:
+        """목록 위쪽 끝에서 첫 줄(빈 목록이면 안내 글) 글자 가운데까지의 높이(px).
+
+        설정 창이 즐겨찾기 행 라벨을 첫 줄 글자에 맞출 때 쓴다(#646). 테두리 · 안쪽 여백 · 줄 위 여백 ·
+        글자 높이의 반이다 — 줄과 안내 글은 위 여백(`fieldPadY`)과 글꼴이 같다.
+        """
+        return (
+            self.contentsRect().top()
+            + self._layout.contentsMargins().top()
+            + theme.METRICS["fieldPadY"]
+            + self.fontMetrics().height() // 2
+        )
+
     def setEmptyText(self, text: str) -> None:
         """목록이 비었을 때 보이는 흐린 안내 글(번역은 부르는 쪽)."""
         self.emptyLabel.setText(text)
