@@ -87,9 +87,9 @@ def open_window(qapp: QApplication) -> Iterator[Callable[[], VodDownloader]]:
         win.hide()
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """설정 창의 경고 창을 띄우지 않고 글만 모은다."""
+    """설정 창의 경고 창을 띄우지 않고 글만 모은다 — 모든 테스트에 건다(뜻밖의 경고 창에 멈추지 않게)."""
     shown: list[str] = []
 
     def fake_warning(parent: object, title: str, text: str, *args: object) -> None:
@@ -325,15 +325,17 @@ def test_renamed_favorite_is_saved_and_shown_in_the_header_menu(
     open_window: Callable[[], VodDownloader],
     folders: Callable[[str], str],
     monkeypatch: pytest.MonkeyPatch,
+    warnings: list[str],
 ) -> None:
     """고른 줄의 별칭을 고치고 저장하면 설정 행과 헤더 메뉴의 그 줄 별칭이 새 별칭이어야 한다.
 
-    즐겨찾기 [가, 나], 「가」 줄 별칭 → 「새 이름」 저장 -> favoritePaths [새 이름(가 경로), 나], 메뉴 같은 목록
+    즐겨찾기 [가, 나], 「가」 줄 별칭 → 「새 이름」 저장 -> 경고 없음, favoritePaths [새 이름(가 경로), 나], 메뉴 같은 목록
     """
     write_settings({"favoritePaths": _favorites("가", "나", folders=folders)})
     win = open_window()
     _type_name(monkeypatch, "새 이름")
     _in_settings(win, _click("favoriteRename"))
+    assert warnings == []
     expected = [("새 이름", folders("가")), ("나", folders("나"))]
     saved = read_settings()["favoritePaths"]
     assert [(entry["name"], entry["path"]) for entry in saved] == expected
