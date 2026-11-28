@@ -5,6 +5,7 @@
 """
 
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pytest
 from PySide6.QtGui import QAction
@@ -99,6 +100,22 @@ def _choice(menu, kind: str, path: str) -> QAction:
 
 def _command(menu, name: str) -> QAction:
     return next(a for a in menu.actions() if a.objectName() == name)
+
+
+# 「W」 폴더 이름 최대 길이(1바이트 글자) — 리눅스 · macOS 이름 한도 255바이트 안
+WIDE_NAME_MAX = 150
+# 만들 폴더 경로 최대 길이 — Windows 폴더 만들기 한도 248자(MAX_PATH 260 − 12) 미만(#669)
+DIR_PATH_MAX = 247
+
+
+def _wide_dir(tmp_path: Path) -> Path:
+    """카드 표기로 줄여도 창보다 넓은 이름의 폴더를 만든다 — 글자당 폭이 넓은 「W」로 짓는다.
+
+    이름 길이는 `tmp_path`가 길수록 줄여 경로 전체를 `DIR_PATH_MAX` 안에 둔다(#669).
+    """
+    deep = tmp_path / ("W" * min(WIDE_NAME_MAX, DIR_PATH_MAX - len(str(tmp_path)) - 1))
+    deep.mkdir()
+    return deep
 
 
 class TestMenuRows:
@@ -373,10 +390,7 @@ class TestRowsAndLimits:
 
     def test_a_long_path_keeps_the_menu_within_the_window(self, make_window, tmp_path) -> None:
         """마지막 폴더 이름이 창보다 긴 경로를 고르면 메뉴 폭이 창 폭 − 24 이하여야 한다."""
-        # 카드 표기로 줄여도 마지막 폴더는 남아 창보다 넓은 이름 — 글자당 폭이 넓은 「W」(1바이트)로
-        # 리눅스 · macOS 이름 한도(255바이트)와 Windows 경로 한도(260자) 안에서 길게 짓는다
-        deep = tmp_path / ("W" * min(150, 250 - len(str(tmp_path))))
-        deep.mkdir()
+        deep = _wide_dir(tmp_path)
         win = make_window()
         win.resize(win.minimumWidth(), win.height())
         win.show()
@@ -397,10 +411,7 @@ class TestRowsAndLimits:
         """메뉴 폭이 상한에 걸려도 다른 줄(최근)의 흐린 경로가 보이는 메뉴 오른쪽 안쪽에 그려져야 한다."""
         from PySide6.QtCore import QRect
 
-        deep = tmp_path / (
-            "W" * min(150, 250 - len(str(tmp_path)))
-        )  # 창보다 넓은 이름 — 위 테스트와 같은 한도
-        deep.mkdir()
+        deep = _wide_dir(tmp_path)
         recent = folders("짧은 최근")
         _seed(recentPaths=[recent])
         win = make_window()
