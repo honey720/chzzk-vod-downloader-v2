@@ -27,7 +27,6 @@ from PySide6.QtCore import (
     QPoint,
     QRect,
     QSize,
-    QStandardPaths,
     Qt,
     QTimer,
 )
@@ -40,7 +39,7 @@ from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.footer_monitor import MonitorSnapshot, RunResult, combine_readings
 from app.viewmodels.menu_bubble import RESULT_STATES, MenuBubble
 from app.viewmodels.path_gates import check_fetch_path
-from app.viewmodels.save_location import SaveLocations
+from app.viewmodels.save_location import SaveLocations, system_download_path
 from app.views.dialog import SettingDialog
 from app.views.card_edit_dialog import CardEditDialog
 from app.views.section_dialog import SectionEditDialog
@@ -167,10 +166,7 @@ def _default_download_path() -> str:
     saved = settings.load_setting("downloadPath")
     if saved and os.path.isdir(saved):
         return saved
-    downloads = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
-    if downloads and os.path.isdir(downloads):
-        return downloads
-    return os.getcwd()
+    return system_download_path()  # ② · ③ — 설정 창 경로 줄과 같은 규칙
 
 
 def clamp_to_available(rect: QRect, available: QRect) -> QRect:

@@ -17,6 +17,7 @@ from PySide6.QtGui import QAction
 
 import app.views.mainWindow as mw_mod
 import app.system.settings as settings_mod
+import app.viewmodels.save_location as save_location_mod
 from app.widgets.header_controls import ChoiceMenu
 from typing import Never
 
@@ -111,13 +112,13 @@ def test_missing_saved_falls_back_to_standard_downloads(
     downloads.mkdir()
 
     class _StubPaths:
-        StandardLocation = mw_mod.QStandardPaths.StandardLocation
+        StandardLocation = save_location_mod.QStandardPaths.StandardLocation
 
         @staticmethod
         def writableLocation(kind) -> str:
             return str(downloads)
 
-    monkeypatch.setattr(mw_mod, "QStandardPaths", _StubPaths)
+    monkeypatch.setattr(save_location_mod, "QStandardPaths", _StubPaths)
     make, _ = window_factory
 
     assert make().saveLocations.current() == str(downloads)
@@ -129,13 +130,13 @@ def test_standard_missing_falls_back_to_cwd(
     """표준 폴더까지 없으면 cwd ③ — 소스 실행(개발) 관례 유지."""
 
     class _StubPaths:
-        StandardLocation = mw_mod.QStandardPaths.StandardLocation
+        StandardLocation = save_location_mod.QStandardPaths.StandardLocation
 
         @staticmethod
         def writableLocation(kind) -> str:
             return str(tmp_path / "없는 폴더")
 
-    monkeypatch.setattr(mw_mod, "QStandardPaths", _StubPaths)
+    monkeypatch.setattr(save_location_mod, "QStandardPaths", _StubPaths)
     make, _ = window_factory
 
     assert make().saveLocations.current() == os.getcwd()

@@ -5,7 +5,9 @@
 (`tests.support.settings_db`). 헤더 저장 위치 메뉴는 실제로 열어(`popup` → `aboutToShow`) 줄을 읽는다.
 """
 
+import os
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
@@ -16,11 +18,13 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QInputDialog,
     QMessageBox,
+    QWidget,
 )
 from pytestqt.qtbot import QtBot
 
 import app.theme as theme
 import app.viewmodels.content_viewmodel as content_viewmodel_module
+import app.viewmodels.save_location as save_location_module
 import CVDv2 as main_module
 from app.views.dialog import TAB_KEYS, SettingDialog
 from app.views.mainWindow import VodDownloader
@@ -202,6 +206,36 @@ def test_added_favorite_is_saved_and_shown_in_the_header_menu(
     saved = read_settings()["favoritePaths"]
     assert saved == [{"name": "가", "path": folders("가")}, {"name": "나 별칭", "path": added}]
     assert _menu_favorites(win) == [(entry["name"], entry["path"]) for entry in saved]
+
+
+def test_rows_made_after_adding_show_tips_in_the_bubble(
+    open_window: Callable[[], VodDownloader],
+    folders: Callable[[str], str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """다운로드 탭에서 즐겨찾기를 더한 뒤 목록 줄의 위젯 모두에 툴팁 필터가 걸려 있어야 한다.
+
+    즐겨찾기 [가], 더하기(폴더 「나」 · 별칭 「나 별칭」)
+    -> 줄 2개, 목록 아래 위젯 전부 property("tipInstalled") 참
+    """
+    write_settings({"favoritePaths": _favorites("가", folders=folders)})
+    win = open_window()
+    _pick_folder(monkeypatch, folders("나"))
+    _type_name(monkeypatch, "나 별칭")
+    seen: dict = {}
+
+    def change(dialog: SettingDialog) -> None:
+        dialog.favoriteButtons["favoriteAdd"].click()
+        rows = dialog.favoriteList
+        seen["count"] = rows.count()
+        seen["missing"] = [
+            w.objectName() or type(w).__name__
+            for w in rows.findChildren(QWidget)
+            if not w.property("tipInstalled")
+        ]
+
+    _in_settings(win, change, button="cancel")
+    assert seen == {"count": 2, "missing": []}
 
 
 def test_header_menu_favorite_shows_in_the_download_tab(
@@ -541,6 +575,36 @@ def test_default_location_button_clears_the_saved_path(
     assert seen["enabled"] is False
     assert seen["tip"] == seen["system"]
     assert read_settings()["downloadPath"] == ""
+
+
+def test_empty_default_shows_the_start_location_when_downloads_is_missing(
+    open_window: Callable[[], VodDownloader],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """기본 저장 위치가 빈 값이고 시스템 다운로드 폴더가 없으면 경로 줄이 본 창 시작 위치(작업 폴더)여야 한다.
+
+    downloadPath "", 시스템 다운로드 폴더 = 없는 폴더 -> 경로 줄 툴팁 = 작업 폴더 = 본 창 기본 위치
+    """
+
+    class _MissingDownloads:
+        StandardLocation = save_location_module.QStandardPaths.StandardLocation
+
+        @staticmethod
+        def writableLocation(kind: object) -> str:
+            return str(tmp_path / "없는 폴더")
+
+    monkeypatch.setattr(save_location_module, "QStandardPaths", _MissingDownloads)
+    write_settings({"downloadPath": ""})
+    win = open_window()
+    seen: dict = {}
+
+    def change(dialog: SettingDialog) -> None:
+        seen["tip"] = dialog.downloadPath.toolTip()
+
+    _in_settings(win, change, button="cancel")
+    assert seen["tip"] == os.getcwd()
+    assert win.saveLocations.default() == os.getcwd()
 
 
 def test_browse_cancelled_keeps_the_path_and_save_off(

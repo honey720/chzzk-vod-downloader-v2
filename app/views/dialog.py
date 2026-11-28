@@ -6,7 +6,7 @@ import app.theme as theme
 from app.system import settings
 from app.viewmodels import card_display
 from app.viewmodels.path_gates import normalize_path
-from app.viewmodels.save_location import favorite_problem, folder_name
+from app.viewmodels.save_location import favorite_problem, folder_name, system_download_path
 from app.widgets.choice_combo import ChoiceCombo
 from app.widgets.eliding_label import PathLabel
 from app.widgets.favorite_list import NO_SELECTION, FavoriteList
@@ -47,7 +47,6 @@ from PySide6.QtCore import (
     QKeyCombination,
     QMetaObject,
     QSize,
-    QStandardPaths,
     Qt,
     QUrl,
 )
@@ -172,7 +171,13 @@ class _ListFormLabel(_FormLabel):
         self._anchor = anchor
 
     def _topInset(self) -> int:
-        own_center = QLabel.sizeHint(self).height() * 7 // 8  # 폼 규칙 높이(×7/4)의 가운데
+        """목록 첫 줄 글자 가운데까지 모자란 높이 — 지금 위 여백과 상관없이 같은 값이다.
+
+        `QLabel.sizeHint`의 높이에는 지금 위 여백이 들어 있다. 그 여백을 빼고 글자 높이로 가운데를 내야
+        부를 때마다 여백이 바뀌지 않는다 — 빼지 않으면 여백이 레이아웃이 크기를 묻는 횟수에 따라 오간다.
+        """
+        text_height = QLabel.sizeHint(self).height() - self.contentsMargins().top()
+        own_center = text_height * 7 // 8  # 폼 규칙 높이(×7/4)의 가운데
         return max(self._anchor.firstLineCenter() - own_center, 0)
 
     def sizeHint(self) -> QSize:
@@ -784,8 +789,8 @@ class SettingDialog(QDialog):
 
     @staticmethod
     def systemDownloadPath() -> str:
-        """시스템 다운로드 폴더 — 기본 저장 위치가 빈 값일 때 쓰는 곳(본 창 시작 규칙과 같다)."""
-        return QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+        """기본 저장 위치가 빈 값일 때 쓰는 곳 — 본 창 시작 위치와 같은 함수다(없으면 작업 폴더)."""
+        return system_download_path()
 
     def _refreshDownloadPath(self) -> None:
         """경로 줄을 칸 값으로 다시 그린다 — 빈 값이면 시스템 다운로드 폴더를 보이고 「기본 위치」를 끈다."""
@@ -813,6 +818,8 @@ class SettingDialog(QDialog):
     def _showFavorites(self, selected: int) -> None:
         """즐겨찾기 목록을 칸 값으로 다시 그리고 `selected` 줄을 고른다 — 바뀐 값 · 버튼도 맞춘다."""
         self.favoriteList.setEntries(self._favorites, selected)
+        # 새로 만든 줄에도 툴팁 필터를 건다 — 창을 열 때 건 필터는 그때 있던 줄에만 있다
+        install_tips(self.favoriteList)
         self._refreshFavoriteButtons()
         self._refreshButtons()
 

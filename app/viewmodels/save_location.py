@@ -14,7 +14,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PySide6.QtCore import QCoreApplication, QObject, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QStandardPaths, Signal
 
 from app.system import settings
 from app.viewmodels.path_gates import check_remember_path, normalize_path
@@ -35,6 +35,18 @@ class LocationEntry:
 def folder_name(path: str) -> str:
     """경로의 마지막 폴더 이름 — 루트(`C:\\` · `/`)처럼 이름이 없으면 경로 그대로."""
     return os.path.basename(path.rstrip("\\/")) or path
+
+
+def system_download_path() -> str:
+    """설정 `downloadPath`가 빈 값일 때의 기본 저장 위치 — 시스템 다운로드 폴더, 없으면 작업 폴더 (#159 · #646).
+
+    시스템 다운로드 폴더는 실존할 때만 쓴다 — `writableLocation`은 폴더가 있는지 보장하지 않는다. 본 창의
+    시작 위치와 설정 창 다운로드 탭의 경로 줄이 이 함수 하나를 쓴다 — 둘이 다른 곳을 보이지 않게 한다.
+    """
+    downloads = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+    if downloads and os.path.isdir(downloads):
+        return downloads
+    return os.getcwd()
 
 
 def favorite_problem(

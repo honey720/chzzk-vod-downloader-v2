@@ -465,3 +465,17 @@ def test_favorites_label_text_sits_on_the_first_row(qapp, count: int) -> None:
         dlg.hide()
         dlg.deleteLater()
         QApplication.processEvents()
+
+
+def test_favorites_label_size_stays_the_same_when_asked_again(dialog) -> None:
+    """즐겨찾기 라벨에 크기를 거듭 물어도 높이 · 위 여백이 처음 물은 값과 같아야 한다.
+
+    다운로드 탭, sizeHint 5번 -> (높이, 위 여백) 5번 모두 같음
+    """
+    _show_page(dialog, "downloadPage")
+    label = _widget(dialog, "favoritesLabel")
+    seen = []
+    for _ in range(5):
+        height = label.sizeHint().height()
+        seen.append((height, label.contentsMargins().top()))
+    assert len(set(seen)) == 1, f"물을 때마다 바뀜: {seen}"
