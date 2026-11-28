@@ -315,7 +315,7 @@ class SettingDialog(QDialog):
             self.downloadPathLabel, 0, _LABEL_COLUMN, _LABEL_ALIGNMENT
         )
         # 경로 줄 — 카드 편집 창의 저장 위치 줄과 같은 부품(경로 · 찾기… · 기본 위치). 경로가 위 줄 전체를
-        # 쓰고 버튼은 아래 줄이다 — 한 줄이면 창 최소폭에서 경로가 「/…」만 남는다(offscreen 캡처)
+        # 쓰고 버튼은 아래 줄이다 — 한 줄이면 창 최소폭에서 경로가 「/…」만 남는다(offscreen 스크린샷)
         self.downloadPathRow = QWidget(download)
         self.downloadPathRow.setObjectName("downloadPathRow")
         pathRow = QVBoxLayout(self.downloadPathRow)

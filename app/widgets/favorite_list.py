@@ -1,9 +1,9 @@
 """설정 창 다운로드 탭의 즐겨찾기 목록 — 별칭 · 흐린 경로 한 줄씩, 고른 줄 하나 (#646).
 
-목록은 Tab 정지 하나다. 줄을 누르거나 위 · 아래 화살표(Home · End)로 고른다. 줄 자체는 초점을 받지 않는다 —
+목록은 Tab 정지 하나다. 줄을 누르거나 위 · 아래 화살표(Home · End)로 고른다. 줄 자체는 keyboard focus를 받지 않는다 —
 줄마다 Tab이 멈추면 즐겨찾기 10개를 지나야 다음 칸에 닿는다. 끌어 옮기기는 없다(설계 §14.6 — 순서는 위 ·
 아래 버튼). 모양은 전역 QSS(`QFrame#favoriteList` · `QFrame#favoriteRow` · `QLabel#favoritePath`)가 칠한다 —
-입력 칸과 같은 면 · 테두리이고 초점이면 테두리가 강조색이다.
+입력 칸과 같은 면 · 테두리이고 focus를 받으면 테두리가 강조색이다.
 
 목록 값은 들고 있지 않다 — 보일 줄(`setEntries`)과 고른 줄 번호만 든다. 더하기 · 순서 · 지우기는 설정 창이 한다.
 """
@@ -44,7 +44,7 @@ class _FavoriteRow(QFrame):
         layout.addWidget(self.pathLabel, 1)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """왼쪽 단추로 누르면 이 줄을 고르고 목록에 초점을 준다."""
+        """왼쪽 단추로 누르면 이 줄을 고르고 목록에 focus를 준다."""
         if event.button() == Qt.MouseButton.LeftButton:
             self._owner.setFocus(Qt.FocusReason.MouseFocusReason)
             self._owner.select(self._index)
@@ -77,7 +77,7 @@ class FavoriteList(QFrame):
 
     def minimumSizeHint(self) -> QSize:
         """최소폭은 글자 `MIN_CHARS`개 폭이다 — 줄 라벨은 말줄임이라 최소폭이 거의 0이어서, 그대로 두면 탭
-        줄이 짧은 언어(한국어)의 창 최소폭에서 별칭이 「…」만 남는다(offscreen 캡처)."""
+        줄이 짧은 언어(한국어)의 창 최소폭에서 별칭이 「…」만 남는다(offscreen 스크린샷)."""
         hint = super().minimumSizeHint()
         width = self.fontMetrics().averageCharWidth() * MIN_CHARS
         return QSize(max(hint.width(), width), hint.height())
