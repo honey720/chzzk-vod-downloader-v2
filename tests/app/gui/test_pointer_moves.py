@@ -83,6 +83,26 @@ def test_a_corner_on_the_goal_widget_is_skipped(qapp: QApplication) -> None:
         top.hide()
 
 
+def test_a_window_on_top_does_not_decide_the_corner(qapp: QApplication) -> None:
+    """같은 자리에 다른 창이 위에 겹쳐 있어도 귀퉁이는 대상 창의 위젯으로 골라야 한다.
+
+    대상 창 자식 (0, 0, 100, 60), 위에 겹친 창 자식 (40, 30, 100, 60), 대상 창 (50, 40)으로 첫 이동
+    -> 원래 호출 (298, 1) · (50, 40)
+    """
+    below = _show((0, 0, 100, 60))
+    above = _show((40, 30, 100, 60))
+    try:
+        above.windowHandle().setPosition(below.windowHandle().position())
+        above.raise_()
+        QApplication.processEvents()
+        moves, calls = _recorder()
+        moves(below.windowHandle(), QPoint(50, 40))
+        assert [pos for _, pos in calls] == [QPoint(WIDTH - 2, 1), QPoint(50, 40)]
+    finally:
+        above.hide()
+        below.hide()
+
+
 def test_a_corner_that_was_the_last_point_is_skipped(shown: QWindow, qapp: QApplication) -> None:
     """새 창의 첫 이동에서 왼쪽 위 귀퉁이가 바로 앞 이동의 화면 자리면 그 귀퉁이를 건너뛰어야 한다.
 

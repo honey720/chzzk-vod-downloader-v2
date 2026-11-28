@@ -18,7 +18,7 @@ from typing import Any
 
 from PySide6.QtCore import QPoint
 from PySide6.QtGui import QWindow
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 # 귀퉁이에서 안쪽으로 들어오는 거리(px) — (0, 0)은 `QTest.mouseMove`가 「자리 없음」으로 읽어 창 가운데로 보낸다
 CORNER_INSET = 1
@@ -35,6 +35,14 @@ def _corners(window: QWindow) -> list[QPoint]:
     ]
     # 같은 귀퉁이 한 칸 안쪽 — 귀퉁이가 바로 앞 이동 자리일 때 쓴다
     return near + [corner + QPoint(1 if corner.x() < right else -1, 0) for corner in near]
+
+
+def _widget_in(window: QWindow, local: QPoint) -> QWidget | None:
+    """`window`의 위젯 트리에서 `local` 자리의 위젯을 찾는다 — 겹친 다른 창은 보지 않는다."""
+    for top in QApplication.topLevelWidgets():
+        if top.windowHandle() is window:
+            return top.childAt(local) or top
+    return None
 
 
 class PointerMoves:
@@ -63,7 +71,7 @@ class PointerMoves:
             local = pos
         goal = target.mapToGlobal(local)
         if self._needs_step(target, goal):
-            self._move(target, self._step_point(target, goal))
+            self._move(target, self._step_point(target, local, goal))
         self._call(target, pos, args, kwargs)
         self._last_window = weakref.ref(target)
         self._last_global = goal
@@ -72,16 +80,16 @@ class PointerMoves:
         last = self._last_window() if self._last_window is not None else None
         return last is not window or goal == self._last_global
 
-    def _step_point(self, window: QWindow, goal: QPoint) -> QPoint:
+    def _step_point(self, window: QWindow, local: QPoint, goal: QPoint) -> QPoint:
         """바로 앞 자리 · 목표와 화면 좌표가 다르고, 되도록 목표와 다른 위젯이 있는 귀퉁이를 고른다."""
         usable = [
             corner
             for corner in _corners(window)
             if window.mapToGlobal(corner) not in (goal, self._last_global)
         ]
-        at_goal = QApplication.widgetAt(goal)
+        at_goal = _widget_in(window, local)
         for corner in usable:
-            if QApplication.widgetAt(window.mapToGlobal(corner)) is not at_goal:
+            if _widget_in(window, corner) is not at_goal:
                 return corner
         return usable[0]
 
