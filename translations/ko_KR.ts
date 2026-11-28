@@ -647,6 +647,54 @@ Check your connection and cookies, then open this window again.</source>
         <translation>도움말</translation>
     </message>
     <message>
+        <source>Default save location</source>
+        <translation>기본 저장 위치</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>찾기…</translation>
+    </message>
+    <message>
+        <source>Default location</source>
+        <translation>기본 위치</translation>
+    </message>
+    <message>
+        <source>Use the system Downloads folder</source>
+        <translation>시스템 다운로드 폴더를 씁니다</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation>즐겨찾기</translation>
+    </message>
+    <message>
+        <source>No favorites</source>
+        <translation>즐겨찾기 없음</translation>
+    </message>
+    <message>
+        <source>Add…</source>
+        <translation>더하기…</translation>
+    </message>
+    <message>
+        <source>Rename…</source>
+        <translation>별칭 고치기…</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>위로</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>아래로</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>지우기</translation>
+    </message>
+    <message>
+        <source>Default resolution</source>
+        <translation>기본 해상도</translation>
+    </message>
+    <message>
         <source>General</source>
         <translation>일반</translation>
     </message>
@@ -675,6 +723,10 @@ Check your connection and cookies, then open this window again.</source>
         <translation>시스템 종료</translation>
     </message>
     <message>
+        <source>Highest</source>
+        <translation>가장 높은 것</translation>
+    </message>
+    <message>
         <source>Save the changed settings?</source>
         <translation>바뀐 설정을 저장할까요?</translation>
     </message>
@@ -689,6 +741,22 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>Go back</source>
         <translation>돌아가기</translation>
+    </message>
+    <message>
+        <source>Select download folder</source>
+        <translation>저장 폴더 선택</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>별칭</translation>
+    </message>
+    <message>
+        <source>Add to favorites</source>
+        <translation>즐겨찾기에 더하기</translation>
+    </message>
+    <message>
+        <source>Rename favorite</source>
+        <translation>즐겨찾기 별칭 고치기</translation>
     </message>
     <message>
         <source>Warning</source>

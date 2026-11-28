@@ -648,6 +648,54 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Settings</translation>
     </message>
     <message>
+        <source>Default save location</source>
+        <translation>Default save location</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>Browse…</translation>
+    </message>
+    <message>
+        <source>Default location</source>
+        <translation>Default location</translation>
+    </message>
+    <message>
+        <source>Use the system Downloads folder</source>
+        <translation>Use the system Downloads folder</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation>Favorites</translation>
+    </message>
+    <message>
+        <source>No favorites</source>
+        <translation>No favorites</translation>
+    </message>
+    <message>
+        <source>Add…</source>
+        <translation>Add…</translation>
+    </message>
+    <message>
+        <source>Rename…</source>
+        <translation>Rename…</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>Move up</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>Move down</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Remove</translation>
+    </message>
+    <message>
+        <source>Default resolution</source>
+        <translation>Default resolution</translation>
+    </message>
+    <message>
         <source>General</source>
         <translation>General</translation>
     </message>
@@ -676,6 +724,10 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>shutdown</translation>
     </message>
     <message>
+        <source>Highest</source>
+        <translation>Highest</translation>
+    </message>
+    <message>
         <source>Save the changed settings?</source>
         <translation>Save the changed settings?</translation>
     </message>
@@ -690,6 +742,22 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>Go back</source>
         <translation>Go back</translation>
+    </message>
+    <message>
+        <source>Select download folder</source>
+        <translation>Select download folder</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Name</translation>
+    </message>
+    <message>
+        <source>Add to favorites</source>
+        <translation>Add to favorites</translation>
+    </message>
+    <message>
+        <source>Rename favorite</source>
+        <translation>Rename favorite</translation>
     </message>
     <message>
         <source>How to get a Chzzk cookie&lt;br&gt;1. Log in to &lt;a href=&apos;{}&apos;&gt;Chzzk&lt;/a&gt;.&lt;br&gt;2. Press F12 to open the developer tool. &lt;br&gt;3. Click Cookies &gt; https://chzzk.naver.com on the Application tab. &lt;br&gt;4. Add the values of &apos;NID_AUT&apos; and &apos;NID_SES&apos;.</source>

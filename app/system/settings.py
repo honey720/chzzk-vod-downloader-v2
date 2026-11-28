@@ -228,6 +228,8 @@ def _window(value: object) -> dict:
 FAVORITES_MAX = 10
 #: 최근 저장 위치를 기억하는 수 — 메뉴에는 지금 위치 · 즐겨찾기를 뺀 앞 3개만 보인다(#495).
 RECENT_PATHS_MAX = 10
+#: 기본 해상도 선택지 — "best"(가장 높은 것) 또는 해상도 정수(설정 창 다운로드 탭의 차례, #646).
+RESOLUTION_CHOICES = ("best", 1080, 720, 480, 360, 144)
 #: 목록 정렬 — `<기준>:<방향>`. 기준은 추가된 순서 · 제목 · 채널명 · 업로드 · 상태(#495).
 SORT_ORDERS = tuple(
     f"{by}:{direction}"
@@ -275,6 +277,19 @@ def _favorites(value: object) -> list:
     return cleaned
 
 
+def _resolution_choice(value: object) -> str | int:
+    """`defaultResolution` — `RESOLUTION_CHOICES` 중 하나만 통과한다(#646).
+
+    정수는 bool이 아닌 정수 또는 정수값 float(JSON을 거친 값)만 받는다 — `True`가 1로 읽히지 않게.
+    """
+    if value == "best":
+        return "best"
+    number = _integer(value)
+    if number not in RESOLUTION_CHOICES:
+        raise InvalidSetting("not one of " + "/".join(map(str, RESOLUTION_CHOICES)))
+    return number
+
+
 #: 설정 키 표 — 새 키는 여기 한 줄로 끝난다. DB 버전은 키가 아니라 `PRAGMA user_version`이다.
 SCHEMA: tuple[Setting, ...] = (
     Setting("cookies", {name: "" for name in COOKIE_NAMES}, _cookies),
@@ -287,8 +302,12 @@ SCHEMA: tuple[Setting, ...] = (
     # 골라도 이 값은 바뀌지 않는다(바꾼 위치는 recentPaths에 남는다). 2.11까지는 마지막으로 쓴
     # 경로를 여기 적었으므로(#159 · #165) 올린 유저는 그 경로가 기본 위치가 된다.
     Setting("downloadPath", "", _string),
-    # 저장 위치 즐겨찾기 — [{"name": 별칭, "path": 경로}], 고른 순서(#495). 고치기 · 순서 화면은 설정 메뉴 단계
+    # 저장 위치 즐겨찾기 — [{"name": 별칭, "path": 경로}], 보이는 차례(#495). 설정 창 다운로드 탭이
+    # 더하기 · 별칭 · 순서 · 지우기를 하고 헤더 저장 위치 메뉴가 같은 목록을 본다(#646)
     Setting("favoritePaths", [], _favorites),
+    # 기본 해상도 — 카드를 추가할 때 고르는 해상도. "best" = 가장 높은 것(2.11까지의 동작), 정수면 그
+    # 해상도, 없으면 그보다 낮은 것 중 가장 높은 것(#646). 저장 뒤 추가하는 카드부터
+    Setting("defaultResolution", "best", _resolution_choice),
     # 최근 저장 위치 — 최근에 고른 것이 앞(#495). 즐겨찾기에 있는 경로는 넣지 않는다
     Setting("recentPaths", [], _path_list(RECENT_PATHS_MAX)),
     # 목록 정렬 — SORT_ORDERS 중 하나(#495). 보이는 순서이자 다운로드 차례다

@@ -1450,10 +1450,19 @@ class VodDownloader(QMainWindow):
             self._syncDownloadButton()
 
     def onSetting(self) -> None:
-        """설정 창을 띄운다 — 저장하면 카드 화면 설정을 다시 읽어 목록에 건다 (#645)."""
+        """설정 창을 띄운다 — 저장하면 카드 화면 설정(#645)과 저장 위치(#646)를 다시 읽는다."""
         self.dialog = SettingDialog(parent=self)
         self.dialog.accepted.connect(self.applyCardDisplay)
+        self.dialog.accepted.connect(self.applySaveLocations)
         self.dialog.exec_()
+
+    def applySaveLocations(self) -> None:
+        """설정의 기본 저장 위치 · 즐겨찾기를 헤더 저장 위치 버튼에 다시 건다 (#646).
+
+        지금 위치가 기본 위치였으면 새 기본 위치로 함께 옮긴다(`SaveLocations.reload`). 버튼 글 · 메뉴 ·
+        카드 경로 표시 기준 · 여유 공간은 `changed`가 맞춘다(`_onSaveLocationChanged`).
+        """
+        self.saveLocations.reload(_default_download_path())
 
     def applyCardDisplay(self, os_value: bool | None = None) -> None:
         """카드 화면 설정을 다시 읽고, 달라졌으면 목록의 카드와 창 최소폭에 건다 (#645).

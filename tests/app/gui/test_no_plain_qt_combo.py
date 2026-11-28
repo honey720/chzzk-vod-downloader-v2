@@ -68,14 +68,14 @@ def test_main_window_has_no_plain_qt_combo(qtbot: QtBot, tmp_path) -> None:
 def test_setting_dialog_has_no_plain_qt_combo(qtbot: QtBot, tmp_path) -> None:
     """본 창이 띄운 설정 창에 Qt 콤보박스가 없고 선택 칸 둘이 ChoiceCombo여야 한다.
 
-    설정 창(부모 = 본 창) -> Qt 콤보박스 [], ChoiceCombo ["afterDownload", "language"]
+    설정 창(부모 = 본 창) -> Qt 콤보박스 [], ChoiceCombo ["afterDownload", "defaultResolution", "language"]
     """
     win = open_window(tmp_path)
     dialog = SettingDialog(parent=win)  # 본 창의 onSetting과 같은 부모 — exec_ 대신 show
     dialog.show()
     qtbot.waitExposed(dialog)
     assert _plain_qt_combos(dialog) == []
-    assert sorted(_choice_combos(dialog)) == ["afterDownload", "language"]
+    assert sorted(_choice_combos(dialog)) == ["afterDownload", "defaultResolution", "language"]
 
 
 def test_card_edit_dialog_has_no_plain_qt_combo(qtbot: QtBot, tmp_path) -> None:

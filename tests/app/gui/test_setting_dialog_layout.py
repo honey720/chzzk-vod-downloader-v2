@@ -47,13 +47,28 @@ from tests.support.settings_db import write_settings
 #: 각 탭 쪽의 (라벨, 필드) 짝 — objectName. 도움말 버튼은 라벨 열에 홀로 있다.
 ROWS = {
     "generalPage": [("languageLabel", "language"), ("afterDownloadLabel", "afterDownload")],
+    "downloadPage": [  # 경로 줄 · 즐겨찾기는 칸 묶음 위젯이 필드다(#646)
+        ("downloadPathLabel", "downloadPathRow"),
+        ("favoritesLabel", "favoritesBox"),
+        ("defaultResolutionLabel", "defaultResolution"),
+    ],
     "accountPage": [("nidautLabel", "nidaut"), ("nidsesLabel", "nidses")],
     "advancedPage": [("logsFolderLabel", "logsFolder")],
 }
 #: 탭 쪽마다 키보드 순서 — 위에서 아래로, 라벨 열 항목(도움말)은 자기 행 차례에
 TAB_ORDER = {
     "general": ["language", "afterDownload"],
-    "download": [],
+    "download": [  # 경로 줄 버튼 둘 → 즐겨찾기 목록 → 즐겨찾기 버튼 다섯 → 기본 해상도(#646)
+        "downloadPathBrowse",
+        "downloadPathDefault",
+        "favoriteList",
+        "favoriteAdd",
+        "favoriteRename",
+        "favoriteUp",
+        "favoriteDown",
+        "favoriteRemove",
+        "defaultResolution",
+    ],
     "display": ["cardStateTint", "cardCompactThumbnail", "animations"],  # 체크박스 셋(#645)
     "account": ["nidaut", "nidses", "helpButton"],
     "advanced": ["logsFolder"],
@@ -266,7 +281,7 @@ def test_tab_order_runs_tabs_then_the_page_then_save_cancel(dialog, key: str) ->
     """Tab 은 탭 다섯 → 고른 탭 쪽의 칸(위에서 아래로) → 저장/취소 순이다.
 
     일반: 언어 → 다운로드 후 동작, 화면: 색조 → 썸네일 줄이기 → 애니메이션, 계정: 쿠키 두 칸 → 도움말,
-    고급: 로그 폴더, 다운로드: 칸 없음
+    고급: 로그 폴더, 다운로드: 찾기… → 기본 위치 → 즐겨찾기 목록 → 버튼 다섯 → 기본 해상도
     """
     dialog.showTab(TAB_KEYS.index(key))
     QApplication.processEvents()

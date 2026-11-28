@@ -41,6 +41,7 @@ from app.viewmodels.data import SECTION_CHECK_PENDING, ContentItem
 from app.viewmodels.model import ContentListModel
 from app.viewmodels.section_edit import SectionRefitter, SectionSizer
 from app.network import NetworkManager
+from app.system import settings
 from core.chzzk import metadata_service
 from core.chzzk.metadata_service import MetadataError
 from core.utils.paths import build_output_path, ensure_unique_path
@@ -101,6 +102,12 @@ def probe_writable(directory: str, timeout_s: float = _WRITE_PROBE_TIMEOUT_S) ->
     worker.join(timeout_s)
     reason = outcome.get("reason", "timeout")
     return reason == "", reason
+
+
+def preferred_resolution() -> int | None:
+    """설정 `defaultResolution`을 카드 추가 때 고를 해상도로 읽는다 — None은 가장 높은 것이다 (#646)."""
+    value = settings.load_setting("defaultResolution")
+    return None if value == "best" else value
 
 
 # 다운로드 대상이 아닌 카드 상태 — 끝났거나(완료 · 실패) 아직 조회 중이다
@@ -268,6 +275,9 @@ class ContentViewModel(QObject):
         # 파괴되어 큐에 남은 finished/error 전달이 유실된다 (#124)
         self._pendingPlaceholders = {}
         self._relays = {}
+        # 조회 중인 워커 → 등록할 때의 기본 해상도(None = 가장 높은 것). 조회 사이 설정을 바꿔도 등록한
+        # 때의 값으로 고른다 — 「저장 뒤 추가하는 카드부터」(#646)
+        self._pendingResolutions: dict[FetchJob, int | None] = {}
         # 구간 편집 창이 열려 있는 카드 (#309). 다운로드 대상에서 건너뛴다 — 상태
         # (DownloadState)로 만들지 않는다. 엔진과 카드는 이 값을 모른다
         self._editingItem: ContentItem | None = None
@@ -307,6 +317,7 @@ class ContentViewModel(QObject):
         relay = _WorkerRelay(self, worker)
         self._pendingPlaceholders[worker] = placeholder
         self._relays[worker] = relay
+        self._pendingResolutions[worker] = preferred_resolution()
         if len(self._pendingPlaceholders) == 1:
             self.fetchingChanged.emit(True)
 
@@ -319,6 +330,7 @@ class ContentViewModel(QObject):
         # result는 (vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson) 형식
         placeholder = self._pendingPlaceholders.pop(worker, None)
         self._relays.pop(worker, None)
+        preferred = self._pendingResolutions.pop(worker, None)
         self._emitFetchingDone()
         if placeholder is None:
             return
@@ -348,12 +360,14 @@ class ContentViewModel(QObject):
             content_type,
             liveRewindPlaybackJson,
         )
+        item.preferred_resolution = preferred
         self.model.removeRows(row, 1)
         self.model.addItem(item, row)
 
     def _workerError(self, worker, error_message) -> None:
         placeholder = self._pendingPlaceholders.pop(worker, None)
         self._relays.pop(worker, None)
+        self._pendingResolutions.pop(worker, None)
         self._emitFetchingDone()
         if placeholder is not None:
             row = self.model.getRow(placeholder)

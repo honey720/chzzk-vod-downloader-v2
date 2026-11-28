@@ -335,11 +335,13 @@ FIELD_SWITCHES = {
         "general",
         "language",
     ),
-    "empty-tab-to-tab-button": (
+    # 다운로드 탭은 #646에서 칸이 생겼다 — 첫 Tab 순서 위젯은 기본 저장 위치 「찾기…」다. Tab이 멈출 위젯이
+    # 없는 탭의 갈래는 test_tab_switch_key_skips_controls_tab_does_not_stop_at가 잰다
+    "to-download-first-field": (
         [Qt.KeyboardModifier.NoModifier],
         "language",
         "download",
-        "settingsTab_download",
+        "downloadPathBrowse",
     ),
 }
 
@@ -465,7 +467,7 @@ REAL_FOCUS_KEYS: dict[str, tuple[str, list[tuple[list[str], str]], list[str], st
             "tab",
             "settingsTab_advanced",
         ),
-        ("field-to-empty-tab", [([], "tab")], [os_key_input.CTRL], "tab", "settingsTab_download"),
+        ("field-to-download", [([], "tab")], [os_key_input.CTRL], "tab", "downloadPathBrowse"),
     )
 } | {
     "darwin-button-cmd-next": (

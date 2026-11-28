@@ -967,3 +967,38 @@ QLabel#cardEditSectionLines {
     color: @textMuted;
     font-size: @fontSizeMeta;
 }
+
+/* 설정 창 다운로드 탭 즐겨찾기 목록 (#646) — 입력 칸과 같은 면 · 테두리 · 모서리, 초점이면 강조색 테두리.
+ * 고른 줄은 바 고른 면(barSelected)이고 경로 · 빈 목록 안내는 흐린 글이다. 줄은 초점을 받지 않는다 */
+QFrame#favoriteList {
+    background-color: @fieldBg;
+    border: 1px solid @fieldEdge;
+    border-radius: @radius;
+}
+
+QFrame#favoriteList:hover {
+    border-color: @fieldEdgeHover;
+}
+
+QFrame#favoriteList:focus {
+    border-color: @accent;
+}
+
+QFrame#favoriteRow {
+    background-color: transparent;
+    border: none;
+    border-radius: @menuHoverRadius;
+}
+
+QFrame#favoriteRow[selected="true"] {
+    background-color: @barSelected;
+}
+
+QLabel#favoriteName {
+    color: @text;
+}
+
+QLabel#favoritePath,
+QLabel#favoriteEmpty {
+    color: @textMuted;
+}

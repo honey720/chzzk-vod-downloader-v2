@@ -25,7 +25,7 @@ DASH · 암호화 VOD는 화질 이름(qualityId)이 같은 것만 합친다(cor
 """
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 # 트랙 이름의 해상도 표기 — "1080p" · "1080P" · "1080"
@@ -124,3 +124,24 @@ def dedupe_by_resolution(tracks: Iterable[tuple[int, Any, int]]) -> list[list]:
         if current is None or bandwidth > current[1]:
             kept[resolution] = (base_url, bandwidth)
     return [[resolution, kept[resolution][0]] for resolution in sorted(kept)]
+
+
+def pick_preferred(resolutions: Sequence[int], preferred: int | None) -> int:
+    """기본 해상도 설정으로 고를 항목의 번호를 돌려준다 (#646).
+
+    `resolutions`는 카드가 보이는 차례(해상도 **내림차순**, 같은 해상도는 카드가 정한 차례)의 해상도다.
+    `preferred`가 None이면 0번(가장 높은 것 — 2.11까지의 기본 선택)이다. 정수면 그 해상도 이하인 첫
+    항목이다 — 내림차순이라 그 해상도, 없으면 그보다 낮은 것 중 가장 높은 것이다. 해상도가 같은 항목이
+    여럿이면 앞 항목이라 가장 높은 것을 고를 때와 같은 규칙이다. 이하인 항목이 없으면(모두 더 높음)
+    마지막 항목(가장 낮은 것)이다. 목록이 비었으면 0이다.
+
+    Args:
+        resolutions: 내림차순 해상도(짧은 변 px)
+        preferred: 원하는 해상도(짧은 변 px). None = 가장 높은 것
+    """
+    if preferred is None or not resolutions:
+        return 0
+    for index, resolution in enumerate(resolutions):
+        if resolution <= preferred:
+            return index
+    return len(resolutions) - 1
