@@ -27,7 +27,6 @@ from PySide6.QtCore import (
     QPoint,
     QRect,
     QSize,
-    QStandardPaths,
     Qt,
     QTimer,
 )
@@ -40,7 +39,7 @@ from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.footer_monitor import MonitorSnapshot, RunResult, combine_readings
 from app.viewmodels.menu_bubble import RESULT_STATES, MenuBubble
 from app.viewmodels.path_gates import check_fetch_path
-from app.viewmodels.save_location import SaveLocations
+from app.viewmodels.save_location import SaveLocations, system_download_path
 from app.views.dialog import SettingDialog
 from app.views.card_edit_dialog import CardEditDialog
 from app.views.section_dialog import SectionEditDialog
@@ -167,10 +166,7 @@ def _default_download_path() -> str:
     saved = settings.load_setting("downloadPath")
     if saved and os.path.isdir(saved):
         return saved
-    downloads = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
-    if downloads and os.path.isdir(downloads):
-        return downloads
-    return os.getcwd()
+    return system_download_path()  # ② · ③ — 설정 창 경로 줄과 같은 규칙
 
 
 def clamp_to_available(rect: QRect, available: QRect) -> QRect:
@@ -1450,10 +1446,19 @@ class VodDownloader(QMainWindow):
             self._syncDownloadButton()
 
     def onSetting(self) -> None:
-        """설정 창을 띄운다 — 저장하면 카드 화면 설정을 다시 읽어 목록에 건다 (#645)."""
+        """설정 창을 띄운다 — 저장하면 카드 화면 설정(#645)과 저장 위치(#646)를 다시 읽는다."""
         self.dialog = SettingDialog(parent=self)
         self.dialog.accepted.connect(self.applyCardDisplay)
+        self.dialog.accepted.connect(self.applySaveLocations)
         self.dialog.exec_()
+
+    def applySaveLocations(self) -> None:
+        """설정의 기본 저장 위치 · 즐겨찾기를 헤더 저장 위치 버튼에 다시 건다 (#646).
+
+        지금 위치가 기본 위치였으면 새 기본 위치로 함께 옮긴다(`SaveLocations.reload`). 버튼 글 · 메뉴 ·
+        카드 경로 표시 기준 · 여유 공간은 `changed`가 맞춘다(`_onSaveLocationChanged`).
+        """
+        self.saveLocations.reload(_default_download_path())
 
     def applyCardDisplay(self, os_value: bool | None = None) -> None:
         """카드 화면 설정을 다시 읽고, 달라졌으면 목록의 카드와 창 최소폭에 건다 (#645).

@@ -108,6 +108,9 @@ class ContentItem:
         self.selected_frame_rate = None
 
         self.unique_reps = unique_reps
+        # 카드를 추가할 때 고를 해상도(짧은 변 px) — 등록한 때의 설정 `defaultResolution`. None이면 가장
+        # 높은 것. 카드 위젯이 해상도 목록을 처음 정렬할 때 한 번 쓴다(#646)
+        self.preferred_resolution: int | None = None
 
         self.resolution = resolution
         self.total_size = ""

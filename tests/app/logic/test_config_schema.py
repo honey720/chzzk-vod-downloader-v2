@@ -42,6 +42,7 @@ VALID = {
     "cardCompactThumbnail": True,
     "cardStateTint": False,
     "animations": False,
+    "defaultResolution": 720,
 }
 
 
@@ -170,6 +171,12 @@ class TestBrokenValuesFallBackInsteadOfCrashing:
             ("cardStateTint", "true"),
             ("animations", 1),
             ("animations", "null"),
+            # 기본 해상도(#646) — "best" 또는 선택지의 정수만. bool · 선택지 밖 · 문자열 숫자 · 소수는 거부
+            ("defaultResolution", True),
+            ("defaultResolution", 1000),
+            ("defaultResolution", "720"),
+            ("defaultResolution", 720.5),
+            ("defaultResolution", None),
         ),
     )
     def test_the_key_falls_back_and_the_rest_is_preserved(self, key, broken, caplog) -> None:

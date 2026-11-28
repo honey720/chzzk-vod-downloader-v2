@@ -14,7 +14,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QStandardPaths, Signal
 
 from app.system import settings
 from app.viewmodels.path_gates import check_remember_path, normalize_path
@@ -35,6 +35,46 @@ class LocationEntry:
 def folder_name(path: str) -> str:
     """경로의 마지막 폴더 이름 — 루트(`C:\\` · `/`)처럼 이름이 없으면 경로 그대로."""
     return os.path.basename(path.rstrip("\\/")) or path
+
+
+def system_download_path() -> str:
+    """설정 `downloadPath`가 빈 값일 때의 기본 저장 위치 — 시스템 다운로드 폴더, 없으면 작업 폴더 (#159 · #646).
+
+    시스템 다운로드 폴더는 실존할 때만 쓴다 — `writableLocation`은 폴더가 있는지 보장하지 않는다. 본 창의
+    시작 위치와 설정 창 다운로드 탭의 경로 줄이 이 함수 하나를 쓴다 — 둘이 다른 곳을 보이지 않게 한다.
+    """
+    downloads = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+    if downloads and os.path.isdir(downloads):
+        return downloads
+    return os.getcwd()
+
+
+def favorite_problem(
+    favorites: list[dict], name: str, path: str, editing: int | None = None
+) -> str:
+    """즐겨찾기 한 줄을 더하거나(`editing` None) 고칠 때 막히는 까닭(번역된 글)을 돌려준다 (#495 · #646).
+
+    헤더 저장 위치 메뉴의 「즐겨찾기에 더하기」와 설정 창 다운로드 탭이 같은 규칙을 쓴다. 막는 것:
+    빈 별칭 · 가득 참(`FAVORITES_MAX` — 고칠 때는 보지 않는다) · 같은 경로 · 같은 별칭. 고칠 때는 그
+    줄(`editing` 번호) 자신과는 비교하지 않는다. `name` · `path`는 부르는 쪽이 정리한 값(앞뒤 공백을 지운
+    별칭 · `normalize_path`를 거친 경로)이다. 막히지 않으면 빈 문자열이다.
+
+    문구의 번역 컨텍스트는 `SaveLocations`다 — 메뉴에서 쓰던 번역 항목을 그대로 쓴다.
+    """
+    others = [entry for index, entry in enumerate(favorites) if index != editing]
+    if not name:
+        return QCoreApplication.translate("SaveLocations", "Enter a name for the favorite.")
+    if editing is None and len(favorites) >= settings.FAVORITES_MAX:
+        return QCoreApplication.translate(
+            "SaveLocations", "You can add up to {} favorites."
+        ).format(settings.FAVORITES_MAX)
+    if any(entry["path"] == path for entry in others):
+        return QCoreApplication.translate("SaveLocations", "This folder is already a favorite.")
+    if any(entry["name"] == name for entry in others):
+        return QCoreApplication.translate(
+            "SaveLocations", "A favorite with this name already exists."
+        )
+    return ""
 
 
 class SaveLocations(QObject):
@@ -143,14 +183,9 @@ class SaveLocations(QObject):
         """
         name = name.strip()
         path = normalize_path(path)
-        if not name:
-            return self.tr("Enter a name for the favorite.")
-        if len(self._favorites) >= settings.FAVORITES_MAX:
-            return self.tr("You can add up to {} favorites.").format(settings.FAVORITES_MAX)
-        if self.favorite_for(path) is not None:
-            return self.tr("This folder is already a favorite.")
-        if any(entry["name"] == name for entry in self._favorites):
-            return self.tr("A favorite with this name already exists.")
+        problem = favorite_problem(self._favorites, name, path)
+        if problem:
+            return problem
         self._favorites.append({"name": name, "path": path})
         changes: dict[str, object] = {"favoritePaths": self.favorites()}
         if path in self._recent:
@@ -159,6 +194,25 @@ class SaveLocations(QObject):
         settings.update_settings(changes)
         self.changed.emit()
         return ""
+
+    def reload(self, default_path: str) -> None:
+        """설정 창 저장 뒤 기본 위치 · 즐겨찾기를 설정에서 다시 읽는다 (#646).
+
+        지금 위치가 기본 위치였으면 새 기본 위치로 함께 옮긴다 — 다른 위치를 골라 두었으면 그대로
+        둔다(그 뒤에 등록하는 카드의 위치를 사용자가 고른 것이다). 즐겨찾기가 된 경로는 최근에서 뺀다 —
+        메뉴에서 더할 때(`add_favorite`)와 같다. 바뀐 것이 없어도 `changed`를 한 번 낸다 — 버튼 글(별칭)과
+        메뉴가 새 목록을 보게.
+        """
+        follow = self.is_default()
+        self._default = normalize_path(default_path)
+        if follow:
+            self._current = self._default
+        self._favorites = [dict(entry) for entry in settings.load_setting("favoritePaths")]
+        favorite_paths = {entry["path"] for entry in self._favorites}
+        recent = [path for path in self._recent if path not in favorite_paths]
+        if recent != self._recent:
+            self._saveRecent(recent)
+        self.changed.emit()
 
     def _saveRecent(self, recent: list[str]) -> None:
         """최근 목록을 바꾸고, 저장된 값과 다를 때만 저장한다."""

@@ -5,19 +5,26 @@ import sys
 import app.theme as theme
 from app.system import settings
 from app.viewmodels import card_display
+from app.viewmodels.path_gates import normalize_path
+from app.viewmodels.save_location import favorite_problem, folder_name, system_download_path
 from app.widgets.choice_combo import ChoiceCombo
+from app.widgets.eliding_label import PathLabel
+from app.widgets.favorite_list import NO_SELECTION, FavoriteList
 from app.widgets.focus_ring import watch_dialog_buttons
 from app.widgets.header_controls import CHIP_GAP, FilterChip
 from app.widgets.tip_bubble import close_floats_if_left, install_tips
+from app.widgets.widget import path_display_parts
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -61,7 +68,7 @@ TAB_KEYS = (
     "account",
     "advanced",
 )  # 탭 차례 — 탭 버튼 · 쪽 이름의 머리
-#: 화면 탭 체크박스의 설정 키 — 위에서 아래 차례(설계 §14.3). 체크박스 objectName도 이 키다
+# 화면 탭 체크박스의 설정 키 — 위에서 아래 차례(설계 §14.3). 체크박스 objectName도 이 키다
 DISPLAY_KEYS = (
     card_display.STATE_TINT_KEY,
     card_display.COMPACT_THUMBNAIL_KEY,
@@ -150,6 +157,59 @@ class _FormLabel(QLabel):
         return QSize(hint.width(), hint.height() * 7 // 4)
 
 
+class _ListFormLabel(_FormLabel):
+    """글자 가운데를 목록 첫 줄 글자 가운데에 맞추는 폼 라벨 — 즐겨찾기 행 (#646).
+
+    목록은 테두리 · 안쪽 여백 · 줄 위 여백만큼 첫 줄 글자가 칸 위쪽 끝보다 아래에 온다. 다른 행처럼
+    칸 위쪽 끝에 붙이면 라벨 글자가 첫 줄 글자보다 위에 뜬다(오너 실기). 모자란 만큼을 위 여백으로 둔다 —
+    여백은 글자가 그려지는 자리(contentsRect) 밖이라 폼 규칙(×7/4) 높이 안의 가운데 정렬은 그대로다.
+    여백은 레이아웃이 sizeHint를 물을 때마다 목록에 다시 묻는다 — 글꼴 · QSS가 바뀌어도 따라간다.
+    """
+
+    def __init__(self, parent: QWidget, anchor: FavoriteList) -> None:
+        super().__init__(parent)
+        self._anchor = anchor
+
+    def _topInset(self) -> int:
+        """목록 첫 줄 글자 가운데까지 모자란 높이 — 지금 위 여백과 상관없이 같은 값이다.
+
+        `QLabel.sizeHint`의 높이에는 지금 위 여백이 들어 있다. 그 여백을 빼고 글자 높이로 가운데를 내야
+        부를 때마다 여백이 바뀌지 않는다 — 빼지 않으면 여백이 레이아웃이 크기를 묻는 횟수에 따라 오간다.
+        """
+        text_height = QLabel.sizeHint(self).height() - self.contentsMargins().top()
+        own_center = text_height * 7 // 8  # 폼 규칙 높이(×7/4)의 가운데
+        return max(self._anchor.firstLineCenter() - own_center, 0)
+
+    def sizeHint(self) -> QSize:
+        inset = self._topInset()
+        if self.contentsMargins().top() != inset:
+            self.setContentsMargins(0, inset, 0, 0)
+        hint = QLabel.sizeHint(self)
+        text_height = hint.height() - inset
+        return QSize(hint.width(), text_height * 7 // 4 + inset)
+
+
+class _RowHeightPathLabel(PathLabel):
+    """높이를 같은 행 폼 라벨의 높이와 같게 내는 경로 라벨 — 기본 저장 위치 줄 (#646).
+
+    경로는 두 줄(경로 · 버튼)의 위 줄이다. 글자 높이 그대로면 경로 글자가 행 위쪽에 붙고, 폼 라벨 글자는
+    ×7/4 높이의 가운데에 와서 둘의 글자 줄이 어긋난다(오너 실기). 높이를 라벨과 같게 두면 둘 다 행 위쪽
+    끝에서 같은 높이 안의 가운데에 그려져 기준선이 같다.
+    """
+
+    def __init__(self, parent: QWidget, match: QLabel) -> None:
+        super().__init__(parent)
+        self._match = match
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        return QSize(hint.width(), max(hint.height(), self._match.sizeHint().height()))
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        return QSize(hint.width(), max(hint.height(), self._match.sizeHint().height()))
+
+
 def _label_field_grid(page: QWidget, object_name: str) -> QGridLayout:
     """탭 쪽 안의 「라벨 열 + 필드 열」 격자를 만든다 (v2.9.7 S2 — QFormLayout 대체).
 
@@ -201,8 +261,11 @@ class SettingDialog(QDialog):
 
     탭 줄은 헤더바 상태 필터 칩과 같은 부품(`FilterChip`, `role="filter"`)이고 모양은 전역 QSS
     `QFrame#settingsTabs`가 칠한다. 탭을 누르면 아래 쪽(`QStackedWidget`)이 바뀐다. 항목 자리:
-    일반 = 언어 · 다운로드 후 동작, 화면 = 완료 · 실패 색조 · 썸네일 줄이기 · 부드러운 애니메이션(#645),
-    계정 = 쿠키 두 칸 · 도움말, 고급 = 로그 폴더. 다운로드 탭은 뒤따르는 PR이 항목을 더할 자리다.
+    일반 = 언어 · 다운로드 후 동작, 다운로드 = 기본 저장 위치 · 즐겨찾기 · 기본 해상도(#646), 화면 = 완료 ·
+    실패 색조 · 썸네일 줄이기 · 부드러운 애니메이션(#645), 계정 = 쿠키 두 칸 · 도움말, 고급 = 로그 폴더.
+
+    다운로드 탭의 즐겨찾기는 헤더 저장 위치 메뉴와 같은 설정 `favoritePaths`이고 검증도 같은 함수
+    (`favorite_problem`)다. 더하기 · 별칭 · 위 · 아래 · 지우기는 창이 든 사본만 바꾸고 저장할 때 쓴다.
 
     저장 · 취소: 창을 열 때 칸 값을 키마다 적어 두고(`_initial`), 지금 칸 값과 다른 키가 있을 때만 저장을
     켠다. 취소는 늘 켜져 있다 — 바뀐 값이 없으면 그냥 닫고, 있으면 버리고 닫는다(오너 2026-11-27).
@@ -295,8 +358,73 @@ class SettingDialog(QDialog):
         self.generalGridLayout.addWidget(self.afterDownload, 1, _FIELD_COLUMN)
         _pin_rows_to_top(self.generalGridLayout)
 
-        # ---- 다운로드 — 뒤따르는 PR이 항목을 더할 자리 ----
-        _pin_rows_to_top(_label_field_grid(self.page["download"], "downloadGridLayout"))
+        # ---- 다운로드 — 기본 저장 위치 · 즐겨찾기 · 기본 해상도(#646, 설계 §14.3) ----
+        download = self.page["download"]
+        self.downloadGridLayout = _label_field_grid(download, "downloadGridLayout")
+        self.downloadPathLabel = _FormLabel(download)
+        self.downloadPathLabel.setObjectName("downloadPathLabel")
+        self.downloadGridLayout.addWidget(
+            self.downloadPathLabel, 0, _LABEL_COLUMN, _LABEL_ALIGNMENT
+        )
+        # 경로 줄 — 카드 편집 창의 저장 위치 줄과 같은 부품(경로 · 찾기… · 기본 위치). 경로가 위 줄 전체를
+        # 쓰고 버튼은 아래 줄이다 — 한 줄이면 창 최소폭에서 경로가 「/…」만 남는다(offscreen 스크린샷).
+        # 경로 줄은 라벨과 같은 높이라 글자 기준선이 라벨과 같고, 버튼 줄 왼쪽 끝은 경로 글자 왼쪽 끝이다.
+        # 두 줄 사이 간격은 레이아웃 기본 세로 간격 — 격자의 행 사이 간격과 같은 스타일 값이다
+        self.downloadPathRow = QWidget(download)
+        self.downloadPathRow.setObjectName("downloadPathRow")
+        pathRow = QVBoxLayout(self.downloadPathRow)
+        pathRow.setContentsMargins(0, 0, 0, 0)
+        self.downloadPath = _RowHeightPathLabel(self.downloadPathRow, self.downloadPathLabel)
+        self.downloadPath.setObjectName("downloadPath")
+        self.downloadPathBrowse = QPushButton(self.downloadPathRow)
+        self.downloadPathBrowse.setObjectName("downloadPathBrowse")
+        self.downloadPathDefault = QPushButton(self.downloadPathRow)
+        self.downloadPathDefault.setObjectName("downloadPathDefault")
+        pathButtons = QHBoxLayout()
+        pathButtons.setContentsMargins(0, 0, 0, 0)
+        pathButtons.addWidget(self.downloadPathBrowse)
+        pathButtons.addWidget(self.downloadPathDefault)
+        pathButtons.addStretch(1)
+        pathRow.addWidget(self.downloadPath)
+        pathRow.addLayout(pathButtons)
+        self.downloadGridLayout.addWidget(self.downloadPathRow, 0, _FIELD_COLUMN)
+        # 즐겨찾기 — 목록 | 버튼 다섯(더하기 · 별칭 · 위 · 아래 · 지우기). 끌기 없음(설계 §14.6)
+        self.favoritesBox = QWidget(download)
+        self.favoritesBox.setObjectName("favoritesBox")
+        favoritesRow = QHBoxLayout(self.favoritesBox)
+        favoritesRow.setContentsMargins(0, 0, 0, 0)
+        self.favoriteList = FavoriteList(self.favoritesBox)
+        # 라벨 글자는 목록 첫 줄 글자 높이에 맞춘다
+        self.favoritesLabel = _ListFormLabel(download, self.favoriteList)
+        self.favoritesLabel.setObjectName("favoritesLabel")
+        self.downloadGridLayout.addWidget(self.favoritesLabel, 1, _LABEL_COLUMN, _LABEL_ALIGNMENT)
+        favoritesRow.addWidget(self.favoriteList, 1)
+        favoriteButtons = QVBoxLayout()
+        favoriteButtons.setContentsMargins(0, 0, 0, 0)
+        self.favoriteButtons: dict[str, QPushButton] = {}
+        for name in (
+            "favoriteAdd",
+            "favoriteRename",
+            "favoriteUp",
+            "favoriteDown",
+            "favoriteRemove",
+        ):
+            button = QPushButton(self.favoritesBox)
+            button.setObjectName(name)
+            favoriteButtons.addWidget(button)
+            self.favoriteButtons[name] = button
+        favoriteButtons.addStretch(1)
+        favoritesRow.addLayout(favoriteButtons)
+        self.downloadGridLayout.addWidget(self.favoritesBox, 1, _FIELD_COLUMN)
+        self.defaultResolutionLabel = _FormLabel(download)
+        self.defaultResolutionLabel.setObjectName("defaultResolutionLabel")
+        self.downloadGridLayout.addWidget(
+            self.defaultResolutionLabel, 2, _LABEL_COLUMN, _LABEL_ALIGNMENT
+        )
+        self.defaultResolution = ChoiceCombo(download)
+        self.defaultResolution.setObjectName("defaultResolution")
+        self.downloadGridLayout.addWidget(self.defaultResolution, 2, _FIELD_COLUMN)
+        _pin_rows_to_top(self.downloadGridLayout)
 
         # ---- 화면 — 체크박스 셋(#645, 설계 §14.3). 체크박스 글이 라벨이라 두 열에 걸친다 ----
         display = self.page["display"]
@@ -399,6 +527,22 @@ class SettingDialog(QDialog):
         self.afterDownloadLabel.setText(self.tr("After Download"))
         self.languageLabel.setText(self.tr("Language"))
         self.logsFolderLabel.setText(self.tr("Logs Folder"))
+        self.downloadPathLabel.setText(self.tr("Default save location"))
+        self.downloadPathBrowse.setText(self.tr("Browse…"))
+        self.downloadPathDefault.setText(self.tr("Default location"))
+        self.downloadPathDefault.setToolTip(self.tr("Use the system Downloads folder"))
+        self.favoritesLabel.setText(self.tr("Favorites"))
+        self.favoriteList.setEmptyText(self.tr("No favorites"))
+        favorite_texts = {
+            "favoriteAdd": self.tr("Add…"),
+            "favoriteRename": self.tr("Rename…"),
+            "favoriteUp": self.tr("Move up"),
+            "favoriteDown": self.tr("Move down"),
+            "favoriteRemove": self.tr("Remove"),
+        }
+        for name, button in self.favoriteButtons.items():
+            button.setText(favorite_texts[name])
+        self.defaultResolutionLabel.setText(self.tr("Default resolution"))
         display_texts = {
             card_display.STATE_TINT_KEY: self.tr("Tint finished and failed cards"),
             card_display.COMPACT_THUMBNAIL_KEY: self.tr("Smaller thumbnails"),
@@ -496,6 +640,31 @@ class SettingDialog(QDialog):
 
         self.logsFolder.clicked.connect(self.openLogsFolder)
 
+        # 다운로드 탭(#646) — 칸 값은 창이 들고 있다가 저장 때 쓴다
+        self._downloadPath: str = settings.load_setting("downloadPath")
+        self._favorites: list[dict] = [
+            dict(entry) for entry in settings.load_setting("favoritePaths")
+        ]
+        self.downloadPathBrowse.clicked.connect(self.browseDownloadPath)
+        self.downloadPathDefault.clicked.connect(lambda: self._setDownloadPath(""))
+        self._refreshDownloadPath()
+        buttons = self.favoriteButtons
+        buttons["favoriteAdd"].clicked.connect(self.addFavorite)
+        buttons["favoriteRename"].clicked.connect(self.renameFavorite)
+        buttons["favoriteUp"].clicked.connect(lambda: self.moveFavorite(-1))
+        buttons["favoriteDown"].clicked.connect(lambda: self.moveFavorite(1))
+        buttons["favoriteRemove"].clicked.connect(self.removeFavorite)
+        self.favoriteList.selectionChanged.connect(self._refreshFavoriteButtons)
+        # 바뀐 값 비교(_initial)는 이 뒤에 생긴다 — 저장 켜짐은 맞추지 않고 목록 · 버튼만 그린다
+        self.favoriteList.setEntries(self._favorites, 0)
+        self._refreshFavoriteButtons()
+        self.defaultResolution.addItem(self.tr("Highest"), "best")
+        for resolution in settings.RESOLUTION_CHOICES[1:]:
+            self.defaultResolution.addItem(f"{resolution}p", resolution)
+        index = self.defaultResolution.findData(settings.load_setting("defaultResolution"))
+        if index != -1:
+            self.defaultResolution.setCurrentIndex(index)
+
         # 화면 탭 — 지금 쓰는 값. 애니메이션을 고르지 않았으면 OS 값이다(설계 §14.4) — 손대지 않고 저장하면
         # 바뀐 키가 아니라 행을 쓰지 않는다. 바꿔 저장하면 그 뒤로는 OS를 보지 않는다
         checks = self.displayChecks
@@ -515,6 +684,9 @@ class SettingDialog(QDialog):
             "cookies": {"NID_AUT": self.nidaut.text(), "NID_SES": self.nidses.text()},
             "afterDownload": self.afterDownload.currentData(),
             "language": self.language.currentData(),
+            "downloadPath": self._downloadPath,
+            "favoritePaths": [dict(entry) for entry in self._favorites],
+            "defaultResolution": self.defaultResolution.currentData(),
             **{key: check.isChecked() for key, check in self.displayChecks.items()},
         }
 
@@ -532,6 +704,7 @@ class SettingDialog(QDialog):
         self.nidses.textChanged.connect(self._refreshButtons)
         self.afterDownload.currentIndexChanged.connect(self._refreshButtons)
         self.language.currentIndexChanged.connect(self._refreshButtons)
+        self.defaultResolution.currentIndexChanged.connect(self._refreshButtons)
         for check in self.displayChecks.values():
             check.toggled.connect(self._refreshButtons)
 
@@ -611,6 +784,114 @@ class SettingDialog(QDialog):
         super().changeEvent(event)
         if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
             close_floats_if_left(self)
+
+    # ---- 다운로드 탭 (#646) ----
+
+    @staticmethod
+    def systemDownloadPath() -> str:
+        """기본 저장 위치가 빈 값일 때 쓰는 곳 — 본 창 시작 위치와 같은 함수다(없으면 작업 폴더)."""
+        return system_download_path()
+
+    def _refreshDownloadPath(self) -> None:
+        """경로 줄을 칸 값으로 다시 그린다 — 빈 값이면 시스템 다운로드 폴더를 보이고 「기본 위치」를 끈다."""
+        shown = self._downloadPath or self.systemDownloadPath()
+        self.downloadPath.setPathParts(*path_display_parts(shown))
+        self.downloadPath.setToolTip(shown)
+        self.downloadPathDefault.setEnabled(bool(self._downloadPath))
+
+    def _setDownloadPath(self, path: str) -> None:
+        """기본 저장 위치 칸 값을 바꾼다 — 빈 값은 시스템 다운로드 폴더(기본 위치)다."""
+        self._downloadPath = normalize_path(path) if path else ""
+        self._refreshDownloadPath()
+        self._refreshButtons()
+
+    def browseDownloadPath(self) -> None:
+        """폴더 선택 대화상자로 기본 저장 위치를 고른다 — 고르지 않고 닫으면 그대로다."""
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            self.tr("Select download folder"),
+            self._downloadPath or self.systemDownloadPath(),
+        )
+        if chosen:
+            self._setDownloadPath(chosen)
+
+    def _showFavorites(self, selected: int) -> None:
+        """즐겨찾기 목록을 칸 값으로 다시 그리고 `selected` 줄을 고른다 — 바뀐 값 · 버튼도 맞춘다."""
+        self.favoriteList.setEntries(self._favorites, selected)
+        # 새로 만든 줄에도 툴팁 필터를 건다 — 창을 열 때 건 필터는 그때 있던 줄에만 있다
+        install_tips(self.favoriteList)
+        self._refreshFavoriteButtons()
+        self._refreshButtons()
+
+    def _refreshFavoriteButtons(self) -> None:
+        """고른 줄 · 줄 수에 따라 버튼을 켜고 끈다 — 가득 차면 더하기, 끝 줄이면 위 · 아래를 끈다."""
+        index = self.favoriteList.selected()
+        chosen = index != NO_SELECTION
+        buttons = self.favoriteButtons
+        buttons["favoriteAdd"].setEnabled(len(self._favorites) < settings.FAVORITES_MAX)
+        buttons["favoriteRename"].setEnabled(chosen)
+        buttons["favoriteRemove"].setEnabled(chosen)
+        buttons["favoriteUp"].setEnabled(chosen and index > 0)
+        buttons["favoriteDown"].setEnabled(chosen and index < len(self._favorites) - 1)
+
+    def _askFavoriteName(self, title: str, path: str, name: str) -> str | None:
+        """작은 창에서 별칭을 받는다(헤더 메뉴의 즐겨찾기 더하기와 같은 꼴). 취소면 None."""
+        text, ok = QInputDialog.getText(self, title, self.tr("Name") + "\n" + path, text=name)
+        return text.strip() if ok else None
+
+    def addFavorite(self) -> None:
+        """폴더를 고르고 별칭을 받아 목록 끝에 더한다 — 막히면 까닭을 알리고 더하지 않는다."""
+        if len(self._favorites) >= settings.FAVORITES_MAX:
+            return
+        chosen = QFileDialog.getExistingDirectory(
+            self, self.tr("Select download folder"), self._downloadPath or self.systemDownloadPath()
+        )
+        if not chosen:
+            return
+        path = normalize_path(chosen)
+        name = self._askFavoriteName(self.tr("Add to favorites"), path, folder_name(path))
+        if name is None:
+            return
+        problem = favorite_problem(self._favorites, name, path)
+        if problem:
+            QMessageBox.warning(self, self.tr("Favorites"), problem)
+            return
+        self._favorites.append({"name": name, "path": path})
+        self._showFavorites(len(self._favorites) - 1)
+
+    def renameFavorite(self) -> None:
+        """고른 줄의 별칭을 고친다 — 막히면 까닭을 알리고 그대로 둔다."""
+        index = self.favoriteList.selected()
+        if index == NO_SELECTION:
+            return
+        entry = self._favorites[index]
+        name = self._askFavoriteName(self.tr("Rename favorite"), entry["path"], entry["name"])
+        if name is None:
+            return
+        problem = favorite_problem(self._favorites, name, entry["path"], editing=index)
+        if problem:
+            QMessageBox.warning(self, self.tr("Favorites"), problem)
+            return
+        self._favorites[index] = {"name": name, "path": entry["path"]}
+        self._showFavorites(index)
+
+    def moveFavorite(self, step: int) -> None:
+        """고른 줄을 `step`(-1 위 · 1 아래)만큼 옮긴다 — 끝을 넘으면 그대로다. 고른 줄이 따라간다."""
+        index = self.favoriteList.selected()
+        target = index + step
+        if index == NO_SELECTION or not 0 <= target < len(self._favorites):
+            return
+        favorites = self._favorites
+        favorites[index], favorites[target] = favorites[target], favorites[index]
+        self._showFavorites(target)
+
+    def removeFavorite(self) -> None:
+        """고른 줄을 지운다 — 다음 줄(끝이었으면 앞 줄)을 고른다. 지우기는 저장할 때 들어간다."""
+        index = self.favoriteList.selected()
+        if index == NO_SELECTION:
+            return
+        del self._favorites[index]
+        self._showFavorites(index)
 
     # ---- 버튼 ----
 

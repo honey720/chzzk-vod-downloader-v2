@@ -49,6 +49,7 @@ from app.widgets.focus_ring import HANDOVER
 from app.widgets.narrow_steps import step_level
 from app.widgets.tip_bubble import install_tips
 from core.engine.session import get_thread_session
+from core.media.representations import pick_preferred
 from core.models.download_state import DownloadState
 
 logger = logging.getLogger(__name__)
@@ -789,7 +790,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     # ---- 해상도 — 카드는 고른 것을 보이기만 한다. 고르기는 편집 창 (#550) ----
 
     def loadRepresentations(self) -> None:
-        """해상도 목록을 내림차순으로 정렬하고 크기를 조회하며 최고 해상도를 기본으로 고른다.
+        """해상도 목록을 내림차순으로 정렬하고 크기를 조회하며 기본 해상도를 고른다.
+
+        기본은 아이템의 `preferred_resolution`(등록한 때의 설정 — 없으면 그보다 낮은 것 중 가장 높은 것,
+        None이면 가장 높은 것, #646)이다.
 
         카드에는 해상도 버튼이 없다(#550 — 고르기는 카드 편집 창). 정렬 · 크기 조회 · 기본
         선택은 그대로 카드가 한다 — 편집 창의 해상도 목록이 이 정렬과 크기를 읽는다.
@@ -819,7 +823,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             unique_rep.append(self.tr("Checking..."))
         for index, (_resolution, base_url, _size) in enumerate(self.item.unique_reps):
             self._fetchRepSize(index, base_url)
-        self._pick(0)
+        resolutions = [_resolution_key(rep[0]) for rep in self.item.unique_reps]
+        self._pick(pick_preferred(resolutions, self.item.preferred_resolution))
 
     def pickedIndex(self) -> int:
         """고른 해상도의 목록 번호(내림차순 정렬 뒤)."""
